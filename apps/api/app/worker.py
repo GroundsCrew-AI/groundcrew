@@ -28,8 +28,13 @@ class UnknownJobKindError(Exception):
 
 
 def default_handlers() -> dict[str, Handler]:
-    # Agent jobs (run_agent, resume_run) are registered with the agent loop.
-    return {}
+    # Imported here so `app.queue` users do not load every agent and tool.
+    from app.agents.base import run_agent_job
+
+    return {
+        "run_agent": run_agent_job,
+        "resume_run": run_agent_job,
+    }
 
 
 class Worker:

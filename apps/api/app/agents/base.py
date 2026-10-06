@@ -1,0 +1,319 @@
+"""Our own tool-calling agent loop (no framework).
+
+call model -> run tool calls through the policy engine -> append results -> repeat.
+
+The conversation lives in runs.messages, so a run can pause for approval and resume in a
+later job. Tool calls in the last assistant message that have no result yet are "pending";
+each pass of the loop handles them first. On resume that runs the approved action, or
+tells the model it was rejected.
+
+Every exit sets runs.stop_reason: completed, max_steps, budget, waiting_approval, error.
+Runs execute in the worker ("run_agent" / "resume_run" jobs), never in an HTTP request.
+"""
+
+import json
+import logging
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+from pydantic import ValidationError
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import Settings, get_settings
+from app.db.models import TERMINAL_RUN_STATUSES, Run, RunStatus, RunStep, StopReason
+from app.db.session import SessionFactory
+from app.llm.budget import BudgetExceededError, check_budget
+from app.llm.client import ChatModel, LLMResponse, Message, TokenFactoryClient
+from app.llm.costs import estimate_cost
+from app.llm.router import TaskType, route
+from app.llm.tool_calls import parse_arguments
+from app.policy.engine import (
+    AwaitingApproval,
+    Executed,
+    PolicyViolationError,
+    Rejected,
+    handle_tool_call,
+)
+from app.security.redact import summarize
+from app.steps import record_step
+from app.tools.registry import ToolNotFoundError, ToolRegistry, registry
+
+logger = logging.getLogger("groundcrew.agents")
+
+# Tool output sent back to the model is redacted and capped.
+MAX_TOOL_RESULT_CHARS = 8000
+REJECTED_MESSAGE = (
+    "Rejected by user: this action was not run. Do not retry it. "
+    "Continue without it or explain what you could not do."
+)
+
+
+@dataclass(frozen=True)
+class Agent:
+    name: str
+    system_prompt: str
+    tools: tuple[str, ...]
+    task_type: TaskType
+
+
+class UnknownAgentError(KeyError):
+    pass
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _assistant_message(resp: LLMResponse) -> Message:
+    message: Message = {"role": "assistant", "content": resp.content}
+    if resp.tool_calls:
+        message["tool_calls"] = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+            }
+            for call in resp.tool_calls
+        ]
+    return message
+
+
+def _describe(message: Message) -> str:
+    """Short description of the newest message sent to the model (for the step summary)."""
+    role = message.get("role", "?")
+    if role == "tool":
+        return f"tool result: {message.get('content', '')}"
+    return f"{role}: {message.get('content') or ''}"
+
+
+def _describe_response(resp: LLMResponse) -> str:
+    if resp.tool_calls:
+        calls = ", ".join(f"{c.name}({json.dumps(c.arguments)})" for c in resp.tool_calls)
+        source = " (parsed from text)" if resp.tool_calls_from_text else ""
+        return f"tool calls{source}: {calls}"
+    return resp.content or ""
+
+
+def pending_tool_calls(messages: list[Message]) -> list[dict[str, Any]]:
+    """Tool calls in the last assistant message that have no tool result yet, in order."""
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("role") == "assistant":
+            answered = {
+                m.get("tool_call_id") for m in messages[index + 1 :] if m.get("role") == "tool"
+            }
+            calls: list[dict[str, Any]] = messages[index].get("tool_calls") or []
+            return [c for c in calls if c["id"] not in answered]
+    return []
+
+
+class AgentRunner:
+    def __init__(
+        self,
+        session_factory: SessionFactory,
+        *,
+        llm: ChatModel | None = None,
+        settings: Settings | None = None,
+        tools: ToolRegistry = registry,
+    ) -> None:
+        self.session_factory = session_factory
+        self._llm = llm
+        self.settings = settings or get_settings()
+        self.tools = tools
+
+    @property
+    def llm(self) -> ChatModel:
+        if self._llm is None:
+            self._llm = TokenFactoryClient(self.settings)
+        return self._llm
+
+    async def handle_job(self, _sf: SessionFactory, payload: dict[str, Any]) -> None:
+        await self.run(uuid.UUID(payload["run_id"]))
+
+    async def run(self, run_id: uuid.UUID) -> None:
+        from app.agents.registry import get_agent
+
+        async with self.session_factory() as session:
+            run = await session.get(Run, run_id, with_for_update=True)
+            if run is None:
+                logger.warning("run not found", extra={"run_id": str(run_id)})
+                return
+            if run.status not in (RunStatus.queued, RunStatus.running):
+                # Already finished, or still waiting for a decision. Nothing to do.
+                logger.info("run skipped", extra={"run_id": str(run_id), "status": run.status})
+                await session.rollback()
+                return
+            run.status = RunStatus.running
+            run.stop_reason = None
+            run.started_at = run.started_at or _now()
+            await session.commit()
+
+            try:
+                agent = get_agent(run.agent)
+                reason = await self._loop(session, run, agent)
+            except BudgetExceededError as exc:
+                await session.rollback()
+                await session.refresh(run)
+                await record_step(session, run, kind="budget", output_summary=str(exc))
+                await self._finish(session, run, RunStatus.stopped, StopReason.budget)
+                return
+            except Exception as exc:
+                logger.exception("run failed", extra={"run_id": str(run_id)})
+                await session.rollback()
+                await session.refresh(run)
+                error = summarize(f"{type(exc).__name__}: {exc}", 1000)
+                await record_step(session, run, kind="error", output_summary=error)
+                await self._finish(session, run, RunStatus.failed, StopReason.error, error=error)
+                return
+
+            if reason == StopReason.waiting_approval:
+                return  # the policy engine already set the status and committed
+            status = RunStatus.succeeded if reason == StopReason.completed else RunStatus.stopped
+            await self._finish(session, run, status, reason)
+
+    async def _finish(
+        self,
+        session: AsyncSession,
+        run: Run,
+        status: RunStatus,
+        reason: StopReason,
+        *,
+        error: str | None = None,
+    ) -> None:
+        run.status = status
+        run.stop_reason = reason
+        run.error = error
+        if status in TERMINAL_RUN_STATUSES:
+            run.finished_at = _now()
+        await session.commit()
+        logger.info(
+            "run finished",
+            extra={"run_id": str(run.id), "status": status, "stop_reason": reason},
+        )
+
+    async def _loop(self, session: AsyncSession, run: Run, agent: Agent) -> StopReason:
+        if not run.messages:
+            run.messages = [
+                {"role": "system", "content": agent.system_prompt},
+                {"role": "user", "content": run.goal},
+            ]
+            await session.commit()
+        schemas = [self.tools.get(name).openai_schema() for name in agent.tools]
+
+        while True:
+            if await self._handle_pending(session, run, agent):
+                return StopReason.waiting_approval
+
+            llm_calls = await session.scalar(
+                select(func.count(RunStep.id)).where(
+                    RunStep.run_id == run.id, RunStep.kind == "llm"
+                )
+            )
+            if (llm_calls or 0) >= self.settings.max_steps_per_run:
+                return StopReason.max_steps
+
+            target = route(agent.task_type, self.settings)
+            await check_budget(session, run, target.tier, self.settings)
+            resp = await self.llm.chat(
+                model_id=target.model_id, messages=run.messages, tools=schemas
+            )
+
+            cost = estimate_cost(
+                target.tier, resp.prompt_tokens, resp.completion_tokens, self.settings
+            )
+            run.prompt_tokens += resp.prompt_tokens
+            run.completion_tokens += resp.completion_tokens
+            if cost is not None:
+                run.cost_usd = (run.cost_usd or 0) + cost
+            await record_step(
+                session,
+                run,
+                kind="llm",
+                agent=agent.name,
+                model_tier=target.tier,
+                model_id=resp.model_id,
+                input_summary=f"{len(run.messages)} messages; last {_describe(run.messages[-1])}",
+                output_summary=_describe_response(resp),
+                prompt_tokens=resp.prompt_tokens,
+                completion_tokens=resp.completion_tokens,
+                latency_ms=resp.latency_ms,
+                cost_usd=cost,
+            )
+            # Reassign (not append) so SQLAlchemy sees the JSONB change.
+            run.messages = [*run.messages, _assistant_message(resp)]
+            await session.commit()
+
+            if not resp.tool_calls:
+                run.result = resp.content
+                return StopReason.completed
+
+    async def _handle_pending(self, session: AsyncSession, run: Run, agent: Agent) -> bool:
+        """Run pending tool calls in order. Returns True when the run must wait for approval."""
+        for call in pending_tool_calls(run.messages):
+            name: str = call["function"]["name"]
+            start = time.perf_counter()
+            result = await self._run_tool_call(session, run, agent, call)
+            if result is None:
+                return True
+            await record_step(
+                session,
+                run,
+                kind="tool",
+                agent=agent.name,
+                tool_name=name,
+                input_summary=f"{name}({call['function'].get('arguments') or '{}'})",
+                output_summary=result,
+                latency_ms=round((time.perf_counter() - start) * 1000),
+            )
+            message = {
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "content": summarize(result, MAX_TOOL_RESULT_CHARS),
+            }
+            run.messages = [*run.messages, message]
+            await session.commit()
+        return False
+
+    async def _run_tool_call(
+        self, session: AsyncSession, run: Run, agent: Agent, call: dict[str, Any]
+    ) -> str | None:
+        """The tool result to send back to the model, or None when waiting for approval."""
+        name: str = call["function"]["name"]
+        if name not in agent.tools:
+            return f"error: tool {name!r} is not available. Available: {', '.join(agent.tools)}"
+        try:
+            spec = self.tools.get(name)
+        except ToolNotFoundError:
+            return f"error: tool {name!r} does not exist"
+
+        raw_args, args_error = parse_arguments(call["function"].get("arguments"))
+        if args_error:
+            return f"error: {args_error}"
+        try:
+            args = spec.args_model.model_validate(raw_args)
+        except ValidationError as exc:
+            return f"error: invalid arguments for {name}: {exc.errors(include_url=False)}"
+
+        try:
+            outcome = await handle_tool_call(session, run, spec, args, call["id"])
+        except PolicyViolationError:
+            raise  # a bug, not a tool failure: stop the run
+        except Exception as exc:
+            logger.warning("tool failed", extra={"tool": name, "error": type(exc).__name__})
+            return f"error: {name} failed: {type(exc).__name__}: {exc}"
+
+        match outcome:
+            case AwaitingApproval():
+                return None
+            case Rejected():
+                return REJECTED_MESSAGE
+            case Executed(output=output):
+                return output
+
+
+async def run_agent_job(session_factory: SessionFactory, payload: dict[str, Any]) -> None:
+    """Worker handler for "run_agent" and "resume_run" jobs."""
+    await AgentRunner(session_factory).handle_job(session_factory, payload)
