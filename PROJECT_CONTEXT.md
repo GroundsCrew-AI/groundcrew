@@ -44,7 +44,7 @@ Audience: small teams and agencies without a dedicated DevOps engineer, running 
 | Frontend | Next.js 15 (App Router), TypeScript, Tailwind, shadcn/ui, React Flow (map), Auth.js (GitHub OAuth) |
 | Live updates | Server-Sent Events (SSE) |
 | Backend | Python 3.12, FastAPI, Pydantic v2 |
-| DB | Postgres (Neon) + SQLAlchemy 2 + Alembic + pgvector |
+| DB | Postgres + pgvector (Neon for the hosted demo, `pgvector/pgvector:pg16` container for local dev and CI), SQLAlchemy 2 async + asyncpg, Alembic |
 | Queue | Postgres `jobs` table, `SELECT ... FOR UPDATE SKIP LOCKED`, one `worker.py` process |
 | LLM | OpenAI-compatible client pointed at Nebius Token Factory |
 | Models | Nemotron 3 Nano / Super / Ultra (exact IDs in `.env`, see section 6) |
@@ -124,21 +124,54 @@ Web app (Vercel) ──REST+SSE──▶ Control plane (FastAPI on VM)
 | Deployer | `app_spec` → target config; preflight; deploy; verify | Nemotron 3 **Super** | target plan / apply (approval) / verify |
 | Medic | Cross-cloud root cause; propose + verify fixes | Nemotron 3 **Ultra** | read telemetry, Tavily, open PR, emergency actions (approval) |
 
-Env vars (exact model IDs must be copied from the Token Factory docs):
+Model routing (`app/llm/router.py`): classify / summarize / detect → Nano; write_config / plan / patch → Super;
+root_cause → Ultra. `DEV_MODE_NO_ULTRA=true` sends Ultra tasks to Super.
+
+Env vars (exact model IDs must be copied from the Token Factory docs; `.env.example` has a comment for each).
+Blank means unset; defaults in brackets.
 ```
+# Token Factory and models
 TOKEN_FACTORY_BASE_URL=
 TOKEN_FACTORY_API_KEY=
 MODEL_NANO=
 MODEL_SUPER=
 MODEL_ULTRA=
-MODEL_EMBED=          # NVIDIA embedding model if available
+MODEL_EMBED=                  # NVIDIA embedding model if available
+EMBED_DIM=                    # [1024] incidents.embedding size; changing it needs a migration
+LLM_TIMEOUT_SECONDS=          # [60]
+LLM_MAX_TOKENS=               # [4096] per call, reasoning included
+DEV_MODE_NO_ULTRA=            # [false] route Ultra tasks to Super
+PRICE_NANO_INPUT_PER_M=       # optional USD per 1M tokens; unset = cost not estimated
+PRICE_NANO_OUTPUT_PER_M=
+PRICE_SUPER_INPUT_PER_M=
+PRICE_SUPER_OUTPUT_PER_M=
+PRICE_ULTRA_INPUT_PER_M=
+PRICE_ULTRA_OUTPUT_PER_M=
+
+# Services and secrets
 TAVILY_API_KEY=
-DATABASE_URL=
-SECRETS_KEY=
+DATABASE_URL=                 # Neon, hosted demo only. Local dev / tests use the compose container
+SECRETS_KEY=                  # Fernet key: make keygen
+
+# GitHub App (Phase 3)
 GITHUB_APP_ID=
-GITHUB_APP_PRIVATE_KEY=
-DAILY_TOKEN_BUDGET=
-MAX_ULTRA_CALLS_PER_INCIDENT=
+GITHUB_APP_CLIENT_ID=
+GITHUB_APP_CLIENT_SECRET=
+GITHUB_APP_PRIVATE_KEY_PATH=  # PEM file in secrets/ (git-ignored)
+GITHUB_WEBHOOK_SECRET=
+
+# Budgets and limits
+DAILY_TOKEN_BUDGET=           # [no limit] tokens per UTC day, all agents
+MAX_ULTRA_CALLS_PER_INCIDENT= # [no limit]
+MAX_STEPS_PER_RUN=            # [12] model calls per run
+MAX_TOKENS_PER_RUN=           # [60000]
+
+# Worker, SSE, logging, dev auth
+WORKER_POLL_INTERVAL_SECONDS= # [1.0]
+JOB_LOCK_TIMEOUT_SECONDS=     # [600] a running job is reclaimed after this
+SSE_POLL_INTERVAL_MS=         # [500]
+LOG_LEVEL=                    # [INFO]
+DEV_API_KEY=                  # [off] X-API-Key check until Phase 2 auth
 ```
 
 ---
@@ -252,7 +285,16 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] Neon Postgres project, `DATABASE_URL` in `.env` (pooled, `sslmode=require`; Postgres 18.6, pgvector 0.8.6 available, connection verified)
   - [ ] Tavily account and API key
   - [ ] Budget alerts: AWS $20 / $50, Azure $20 (section 12)
-- [ ] Phase 1 — Backend + agent loop
+- [ ] Phase 1 — Backend + agent loop (in progress, awaiting review)
+  - [x] Postgres (pgvector container), SQLAlchemy async models for all section 9 tables, Alembic, `make seed`
+  - [x] Fernet secrets helper, `make keygen`
+  - [x] Postgres job queue (`SKIP LOCKED`, 3 attempts with backoff) and worker with graceful shutdown
+  - [x] LLM layer: Token Factory client, router, costs, budgets, native + text tool calls
+  - [x] Tool registry with policy tags; policy engine; approvals pause and resume runs
+  - [x] Agent loop with limits, stop reasons, redacted step recording; Echo Ops toy agent
+  - [x] API: runs, run SSE events, approvals; JSON logs with request id; optional DEV_API_KEY
+  - [x] Tests on real Postgres with a fake LLM; CI runs migrations and tests without secrets
+  - [x] Verified end to end with Nemotron Nano: run pauses at `restart_fake_service`, approve, run completes
 - [ ] Phase 2 — Frontend shell
 - [ ] Phase 3 — Discovery + graph
 - [ ] Phase 4 — Build + deploy agents
@@ -261,15 +303,25 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 - [ ] Phase 7 — Submission
 - [ ] Phase 8 — Judging upkeep
 
-**Current phase:** 0
+**Current phase:** 1
 **Last updated:** 2026-10-06
 **Known issues / blockers:**
-- All three Nemotron models reason before answering. With `max_tokens=20` they spend every token on reasoning: Nano and Super return empty content, Ultra puts its reasoning in the content. The Phase 1 LLM client must handle this (disable reasoning per request or raise the token limit, read any separate reasoning field, check `finish_reason`).
+- Nemotron models reason before answering. Handled in `app/llm/client.py`: `LLM_MAX_TOKENS` defaults to 4096,
+  `<think>` blocks are stripped from content, and empty content with `finish_reason=length` raises a clear error.
+  In the Phase 1 test run, Nano used 700 to 950 completion tokens for one simple tool call, mostly reasoning.
+  Turning reasoning off per request is not tried yet; it would cut cost.
+- The demo runs locally only; nothing in Phase 1 targets Neon. Run `make migrate DB_URL=<neon url>` when hosting.
 
 ## 15. Decisions log (newest first)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-06 | Local dev and CI use a `pgvector/pgvector:pg16` container (host port 5433); Neon only for the hosted demo | Fast, free, resettable; CI needs no secrets; avoids clashing with a host Postgres on 5432 |
+| 2026-10-06 | SQLAlchemy 2.0 async with asyncpg; Alembic migrations in `apps/api/app/db/migrations` | Async fits FastAPI and the worker; Alembic gives reviewable schema changes |
+| 2026-10-06 | SSE streams run steps by polling the DB every ~500 ms, not LISTEN/NOTIFY | Neon's pooler does not support LISTEN/NOTIFY; polling is simple and good enough |
+| 2026-10-06 | Own agent loop, no framework; conversation stored in `runs.messages` so a run pauses for approval and resumes in a new job | Full control of the policy gate and step log; resume is the same code path as a fresh run |
+| 2026-10-06 | An approved write is marked used and committed before it runs | A write action runs at most once, even if the worker crashes mid-call |
+| 2026-10-06 | `GITHUB_APP_PRIVATE_KEY` replaced by `GITHUB_APP_PRIVATE_KEY_PATH` (file in git-ignored `secrets/`) | Multi-line PEM keys are fragile in .env files |
 | 2026-10-06 | Models: Nano `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`, Super `nvidia/nemotron-3-super-120b-a12b`, Ultra `nvidia/Nemotron-3-Ultra-550b-a55b` | Exact IDs from the Token Factory model list, all verified with `make models`; avoids models removed on 2026-08-31 |
 | 2026-10-06 | uv for Python dependencies and lockfile (`apps/api/uv.lock`) | Fast, reproducible installs; one tool for venv, lock, and run |
 | 2026-10-05 | Own agent loop, no framework | Full control over guardrails and timeline |
