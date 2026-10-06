@@ -246,8 +246,12 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] Local dev: `.env.example`, `.gitignore`, docker-compose, Makefile
   - [x] CI: ruff, mypy, pytest, eslint, tsc, next build
   - [x] Starter README
-  - [ ] Fill `.env` with Token Factory URL, key, and model IDs; run `make models`
-  - [ ] Credits, cloud accounts, budget alerts
+  - [x] Code pushed to GitHub, CI passing
+  - [x] Token Factory credits; test call to Nemotron 3 Nano, Super, and Ultra (`make models`, 3/3 ok)
+  - [x] AWS and Azure accounts
+  - [ ] Neon Postgres project (in progress), `DATABASE_URL` in `.env`
+  - [ ] Tavily account and API key
+  - [ ] Budget alerts: AWS $20 / $50, Azure $20 (section 12)
 - [ ] Phase 1 — Backend + agent loop
 - [ ] Phase 2 — Frontend shell
 - [ ] Phase 3 — Discovery + graph
@@ -259,12 +263,14 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 
 **Current phase:** 0
 **Last updated:** 2026-10-06
-**Known issues / blockers:** none yet
+**Known issues / blockers:**
+- All three Nemotron models reason before answering. With `max_tokens=20` they spend every token on reasoning: Nano and Super return empty content, Ultra puts its reasoning in the content. The Phase 1 LLM client must handle this (disable reasoning per request or raise the token limit, read any separate reasoning field, check `finish_reason`).
 
 ## 15. Decisions log (newest first)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-06 | Models: Nano `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`, Super `nvidia/nemotron-3-super-120b-a12b`, Ultra `nvidia/Nemotron-3-Ultra-550b-a55b` | Exact IDs from the Token Factory model list, all verified with `make models`; avoids models removed on 2026-08-31 |
 | 2026-10-06 | uv for Python dependencies and lockfile (`apps/api/uv.lock`) | Fast, reproducible installs; one tool for venv, lock, and run |
 | 2026-10-05 | Own agent loop, no framework | Full control over guardrails and timeline |
 | 2026-10-05 | Postgres as queue + vector store | No extra services to run or pay for |
