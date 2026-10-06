@@ -1,6 +1,7 @@
 """Alembic environment. Runs migrations with the async engine from DATABASE_URL."""
 
 import asyncio
+from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy.engine import Connection
@@ -9,6 +10,9 @@ from app.db.models import Base
 from app.db.session import create_engine, get_engine
 
 target_metadata = Base.metadata
+
+if context.config.config_file_name is not None:
+    fileConfig(context.config.config_file_name, disable_existing_loggers=False)
 
 
 def _do_run_migrations(connection: Connection) -> None:

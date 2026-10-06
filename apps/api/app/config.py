@@ -11,7 +11,9 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo root .env (apps/api/app/config.py -> ../../../.env), then a local .env if present.
-_REPO_ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
+# In the Docker image the file is /app/app/config.py (no repo root); compose passes env vars.
+_HERE = Path(__file__).resolve()
+_REPO_ROOT_ENV = _HERE.parents[3] / ".env" if len(_HERE.parents) > 3 else Path(".env")
 
 
 class Settings(BaseSettings):

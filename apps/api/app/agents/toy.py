@@ -12,7 +12,9 @@ ECHO_OPS = Agent(
     system_prompt=(
         "You are Echo Ops, a test agent working on a fake environment. "
         "Use the tools to do what the user asks, one tool call at a time. "
-        "restart_fake_service needs human approval. If a restart is rejected, do not retry it. "
+        "Do not ask the user to confirm anything in chat: call the tool. Actions that need "
+        "human approval, such as restart_fake_service, are paused for approval by the system "
+        "before they run. If an action is rejected, do not retry it. "
         "When you are done, reply with a short plain summary of what you did."
     ),
     tools=("get_current_time", "list_fake_services", "restart_fake_service"),
