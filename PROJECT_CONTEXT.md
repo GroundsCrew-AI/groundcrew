@@ -322,7 +322,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         log extras and approval arguments redacted (101 tests)
   - [x] Reasoning off for Nano and Super (`LLM_REASONING_TIERS`, default ultra). Echo Ops end to end on Nano:
         3 calls, 64 completion tokens in total (was 700 to 950 per call with reasoning on)
-- [ ] Phase 2 — Frontend shell (built and verified locally; one item left)
+- [x] Phase 2 — Frontend shell
   - [x] API auth: internal JWT from the web proxy, users upserted by GitHub id, first-login workspace,
         `workspace_members` with 404 for non-members, stream tokens, stop endpoint, typed SSE events
   - [x] Approvals record the real user; responses carry the decider's login, name, and avatar
@@ -338,8 +338,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] Rejections read honestly: the model is told the exact rejected action and to say it was rejected;
         the step is recorded as `tool_rejected` and shown as "Not run: rejected"; runs carry
         `rejected_actions`, shown as "N actions rejected" beside the status (verified live on Nano)
-  - [ ] Real GitHub sign-in once: set `AUTH_GITHUB_ID`/`GITHUB_APP_CLIENT_ID` and the GitHub App callback
-        URL `http://localhost:3000/api/auth/callback/github`
+  - [x] Real GitHub sign-in works (approvals recorded as the signed-in GitHub user)
 - [ ] Phase 3 — Discovery + graph
 - [ ] Phase 4 — Build + deploy agents
 - [ ] Phase 5 — Medic + fixes
@@ -347,7 +346,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 - [ ] Phase 7 — Submission
 - [ ] Phase 8 — Judging upkeep
 
-**Current phase:** 2
+**Current phase:** 3
 **Last updated:** 2026-10-06
 **Known issues / blockers:**
 - Phase 0 open items: Tavily API key; budget alerts (AWS $20 / $50, Azure $20).
