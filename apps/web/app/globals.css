@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -39,6 +39,16 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-status-running: var(--status-running);
+  --color-status-waiting: var(--status-waiting);
+  --color-status-ok: var(--status-ok);
+  --color-status-failed: var(--status-failed);
+  --color-status-neutral: var(--status-neutral);
+  --color-tier-nano: var(--tier-nano);
+  --color-tier-super: var(--tier-super);
+  --color-tier-ultra: var(--tier-ultra);
+  --color-subtle: var(--subtle);
+  --color-rail: var(--rail);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -48,83 +58,181 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Groundcrew tokens. Neutral grays with one accent (--primary, taxiway blue) used only for
+ * primary actions, the active nav item, and focus rings. Status colors are for status only.
+ * Dark is the default theme; light is the same system inverted.
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --radius: 0.5rem;
+
+  --background: #fbfbfc;
+  --foreground: #16171b;
+  --card: #ffffff;
+  --card-foreground: #16171b;
+  --popover: #ffffff;
+  --popover-foreground: #16171b;
+  --primary: #3755d8;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f2f4;
+  --secondary-foreground: #16171b;
+  --muted: #f3f4f6;
+  --muted-foreground: #626672;
+  --subtle: #8a8e99;
+  --accent: #eef0f3;
+  --accent-foreground: #16171b;
+  --destructive: #c93b37;
+  --border: #e4e6ea;
+  --input: #d9dce2;
+  --ring: #3755d8;
+  --rail: #dcdfe5;
+
+  --status-running: #3755d8;
+  --status-waiting: #a46a06;
+  --status-ok: #1d8a4b;
+  --status-failed: #c93b37;
+  --status-neutral: #6b6f7a;
+
+  --tier-nano: #23807d;
+  --tier-super: #6a55b5;
+  --tier-ultra: #a0602b;
+
+  --chart-1: #3755d8;
+  --chart-2: #23807d;
+  --chart-3: #6a55b5;
+  --chart-4: #a0602b;
+  --chart-5: #626672;
+
+  --sidebar: #f5f6f8;
+  --sidebar-foreground: #16171b;
+  --sidebar-primary: #3755d8;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e9ebef;
+  --sidebar-accent-foreground: #16171b;
+  --sidebar-border: #e4e6ea;
+  --sidebar-ring: #3755d8;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #101114;
+  --foreground: #e7e8eb;
+  --card: #15161a;
+  --card-foreground: #e7e8eb;
+  --popover: #1a1b20;
+  --popover-foreground: #e7e8eb;
+  --primary: #6d8bff;
+  --primary-foreground: #0b0d16;
+  --secondary: #1d1f24;
+  --secondary-foreground: #e7e8eb;
+  --muted: #191a1f;
+  --muted-foreground: #8e929c;
+  --subtle: #676b75;
+  --accent: #1e2026;
+  --accent-foreground: #e7e8eb;
+  --destructive: #ef6662;
+  --border: #23252b;
+  --input: #2c2e35;
+  --ring: #6d8bff;
+  --rail: #2a2c33;
+
+  --status-running: #6d8bff;
+  --status-waiting: #e2a63c;
+  --status-ok: #52b67d;
+  --status-failed: #ef6662;
+  --status-neutral: #8e929c;
+
+  --tier-nano: #62b5b2;
+  --tier-super: #a593dd;
+  --tier-ultra: #d39d6c;
+
+  --chart-1: #6d8bff;
+  --chart-2: #62b5b2;
+  --chart-3: #a593dd;
+  --chart-4: #d39d6c;
+  --chart-5: #8e929c;
+
+  --sidebar: #0c0d10;
+  --sidebar-foreground: #e7e8eb;
+  --sidebar-primary: #6d8bff;
+  --sidebar-primary-foreground: #0b0d16;
+  --sidebar-accent: #1a1c21;
+  --sidebar-accent-foreground: #e7e8eb;
+  --sidebar-border: #1d1f24;
+  --sidebar-ring: #6d8bff;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
   html {
     @apply font-sans;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    font-feature-settings: "ss01", "cv11";
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 30%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Tinted surface for a status, tier, or policy color: text in the color, faint fill. */
+  .tint {
+    color: var(--tint);
+    background: color-mix(in oklab, var(--tint) 11%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tint) 24%, transparent);
+  }
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-step-in {
+  animation: step-in 200ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.animate-live {
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
   }
 }
