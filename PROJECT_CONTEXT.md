@@ -169,13 +169,21 @@ MAX_ULTRA_CALLS_PER_INCIDENT= # [no limit]
 MAX_STEPS_PER_RUN=            # [12] model calls per run
 MAX_TOKENS_PER_RUN=           # [60000]
 
-# Worker, SSE, logging, dev auth
+# Worker, SSE, logging
 WORKER_POLL_INTERVAL_SECONDS= # [1.0]
 JOB_LOCK_TIMEOUT_SECONDS=     # [600] a job whose worker stopped heartbeating is reclaimed after this
 WORKER_SHUTDOWN_GRACE_SECONDS= # [20] on SIGTERM, then the job is requeued
 SSE_POLL_INTERVAL_MS=         # [500]
 LOG_LEVEL=                    # [INFO]
-DEV_API_KEY=                  # [off] X-API-Key check until Phase 2 auth
+
+# Auth (Phase 2). Secrets stay server side; only NEXT_PUBLIC_API_URL reaches the browser.
+INTERNAL_JWT_SECRET=          # shared by web and API: HS256 key for the 5-minute internal JWT (32+ chars)
+WEB_ORIGIN=                   # [http://localhost:3000] the only origin allowed by CORS (for SSE)
+AUTH_SECRET=                  # Auth.js session encryption key
+AUTH_GITHUB_ID=               # [GITHUB_APP_CLIENT_ID] GitHub OAuth client for sign-in
+AUTH_GITHUB_SECRET=           # [GITHUB_APP_CLIENT_SECRET]
+API_INTERNAL_URL=             # [NEXT_PUBLIC_API_URL] where the web server reaches the API
+NEXT_PUBLIC_API_URL=          # [http://localhost:8000] where the browser opens the run stream
 ```
 
 ---
@@ -219,7 +227,9 @@ Edge:     id, from_id, to_id, kind (calls|reads|deployed_by|defined_in), evidenc
 
 ## 9. Data model (tables)
 
-`users`, `workspaces`, `connections`, `resources`, `edges`, `runs`, `run_steps`, `approvals`, `incidents` (with `embedding`), `events` (normalized telemetry timeline), `jobs`.
+`users` (upserted by `github_id`), `workspaces`, `workspace_members` (workspace_id, user_id, role: owner | member),
+`connections`, `resources`, `edges`, `runs`, `run_steps` (with `approval_id` on approval steps), `approvals`
+(`decided_by` = user id), `incidents` (with `embedding`), `events` (normalized telemetry timeline), `jobs`.
 
 ## 10. Main API
 
@@ -230,9 +240,16 @@ Edge:     id, from_id, to_id, kind (calls|reads|deployed_by|defined_in), evidenc
 | GET | `/workspaces/{id}/graph` | Resources + edges |
 | POST | `/deploys` | Scout → Builder → Deployer |
 | POST | `/incidents` | Open incident, start Medic |
-| GET | `/runs/{id}/events` | SSE stream of steps |
-| GET | `/approvals` | Pending approvals |
-| POST | `/approvals/{id}/decide` | Approve / reject |
+| GET | `/me` | Signed-in user and their workspaces |
+| GET | `/workspaces/{id}/runs` | Runs, newest first (`limit`, `cursor`) |
+| GET | `/workspaces/{id}/approvals` | Approvals (`status=pending`, or `decided=true` for history) |
+| GET | `/workspaces/{id}/summary` | Overview counts: runs today, pending approvals, tokens vs budget |
+| POST | `/runs` | Start a run |
+| GET | `/runs/{id}` | Run with steps and approvals |
+| POST | `/runs/{id}/stop` | Stop a queued, running, or waiting run (`stopped_by_user`) |
+| POST | `/runs/{id}/stream-token` | 60-second token for the SSE stream, bound to run and user |
+| GET | `/runs/{id}/events?token=` | SSE: `step`, `approval_requested`, `approval_decided`, `status`, `done` |
+| POST | `/approvals/{id}/decide` | Approve / reject as the signed-in user |
 | POST | `/demo/inject/{scenario}` | Break or restore demo app |
 
 ---
@@ -296,7 +313,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] LLM layer: Token Factory client, router, costs, budgets, native + text tool calls
   - [x] Tool registry with policy tags; policy engine; approvals pause and resume runs
   - [x] Agent loop with limits, stop reasons, redacted step recording; Echo Ops toy agent
-  - [x] API: runs, run SSE events, approvals; JSON logs with request id; optional DEV_API_KEY
+  - [x] API: runs, run SSE events, approvals; JSON logs with request id
   - [x] Tests on real Postgres with a fake LLM; CI runs migrations and tests without secrets
   - [x] Verified end to end with Nemotron Nano: run pauses at `restart_fake_service`, approve, run completes
   - [x] Review fixes: job heartbeat and owner checks, dead jobs fail their run, shutdown requeues the job,
@@ -305,7 +322,21 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         log extras and approval arguments redacted (101 tests)
   - [x] Reasoning off for Nano and Super (`LLM_REASONING_TIERS`, default ultra). Echo Ops end to end on Nano:
         3 calls, 64 completion tokens in total (was 700 to 950 per call with reasoning on)
-- [ ] Phase 2 — Frontend shell
+- [ ] Phase 2 — Frontend shell (built and verified locally; one item left)
+  - [x] API auth: internal JWT from the web proxy, users upserted by GitHub id, first-login workspace,
+        `workspace_members` with 404 for non-members, stream tokens, stop endpoint, typed SSE events
+  - [x] Approvals record the real user; responses carry the decider's login, name, and avatar
+  - [x] Web: Auth.js GitHub sign-in, middleware, `/api/gc` proxy, typed client (`make api-types`)
+  - [x] App shell: sidebar with workspace switcher and pending badge, user menu, mobile drawer, themes
+  - [x] Overview, Runs list, New run dialog, live run timeline with inline approvals and Stop,
+        Approvals inbox (pending and decided), placeholders for Map, Deploy, Incidents, Connections, Settings
+  - [x] Tests: 127 API (auth, membership, stream tokens, stop), 17 web (reducer, approval card, JWT);
+        CI runs vitest and checks generated API types; no secrets needed
+  - [x] Verified in Chrome with an Auth.js session for a test GitHub identity: start a run from the UI,
+        live steps, refresh mid-run (no duplicates), approve inline, decider shown, second user gets 404,
+        signed-out URLs redirect to sign-in
+  - [ ] Real GitHub sign-in once: set `AUTH_GITHUB_ID`/`GITHUB_APP_CLIENT_ID` and the GitHub App callback
+        URL `http://localhost:3000/api/auth/callback/github`
 - [ ] Phase 3 — Discovery + graph
 - [ ] Phase 4 — Build + deploy agents
 - [ ] Phase 5 — Medic + fixes
@@ -317,9 +348,10 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 **Last updated:** 2026-10-06
 **Known issues / blockers:**
 - Phase 0 open items: Tavily API key; budget alerts (AWS $20 / $50, Azure $20).
-- No auth yet: anyone who can reach the API can approve, and approvals are recorded as
-  `dev (no auth yet)`. Phase 2 must add login and record the real approver (section 7 rule 8)
-  before any real write or emergency tool ships.
+- Any member of a workspace can approve. Roles (who may approve write vs emergency actions) come with
+  Settings in Phase 6.
+- The browser opens the run stream directly on the API, so the hosted API needs `WEB_ORIGIN` set to the
+  web app's URL and must be reachable from the browser (Phase 6).
 - The daily token budget is checked without a lock. Exact with one worker; with several workers the
   overshoot is at most one capped call per worker.
 - Tool calling with reasoning off is verified only on the Echo Ops toy agent. Re-check quality when
@@ -330,6 +362,12 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-06 | Sign-in with Auth.js (NextAuth v5) and the GitHub provider, using our GitHub App's OAuth client | One identity for login now and repo access in Phase 3; no passwords to store |
+| 2026-10-06 | REST goes browser -> Next.js `/api/gc/*` proxy -> FastAPI with a 5-minute HS256 internal JWT (`INTERNAL_JWT_SECRET`) | The browser never holds an API credential, and REST needs no CORS |
+| 2026-10-06 | SSE goes browser -> FastAPI directly with a 60-second stream token bound to run and user; CORS only for `WEB_ORIGIN` | Long-lived streams time out behind serverless proxies |
+| 2026-10-06 | TanStack Query plus a client generated from FastAPI's OpenAPI schema (openapi-typescript, openapi-fetch); CI fails on drift | One typed contract between API and web, no hand-written types |
+| 2026-10-06 | Users upserted by GitHub numeric id; a workspace per user on first login; non-members get 404, not 403 | Login renames do not split accounts; workspace ids cannot be probed |
+| 2026-10-06 | Stopping a run rejects its pending approvals, recorded as decided by the user who stopped it | The inbox never shows actions for runs that cannot resume |
 | 2026-10-06 | Reasoning off by default for Nano and Super (`enable_thinking=false`), on for Ultra (`LLM_REASONING_TIERS`) | Verified on all three models: a test reply went from 20+ tokens with no answer to 2 tokens; Echo Ops tool calls went from 700 to 950 completion tokens per call to under 30. Medic's root cause work keeps reasoning |
 | 2026-10-06 | Worker heartbeats its job lock; only the lock owner can finish a job; budgets cap each call's max_tokens | A long run is never run twice, a dead job never leaves a run stuck, and one call cannot blow far past a budget |
 | 2026-10-06 | Local dev and CI use a `pgvector/pgvector:pg16` container (host port 5433); Neon only for the hosted demo | Fast, free, resettable; CI needs no secrets; avoids clashing with a host Postgres on 5432 |
