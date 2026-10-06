@@ -1,6 +1,27 @@
-# Local development. Both services hot reload from the mounted source.
-# Postgres is not here: we use Neon (DATABASE_URL in .env) from Phase 1.
+# Local development. api, worker, and web hot reload from the mounted source.
+# Postgres runs here for local dev and tests. Neon is only for the hosted demo.
+x-api-env: &api-env
+  # Overrides any DATABASE_URL in .env so local dev never touches the hosted database.
+  DATABASE_URL: postgresql+asyncpg://groundcrew:groundcrew@postgres:5432/groundcrew
+
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: groundcrew
+      POSTGRES_PASSWORD: groundcrew
+      POSTGRES_DB: groundcrew
+    # Host port 5433 so it does not clash with a Postgres already running on the host.
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U groundcrew -d groundcrew"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
   api:
     build: ./apps/api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -9,8 +30,27 @@ services:
     env_file:
       - path: .env
         required: false
+    environment: *api-env
     volumes:
       - ./apps/api/app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: ./apps/api
+    command: python -m app.worker
+    env_file:
+      - path: .env
+        required: false
+    environment: *api-env
+    volumes:
+      - ./apps/api/app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Let the worker finish its current step on `docker compose down`.
+    stop_grace_period: 30s
 
   web:
     build:
@@ -28,3 +68,6 @@ services:
       - /app/.next
     depends_on:
       - api
+
+volumes:
+  pgdata:

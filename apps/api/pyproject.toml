@@ -11,6 +11,11 @@ dependencies = [
     "openai",
     "httpx",
     "python-dotenv",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "alembic",
+    "pgvector",
+    "cryptography",
 ]
 
 [dependency-groups]
