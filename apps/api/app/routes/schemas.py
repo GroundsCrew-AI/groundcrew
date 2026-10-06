@@ -142,9 +142,11 @@ class RunOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     duration_ms: int | None
+    # Actions a person rejected in this run. They did not run, even if the run succeeded.
+    rejected_actions: int = 0
 
     @classmethod
-    def build(cls, run: Run) -> "RunOut":
+    def build(cls, run: Run, *, rejected_actions: int = 0) -> "RunOut":
         return cls(
             id=run.id,
             workspace_id=run.workspace_id,
@@ -162,6 +164,7 @@ class RunOut(BaseModel):
             started_at=run.started_at,
             finished_at=run.finished_at,
             duration_ms=_duration_ms(run),
+            rejected_actions=rejected_actions,
         )
 
 

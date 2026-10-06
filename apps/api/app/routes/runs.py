@@ -18,7 +18,7 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import queue
@@ -73,6 +73,18 @@ async def member_run(
     return run
 
 
+async def rejected_counts(session: AsyncSession, run_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """How many actions people rejected, per run."""
+    if not run_ids:
+        return {}
+    rows = await session.execute(
+        select(Approval.run_id, func.count(Approval.id))
+        .where(Approval.run_id.in_(run_ids), Approval.status == ApprovalStatus.rejected)
+        .group_by(Approval.run_id)
+    )
+    return {run_id: int(count) for run_id, count in rows}
+
+
 async def run_approvals(session: AsyncSession, run: Run) -> list[ApprovalOut]:
     rows = await session.execute(
         select(Approval, User)
@@ -117,10 +129,12 @@ async def _steps_after(session: AsyncSession, run_id: uuid.UUID, after_seq: int)
 async def get_run(run_id: uuid.UUID, user: CurrentUser, session: SessionDep) -> RunDetail:
     run = await member_run(session, user, run_id)
     steps = await _steps_after(session, run_id, 0)
+    approvals = await run_approvals(session, run)
+    rejected = sum(1 for a in approvals if a.status == ApprovalStatus.rejected)
     return RunDetail(
-        **RunOut.build(run).model_dump(),
+        **RunOut.build(run, rejected_actions=rejected).model_dump(),
         steps=[StepOut.build(s) for s in steps],
-        approvals=await run_approvals(session, run),
+        approvals=approvals,
     )
 
 
@@ -162,7 +176,8 @@ async def stop_run(run_id: uuid.UUID, user: CurrentUser, session: SessionDep) ->
         session, run, kind="stopped", output_summary=f"Stopped by {user.github_login or user.id}"
     )
     await session.commit()
-    return RunOut.build(run)
+    counts = await rejected_counts(session, [run.id])
+    return RunOut.build(run, rejected_actions=counts.get(run.id, 0))
 
 
 def _sse(event: str, data: BaseModel, event_id: int | None = None) -> str:

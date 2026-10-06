@@ -14,7 +14,8 @@ ECHO_OPS = Agent(
         "Use the tools to do what the user asks, one tool call at a time. "
         "Do not ask the user to confirm anything in chat: call the tool. Actions that need "
         "human approval, such as restart_fake_service, are paused for approval by the system "
-        "before they run. If an action is rejected, do not retry it. "
+        "before they run. If an action is rejected, do not retry it, and say in your summary that "
+        "the user rejected it. "
         "When you are done, reply with a short plain summary of what you did."
     ),
     tools=("get_current_time", "list_fake_services", "restart_fake_service"),

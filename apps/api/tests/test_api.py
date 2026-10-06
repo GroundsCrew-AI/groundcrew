@@ -240,6 +240,7 @@ async def test_full_flow_pause_approve_complete(
         "Restarted api.",
     )
     assert run["duration_ms"] is not None and run["total_tokens"] == 360
+    assert run["rejected_actions"] == 0
     assert [s["kind"] for s in run["steps"]] == [
         "llm",
         "tool",
@@ -497,6 +498,11 @@ async def test_stop_running_and_waiting_runs(
     assert run["steps"][-1]["output_summary"] == "Stopped by alice"
     [approval] = run["approvals"]
     assert approval["status"] == "rejected" and approval["decided_by_login"] == "alice"
+    assert run["rejected_actions"] == 1 and stopped.json()["rejected_actions"] == 1
+    listed = (
+        await client.get(f"/workspaces/{alice.workspace_id}/runs", headers=alice.headers)
+    ).json()["items"]
+    assert [r["rejected_actions"] for r in listed] == [1]
     assert (await client.post(f"/runs/{run_id}/stop", headers=alice.headers)).status_code == 409
     decide = await client.post(
         f"/approvals/{approval['id']}/decide", json={"decision": "approve"}, headers=alice.headers

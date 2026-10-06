@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.db.models import TERMINAL_RUN_STATUSES, Approval, ApprovalStatus, Run, RunStep, User
 from app.llm.budget import tokens_used_today
 from app.routes.deps import CurrentUser, SessionDep, SettingsDep
+from app.routes.runs import rejected_counts
 from app.routes.schemas import (
     ApprovalOut,
     MeOut,
@@ -85,8 +86,9 @@ async def list_runs(
     runs = list(await session.scalars(query))
     has_more = len(runs) > limit
     runs = runs[:limit]
+    rejected = await rejected_counts(session, [r.id for r in runs])
     return RunPage(
-        items=[RunOut.build(r) for r in runs],
+        items=[RunOut.build(r, rejected_actions=rejected.get(r.id, 0)) for r in runs],
         next_cursor=_encode_cursor(runs[-1]) if has_more else None,
     )
 

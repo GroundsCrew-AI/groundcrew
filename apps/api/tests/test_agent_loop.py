@@ -9,7 +9,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from app import queue
-from app.agents.base import REJECTED_MESSAGE, AgentRunner, pending_tool_calls
+from app.agents.base import AgentRunner, pending_tool_calls, rejected_message
 from app.config import Settings
 from app.db.models import (
     Approval,
@@ -137,7 +137,16 @@ async def test_reject_feeds_rejection_back_and_completes(
 
     run, steps = await _load(session_factory, run_id)
     assert (run.status, run.stop_reason) == (RunStatus.succeeded, StopReason.completed)
-    assert llm.tool_results()[-1] == REJECTED_MESSAGE
+    told = llm.tool_results()[-1]
+    assert told == rejected_message("restart_fake_service", {"name": "api"})
+    assert 'restart_fake_service({"name": "api"}) was not run' in told
+    assert "the user rejected this action" in told
+    # Recorded as a rejected call, not as a tool that ran.
+    kinds = [(s.kind, s.tool_name) for s in steps]
+    assert ("tool_rejected", "restart_fake_service") in kinds
+    assert ("tool", "restart_fake_service") not in kinds
+    rejected_step = next(s for s in steps if s.kind == "tool_rejected")
+    assert rejected_step.latency_ms is None
     assert "restarted api" not in [s.output_summary for s in steps]
     async with session_factory() as session:
         stored = await session.get_one(Approval, approval.id)

@@ -52,10 +52,24 @@ logger = logging.getLogger("groundcrew.agents")
 
 # Tool output sent back to the model is redacted and capped.
 MAX_TOOL_RESULT_CHARS = 8000
-REJECTED_MESSAGE = (
-    "Rejected by user: this action was not run. Do not retry it. "
-    "Continue without it or explain what you could not do."
-)
+
+
+def rejected_message(tool_name: str, arguments: dict[str, Any]) -> str:
+    """What the model is told when a person rejects its action. Names the exact action, so
+    the model reports the rejection instead of inventing another reason."""
+    return (
+        f"Rejected by the user: {tool_name}({json.dumps(arguments)}) was not run. "
+        "Do not retry it. In your answer, say plainly that the user rejected this action; "
+        "do not give any other reason for it not happening."
+    )
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """What a pending tool call produced. `rejected` means a person said no: it did not run."""
+
+    text: str
+    rejected: bool = False
 
 
 @dataclass(frozen=True)
@@ -344,17 +358,18 @@ class AgentRunner:
             await record_step(
                 session,
                 run,
-                kind="tool",
+                # A rejected call never ran, so it is not recorded as a tool step.
+                kind="tool_rejected" if result.rejected else "tool",
                 agent=agent.name,
                 tool_name=name,
                 input_summary=f"{name}({_call_arguments_text(call)})",
-                output_summary=result,
-                latency_ms=round((time.perf_counter() - start) * 1000),
+                output_summary=result.text,
+                latency_ms=None if result.rejected else round((time.perf_counter() - start) * 1000),
             )
             message = {
                 "role": "tool",
                 "tool_call_id": call["id"],
-                "content": summarize(result, MAX_TOOL_RESULT_CHARS),
+                "content": summarize(result.text, MAX_TOOL_RESULT_CHARS),
             }
             run.messages = [*run.messages, message]
             await session.commit()
@@ -362,25 +377,31 @@ class AgentRunner:
 
     async def _run_tool_call(
         self, session: AsyncSession, run: Run, agent: Agent, call: dict[str, Any]
-    ) -> str | None:
+    ) -> ToolResult | None:
         """The tool result to send back to the model, or None when waiting for approval."""
         name: str = call["function"]["name"]
         if name not in agent.tools:
-            return f"error: tool {name!r} is not available. Available: {', '.join(agent.tools)}"
+            return ToolResult(
+                f"error: tool {name!r} is not available. Available: {', '.join(agent.tools)}"
+            )
         try:
             spec = self.tools.get(name)
         except ToolNotFoundError:
-            return f"error: tool {name!r} does not exist"
+            return ToolResult(f"error: tool {name!r} does not exist")
 
         if call.get("x_arguments_error"):
-            return f"error: {call['x_arguments_error']}. Send the arguments as a JSON object."
+            return ToolResult(
+                f"error: {call['x_arguments_error']}. Send the arguments as a JSON object."
+            )
         raw_args, args_error = parse_arguments(call["function"].get("arguments"))
         if args_error:
-            return f"error: {args_error}"
+            return ToolResult(f"error: {args_error}")
         try:
             args = spec.args_model.model_validate(raw_args)
         except ValidationError as exc:
-            return f"error: invalid arguments for {name}: {exc.errors(include_url=False)}"
+            return ToolResult(
+                f"error: invalid arguments for {name}: {exc.errors(include_url=False)}"
+            )
 
         try:
             outcome = await handle_tool_call(session, run, spec, args, call["id"])
@@ -388,15 +409,16 @@ class AgentRunner:
             raise  # a bug, not a tool failure: stop the run
         except Exception as exc:
             logger.warning("tool failed", extra={"tool": name, "error": type(exc).__name__})
-            return f"error: {name} failed: {type(exc).__name__}: {exc}"
+            return ToolResult(f"error: {name} failed: {type(exc).__name__}: {exc}")
 
         match outcome:
             case AwaitingApproval():
                 return None
-            case Rejected():
-                return REJECTED_MESSAGE
+            case Rejected(approval=approval):
+                # The approved/rejected arguments are the stored ones, not the model's latest.
+                return ToolResult(rejected_message(name, approval.arguments), rejected=True)
             case Executed(output=output):
-                return output
+                return ToolResult(output)
 
 
 async def run_agent_job(session_factory: SessionFactory, payload: dict[str, Any]) -> None:
