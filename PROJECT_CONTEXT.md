@@ -239,6 +239,15 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 ## 14. Progress (update at the end of every phase)
 
 - [ ] Phase 0 — Setup
+  - [x] Monorepo scaffold (section 4 layout, READMEs in empty folders)
+  - [x] API skeleton: FastAPI `/health`, settings, tests, Dockerfile (uv)
+  - [x] Web skeleton: Next.js 15, Tailwind, shadcn/ui, health status page
+  - [x] Token Factory smoke test script (`make models`)
+  - [x] Local dev: `.env.example`, `.gitignore`, docker-compose, Makefile
+  - [x] CI: ruff, mypy, pytest, eslint, tsc, next build
+  - [x] Starter README
+  - [ ] Fill `.env` with Token Factory URL, key, and model IDs; run `make models`
+  - [ ] Credits, cloud accounts, budget alerts
 - [ ] Phase 1 — Backend + agent loop
 - [ ] Phase 2 — Frontend shell
 - [ ] Phase 3 — Discovery + graph
@@ -249,13 +258,14 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 - [ ] Phase 8 — Judging upkeep
 
 **Current phase:** 0
-**Last updated:** 2026-10-05
+**Last updated:** 2026-10-06
 **Known issues / blockers:** none yet
 
 ## 15. Decisions log (newest first)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-06 | uv for Python dependencies and lockfile (`apps/api/uv.lock`) | Fast, reproducible installs; one tool for venv, lock, and run |
 | 2026-10-05 | Own agent loop, no framework | Full control over guardrails and timeline |
 | 2026-10-05 | Postgres as queue + vector store | No extra services to run or pay for |
 | 2026-10-05 | Fixes go through PRs; emergency actions need approval | Works with customer pipelines; safe by default |
