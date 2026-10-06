@@ -249,7 +249,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] Code pushed to GitHub, CI passing
   - [x] Token Factory credits; test call to Nemotron 3 Nano, Super, and Ultra (`make models`, 3/3 ok)
   - [x] AWS and Azure accounts
-  - [ ] Neon Postgres project (in progress), `DATABASE_URL` in `.env`
+  - [x] Neon Postgres project, `DATABASE_URL` in `.env` (pooled, `sslmode=require`; Postgres 18.6, pgvector 0.8.6 available, connection verified)
   - [ ] Tavily account and API key
   - [ ] Budget alerts: AWS $20 / $50, Azure $20 (section 12)
 - [ ] Phase 1 — Backend + agent loop
