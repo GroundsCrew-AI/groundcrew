@@ -1,6 +1,7 @@
 """Structured JSON logging with a request id (API) or job id (worker) on every line.
 
-Every message is passed through redact() so a secret that slips into a log call is removed.
+Every message and every `extra=` value is passed through redact(), so a secret that slips
+into a log call is removed.
 Never log API keys, tokens, or full prompts in the first place.
 """
 
@@ -22,6 +23,13 @@ _STANDARD_ATTRS = frozenset(
 )
 
 
+def _safe_value(value: Any) -> Any:
+    """Numbers, booleans, and None as they are; anything else redacted as text."""
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    return redact(str(value))
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         entry: dict[str, Any] = {
@@ -36,7 +44,7 @@ class JsonFormatter(logging.Formatter):
             entry["job_id"] = job_id
         for key, value in vars(record).items():
             if key not in _STANDARD_ATTRS and not key.startswith("_"):
-                entry[key] = value
+                entry[key] = _safe_value(value)
         if record.exc_info:
             entry["exc"] = redact(self.formatException(record.exc_info))
         return json.dumps(entry, default=str)

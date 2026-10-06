@@ -68,3 +68,22 @@ def test_json_log_lines_are_redacted() -> None:
     assert "abcdefgh12345" not in line["msg"]
     assert line["kind"] == "run_agent"
     assert line["level"] == "INFO"
+
+
+def test_json_log_extra_fields_are_redacted() -> None:
+    record = logging.LogRecord("t", logging.INFO, "f", 1, "llm call", (), None)
+    record.error = "Bearer abcdefghijklmnop failed"
+    record.prompt_tokens = 21
+    entry = json.loads(JsonFormatter().format(record))
+    assert "abcdefghijklmnop" not in entry["error"]
+    assert entry["prompt_tokens"] == 21
+
+
+def test_redact_json_hides_secret_keys_and_values() -> None:
+    from app.security.redact import redact_json
+
+    value = {"name": "api", "password": "p", "nested": [{"token": "t0k3n"}, "Bearer abcdefgh123"]}
+    out = redact_json(value)
+    assert out["name"] == "api" and out["password"] == REDACTED
+    assert out["nested"][0]["token"] == REDACTED
+    assert "abcdefgh123" not in out["nested"][1]

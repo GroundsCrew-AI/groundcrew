@@ -6,6 +6,7 @@ deliberately broad: a false positive costs a little readability, a miss leaks a 
 
 import re
 from functools import lru_cache
+from typing import Any
 
 from app.config import get_settings
 
@@ -86,3 +87,19 @@ def summarize(text: str | None, limit: int = MAX_SUMMARY_CHARS) -> str | None:
     if text is None:
         return None
     return truncate(redact(text), limit)
+
+
+_SECRET_KEY_NAME = re.compile(rf"(?i)(?:{_KEY_WORDS})")
+
+
+def redact_json(value: Any, key: str | None = None) -> Any:
+    """Redact a JSON-like value for display. Values under secret-sounding keys are hidden."""
+    if key is not None and _SECRET_KEY_NAME.search(key) and isinstance(value, str):
+        return REDACTED
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {k: redact_json(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_json(v) for v in value]
+    return value

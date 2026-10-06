@@ -123,7 +123,6 @@ async def _event_stream(
 async def run_events(
     run_id: uuid.UUID,
     request: Request,
-    session: SessionDep,
     session_factory: SessionFactoryDep,
     settings: SettingsDep,
     last_event_id: Annotated[str | None, Header()] = None,
@@ -132,8 +131,14 @@ async def run_events(
 
     Events: `step` (id = seq), `status`, and a final `end`. Reconnects with
     Last-Event-ID continue after that step.
+
+    No request-scoped session here: FastAPI closes it only after the stream ends, which
+    would hold a pooled connection idle in transaction for every open stream. Each poll
+    uses its own short session instead.
     """
-    if await session.get(Run, run_id) is None:
+    async with session_factory() as session:
+        exists = await session.get(Run, run_id) is not None
+    if not exists:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found.")
     after_seq = int(last_event_id) if last_event_id and last_event_id.isdigit() else 0
     stream = _event_stream(

@@ -7,10 +7,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.db.models import ApprovalStatus, RunStatus, StopReason, ToolPolicy
 from app.policy.engine import Decision
+from app.security.redact import redact_json
 
 
 class RunCreate(BaseModel):
@@ -81,12 +82,19 @@ class ApprovalOut(BaseModel):
     workspace_id: uuid.UUID
     tool_name: str
     policy: ToolPolicy
+    # Redacted for display. The stored arguments, which are what runs, are not changed.
     arguments: dict[str, Any]
     status: ApprovalStatus
     decided_by: str | None
     decided_at: datetime | None
     executed_at: datetime | None
     created_at: datetime
+
+    @field_validator("arguments")
+    @classmethod
+    def _redact_arguments(cls, value: dict[str, Any]) -> dict[str, Any]:
+        redacted: dict[str, Any] = redact_json(value)
+        return redacted
 
 
 class DecideIn(BaseModel):

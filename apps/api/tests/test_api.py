@@ -9,11 +9,21 @@ from typing import Any
 import httpx
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.agents.base import AgentRunner
 from app.config import Settings, get_settings
-from app.db.models import Job, Run, RunStatus, RunStep, StopReason, Workspace
+from app.db.models import (
+    Approval,
+    ApprovalStatus,
+    Job,
+    Run,
+    RunStatus,
+    RunStep,
+    StopReason,
+    ToolPolicy,
+    Workspace,
+)
 from app.db.session import SessionFactory, get_session_factory
 from app.main import app
 from app.worker import Worker
@@ -186,6 +196,56 @@ async def test_sse_streams_new_steps_live(
     assert steps == ["existing", "live one", "live two"]
     assert statuses == ["running", "waiting_approval", "succeeded"]
     assert events[-1][0] == "end"
+
+
+async def test_sse_does_not_hold_a_connection_between_polls(
+    client: httpx.AsyncClient, workspace: Workspace, session_factory: SessionFactory
+) -> None:
+    # A slow poll so the stream is idle between polls while we look.
+    app.dependency_overrides[get_settings] = lambda: _settings(sse_poll_interval_ms=1000)
+    async with session_factory() as session:
+        run = Run(workspace_id=workspace.id, agent="echo_ops", goal="g", status=RunStatus.running)
+        session.add(run)
+        await session.commit()
+
+    streams = [asyncio.create_task(client.get(f"/runs/{run.id}/events")) for _ in range(3)]
+    await asyncio.sleep(0.4)
+    async with session_factory() as session:
+        idle_in_tx = await session.scalar(
+            text(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                "AND state = 'idle in transaction' AND pid <> pg_backend_pid()"
+            )
+        )
+    await _set_status(session_factory, run.id, RunStatus.succeeded)
+    await asyncio.wait_for(asyncio.gather(*streams), timeout=5)
+    assert idle_in_tx == 0
+
+
+async def test_approval_arguments_are_redacted_for_display(
+    client: httpx.AsyncClient, workspace: Workspace, session_factory: SessionFactory
+) -> None:
+    async with session_factory() as session:
+        run = Run(workspace_id=workspace.id, agent="echo_ops", goal="g")
+        session.add(run)
+        await session.flush()
+        approval = Approval(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            tool_call_id="c1",
+            tool_name="restart_fake_service",
+            policy=ToolPolicy.write,
+            arguments={"name": "api", "api_token": "abc123abc123", "url": "https://u:pw12345@h"},
+            status=ApprovalStatus.pending,
+        )
+        session.add(approval)
+        await session.commit()
+    [shown] = (await client.get("/approvals")).json()
+    assert shown["arguments"]["name"] == "api"
+    assert "abc123abc123" not in json.dumps(shown) and "pw12345" not in json.dumps(shown)
+    async with session_factory() as session:  # what runs is unchanged
+        stored = await session.get_one(Approval, approval.id)
+    assert stored.arguments["api_token"] == "abc123abc123"  # noqa: S105
 
 
 async def test_sse_resumes_after_last_event_id(
