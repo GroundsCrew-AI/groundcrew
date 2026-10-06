@@ -1,6 +1,18 @@
-"""Token and call budgets, checked before every LLM call (PROJECT_CONTEXT.md section 7.7)."""
+"""Token and call budgets, checked before every LLM call (PROJECT_CONTEXT.md section 7.7).
 
+check_budget also returns the max_tokens for the next call, so one call cannot go far past
+MAX_TOKENS_PER_RUN or DAILY_TOKEN_BUDGET: the prompt size is estimated (about 4 characters
+per token) and the completion is capped to what is left. If what is left is below
+LLM_MIN_COMPLETION_TOKENS, the run stops instead of making a call that would be cut off.
+
+The daily check reads usage without a lock. That is exact with one worker (jobs run one at a
+time); with several workers, the overshoot is at most one capped call per worker.
+"""
+
+import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,20 +49,51 @@ async def ultra_calls(session: AsyncSession, run: Run) -> int:
     return int(await session.scalar(query) or 0)
 
 
+def estimate_prompt_tokens(
+    messages: Sequence[dict[str, Any]], tools: Sequence[dict[str, Any]] = ()
+) -> int:
+    """Rough prompt size: about 4 characters per token. Only used to cap max_tokens."""
+    chars = len(json.dumps(list(messages), default=str)) + len(json.dumps(list(tools)))
+    return chars // 4 + 1
+
+
 async def check_budget(
-    session: AsyncSession, run: Run, tier: Tier, settings: Settings | None = None
-) -> None:
+    session: AsyncSession,
+    run: Run,
+    tier: Tier,
+    settings: Settings | None = None,
+    *,
+    prompt_tokens: int = 0,
+) -> int:
+    """Raise BudgetExceededError if the next call is not allowed, else return its max_tokens.
+
+    `prompt_tokens` is the estimated size of the prompt about to be sent.
+    """
     settings = settings or get_settings()
-    if run.total_tokens >= settings.max_tokens_per_run:
-        limit = settings.max_tokens_per_run
+    cap = settings.llm_max_tokens
+
+    run_limit = settings.max_tokens_per_run
+    if run.total_tokens >= run_limit:
         raise BudgetExceededError(
-            f"Run used {run.total_tokens} tokens (MAX_TOKENS_PER_RUN={limit})."
+            f"Run used {run.total_tokens} tokens (MAX_TOKENS_PER_RUN={run_limit})."
         )
+    cap = min(cap, run_limit - run.total_tokens - prompt_tokens)
+    if cap < settings.llm_min_completion_tokens:
+        raise BudgetExceededError(
+            f"Run used {run.total_tokens} tokens and the next prompt is about {prompt_tokens}; "
+            f"not enough left for another call (MAX_TOKENS_PER_RUN={run_limit})."
+        )
+
     if settings.daily_token_budget is not None:
+        daily = settings.daily_token_budget
         used = await tokens_used_today(session)
-        if used >= settings.daily_token_budget:
+        if used >= daily:
+            raise BudgetExceededError(f"{used} tokens used today (DAILY_TOKEN_BUDGET={daily}).")
+        cap = min(cap, daily - used - prompt_tokens)
+        if cap < settings.llm_min_completion_tokens:
             raise BudgetExceededError(
-                f"{used} tokens used today (DAILY_TOKEN_BUDGET={settings.daily_token_budget})."
+                f"{used} tokens used today; not enough left for another call "
+                f"(DAILY_TOKEN_BUDGET={daily})."
             )
     if tier == Tier.ultra and settings.max_ultra_calls_per_incident is not None:
         calls = await ultra_calls(session, run)
@@ -59,3 +102,4 @@ async def check_budget(
                 f"{calls} Ultra calls already made "
                 f"(MAX_ULTRA_CALLS_PER_INCIDENT={settings.max_ultra_calls_per_incident})."
             )
+    return cap

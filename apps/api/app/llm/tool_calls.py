@@ -22,8 +22,20 @@ class ToolCall(BaseModel):
     id: str
     name: str
     arguments: dict[str, Any]
-    # Set when the model sent arguments that are not a JSON object.
+    # Set when the model sent arguments that are not a JSON object; `arguments` is then {}
+    # and `raw_arguments` keeps exactly what the model sent.
     arguments_error: str | None = None
+    raw_arguments: str | None = None
+
+
+def raw_text(raw: object) -> str | None:
+    """The model's arguments as text, for the record."""
+    if raw is None or isinstance(raw, str):
+        return raw
+    try:
+        return json.dumps(raw)
+    except (TypeError, ValueError):
+        return repr(raw)
 
 
 def strip_reasoning(text: str) -> str:
@@ -97,6 +109,7 @@ def parse_text_tool_calls(content: str, allowed: Iterable[str]) -> list[ToolCall
                         name=name,
                         arguments=arguments,
                         arguments_error=error,
+                        raw_arguments=raw_text(raw_args) if error else None,
                     )
                 )
     return calls

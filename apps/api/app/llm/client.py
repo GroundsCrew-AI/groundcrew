@@ -16,7 +16,13 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from app.config import Settings, get_settings
-from app.llm.tool_calls import ToolCall, parse_arguments, parse_text_tool_calls, strip_reasoning
+from app.llm.tool_calls import (
+    ToolCall,
+    parse_arguments,
+    parse_text_tool_calls,
+    raw_text,
+    strip_reasoning,
+)
 from app.security.redact import summarize
 
 logger = logging.getLogger("groundcrew.llm")
@@ -44,6 +50,32 @@ class LLMResponse(BaseModel):
     completion_tokens: int
     latency_ms: int
 
+    @property
+    def truncated(self) -> bool:
+        """The model hit max_tokens: the answer (or a tool call) may be cut off."""
+        return self.finish_reason == "length"
+
+
+# Keys we keep on stored tool calls for our own bookkeeping. Never sent to the provider.
+PRIVATE_KEY_PREFIX = "x_"
+
+
+def wire_messages(messages: Sequence[Message]) -> list[Message]:
+    """Messages as the provider should see them: private bookkeeping keys removed."""
+    out: list[Message] = []
+    for message in messages:
+        calls = message.get("tool_calls")
+        if calls:
+            message = {
+                **message,
+                "tool_calls": [
+                    {k: v for k, v in call.items() if not k.startswith(PRIVATE_KEY_PREFIX)}
+                    for call in calls
+                ],
+            }
+        out.append(message)
+    return out
+
 
 class ChatModel(Protocol):
     """What the agent loop needs. Tests pass a fake that implements this."""
@@ -55,6 +87,7 @@ class ChatModel(Protocol):
         messages: Sequence[Message],
         tools: Sequence[ToolSchema] = (),
         max_tokens: int | None = None,
+        reasoning: bool = True,
     ) -> LLMResponse: ...
 
 
@@ -96,15 +129,19 @@ class TokenFactoryClient:
         messages: Sequence[Message],
         tools: Sequence[ToolSchema] = (),
         max_tokens: int | None = None,
+        reasoning: bool = True,
     ) -> LLMResponse:
+        """One chat completion. `reasoning=False` asks Nemotron to answer without thinking."""
         kwargs: dict[str, Any] = {
             "model": model_id,
-            "messages": list(messages),
+            "messages": wire_messages(messages),
             "max_tokens": max_tokens or self._settings.llm_max_tokens,
         }
         if tools:
             kwargs["tools"] = list(tools)
             kwargs["tool_choice"] = "auto"
+        if not reasoning:
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
         start = time.perf_counter()
         for attempt in range(1, self.MAX_ATTEMPTS + 1):
@@ -135,6 +172,7 @@ class TokenFactoryClient:
                 "attempts": attempt,
                 "tool_calls": len(response.tool_calls),
                 "finish_reason": response.finish_reason,
+                "reasoning": reasoning,
             },
         )
         return response
@@ -157,7 +195,13 @@ class TokenFactoryClient:
             function = cast(Any, call).function
             arguments, error = parse_arguments(function.arguments)
             tool_calls.append(
-                ToolCall(id=call.id, name=function.name, arguments=arguments, arguments_error=error)
+                ToolCall(
+                    id=call.id,
+                    name=function.name,
+                    arguments=arguments,
+                    arguments_error=error,
+                    raw_arguments=raw_text(function.arguments) if error else None,
+                )
             )
 
         from_text = False
@@ -168,13 +212,8 @@ class TokenFactoryClient:
             if from_text:
                 content = None
 
-        if not content and not tool_calls and choice.finish_reason == "length":
-            # Nemotron reasons before answering and can spend every token on it.
-            raise LLMError(
-                f"{model_id} hit max_tokens before answering (reasoning used the budget). "
-                "Raise LLM_MAX_TOKENS."
-            )
-
+        # finish_reason="length" is not an error here: the tokens were spent and the caller
+        # must record them. The agent loop decides what a truncated response means.
         return LLMResponse(
             model_id=model_id,
             content=content or None,

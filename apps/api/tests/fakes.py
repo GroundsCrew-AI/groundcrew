@@ -18,12 +18,13 @@ def reply(
     *calls: ToolCall,
     prompt_tokens: int = 100,
     completion_tokens: int = 20,
+    finish_reason: str | None = None,
 ) -> LLMResponse:
     return LLMResponse(
         model_id="test/nano",
         content=content,
         tool_calls=list(calls),
-        finish_reason="tool_calls" if calls else "stop",
+        finish_reason=finish_reason or ("tool_calls" if calls else "stop"),
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         latency_ms=5,
@@ -35,6 +36,8 @@ class FakeLLM:
         self.responses = list(responses)
         self.repeat_last = repeat_last
         self.requests: list[list[Message]] = []
+        self.max_tokens: list[int | None] = []
+        self.reasoning: list[bool] = []
 
     async def chat(
         self,
@@ -43,8 +46,11 @@ class FakeLLM:
         messages: Sequence[Message],
         tools: Sequence[ToolSchema] = (),
         max_tokens: int | None = None,
+        reasoning: bool = True,
     ) -> LLMResponse:
         self.requests.append(copy.deepcopy(list(messages)))
+        self.max_tokens.append(max_tokens)
+        self.reasoning.append(reasoning)
         if not self.responses:
             raise LLMError("FakeLLM has no scripted responses left")
         item = self.responses[0] if self.repeat_last and len(self.responses) == 1 else None

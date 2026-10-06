@@ -9,6 +9,9 @@ tells the model it was rejected.
 
 Every exit sets runs.stop_reason: completed, max_steps, budget, waiting_approval, error.
 Runs execute in the worker ("run_agent" / "resume_run" jobs), never in an HTTP request.
+
+No database transaction stays open while the model or a tool runs: the session commits
+before each call, so a slow call never pins a pooled connection.
 """
 
 import json
@@ -26,8 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.db.models import TERMINAL_RUN_STATUSES, Run, RunStatus, RunStep, StopReason
 from app.db.session import SessionFactory
-from app.llm.budget import BudgetExceededError, check_budget
-from app.llm.client import ChatModel, LLMResponse, Message, TokenFactoryClient
+from app.llm.budget import BudgetExceededError, check_budget, estimate_prompt_tokens
+from app.llm.client import ChatModel, LLMError, LLMResponse, Message, TokenFactoryClient
 from app.llm.costs import estimate_cost
 from app.llm.router import TaskType, route
 from app.llm.tool_calls import parse_arguments
@@ -38,7 +41,7 @@ from app.policy.engine import (
     Rejected,
     handle_tool_call,
 )
-from app.security.redact import summarize
+from app.security.redact import redact, summarize
 from app.steps import record_step
 from app.tools.registry import ToolNotFoundError, ToolRegistry, registry
 
@@ -68,17 +71,42 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _assistant_message(resp: LLMResponse) -> Message:
+def _used_tool_call_ids(messages: list[Message]) -> set[str]:
+    return {
+        call["id"]
+        for m in messages
+        if m.get("role") == "assistant"
+        for call in m.get("tool_calls") or []
+    }
+
+
+def _assistant_message(resp: LLMResponse, used_ids: set[str] | None = None) -> Message:
+    """The assistant message to store.
+
+    Tool call IDs are made unique within the run, because approvals are keyed by
+    (run_id, tool_call_id) and a provider may reuse IDs across turns. Arguments the model
+    sent as invalid JSON are kept in private `x_` keys (never sent to the provider), so the
+    record shows what the model really sent and the tool is not run with `{}`.
+    """
     message: Message = {"role": "assistant", "content": resp.content}
     if resp.tool_calls:
-        message["tool_calls"] = [
-            {
-                "id": call.id,
+        seen = set(used_ids or ())
+        calls: list[dict[str, Any]] = []
+        for call in resp.tool_calls:
+            call_id = call.id
+            if not call_id or call_id in seen:
+                call_id = f"call_gc_{uuid.uuid4().hex[:16]}"
+            seen.add(call_id)
+            entry: dict[str, Any] = {
+                "id": call_id,
                 "type": "function",
                 "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
             }
-            for call in resp.tool_calls
-        ]
+            if call.arguments_error:
+                entry["x_arguments_error"] = call.arguments_error
+                entry["x_raw_arguments"] = call.raw_arguments
+            calls.append(entry)
+        message["tool_calls"] = calls
     return message
 
 
@@ -92,10 +120,19 @@ def _describe(message: Message) -> str:
 
 def _describe_response(resp: LLMResponse) -> str:
     if resp.tool_calls:
-        calls = ", ".join(f"{c.name}({json.dumps(c.arguments)})" for c in resp.tool_calls)
+        calls = ", ".join(
+            f"{c.name}({c.raw_arguments if c.arguments_error else json.dumps(c.arguments)})"
+            for c in resp.tool_calls
+        )
         source = " (parsed from text)" if resp.tool_calls_from_text else ""
         return f"tool calls{source}: {calls}"
     return resp.content or ""
+
+
+def _call_arguments_text(call: dict[str, Any]) -> str:
+    """What the model sent as arguments, including invalid JSON, for the step record."""
+    raw = call.get("x_raw_arguments") or call["function"].get("arguments")
+    return str(raw) if raw else "{}"
 
 
 def pending_tool_calls(messages: list[Message]) -> list[dict[str, Any]]:
@@ -216,9 +253,20 @@ class AgentRunner:
                 return StopReason.max_steps
 
             target = route(agent.task_type, self.settings)
-            await check_budget(session, run, target.tier, self.settings)
+            max_tokens = await check_budget(
+                session,
+                run,
+                target.tier,
+                self.settings,
+                prompt_tokens=estimate_prompt_tokens(run.messages, schemas),
+            )
+            await session.commit()  # no transaction open during the model call
             resp = await self.llm.chat(
-                model_id=target.model_id, messages=run.messages, tools=schemas
+                model_id=target.model_id,
+                messages=run.messages,
+                tools=schemas,
+                max_tokens=max_tokens,
+                reasoning=target.reasoning,
             )
 
             cost = estimate_cost(
@@ -243,17 +291,32 @@ class AgentRunner:
                 cost_usd=cost,
             )
             # Reassign (not append) so SQLAlchemy sees the JSONB change.
-            run.messages = [*run.messages, _assistant_message(resp)]
+            assistant = _assistant_message(resp, _used_tool_call_ids(run.messages))
+            run.messages = [*run.messages, assistant]
             await session.commit()
 
             if not resp.tool_calls:
-                run.result = resp.content
+                if resp.truncated:
+                    # Tokens are recorded above. A cut-off answer is not a result.
+                    if resp.content:
+                        run.result = redact(resp.content)
+                        await session.commit()
+                        raise LLMError(
+                            f"The answer was cut off at max_tokens={max_tokens}. "
+                            "Raise LLM_MAX_TOKENS. The partial answer is in the run result."
+                        )
+                    raise LLMError(
+                        f"{resp.model_id} hit max_tokens={max_tokens} before answering "
+                        "(reasoning used the budget). Raise LLM_MAX_TOKENS."
+                    )
+                run.result = redact(resp.content) if resp.content else None
                 return StopReason.completed
 
     async def _handle_pending(self, session: AsyncSession, run: Run, agent: Agent) -> bool:
         """Run pending tool calls in order. Returns True when the run must wait for approval."""
         for call in pending_tool_calls(run.messages):
             name: str = call["function"]["name"]
+            await session.commit()  # no transaction open while the tool runs
             start = time.perf_counter()
             result = await self._run_tool_call(session, run, agent, call)
             if result is None:
@@ -264,7 +327,7 @@ class AgentRunner:
                 kind="tool",
                 agent=agent.name,
                 tool_name=name,
-                input_summary=f"{name}({call['function'].get('arguments') or '{}'})",
+                input_summary=f"{name}({_call_arguments_text(call)})",
                 output_summary=result,
                 latency_ms=round((time.perf_counter() - start) * 1000),
             )
@@ -289,6 +352,8 @@ class AgentRunner:
         except ToolNotFoundError:
             return f"error: tool {name!r} does not exist"
 
+        if call.get("x_arguments_error"):
+            return f"error: {call['x_arguments_error']}. Send the arguments as a JSON object."
         raw_args, args_error = parse_arguments(call["function"].get("arguments"))
         if args_error:
             return f"error: {args_error}"

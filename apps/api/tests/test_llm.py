@@ -12,7 +12,7 @@ from app.config import Settings
 from app.db.models import Run, RunStep, Workspace
 from app.db.session import SessionFactory
 from app.llm.budget import BudgetExceededError, check_budget
-from app.llm.client import LLMError, TokenFactoryClient
+from app.llm.client import LLMError, TokenFactoryClient, wire_messages
 from app.llm.costs import estimate_cost
 from app.llm.router import ModelNotConfiguredError, TaskType, Tier, route
 from app.llm.tool_calls import parse_text_tool_calls
@@ -182,12 +182,74 @@ async def test_no_retry_on_400() -> None:
 
 
 @pytest.mark.anyio
-async def test_reasoning_used_all_tokens_is_a_clear_error() -> None:
+async def test_length_is_returned_with_usage_not_raised() -> None:
+    # The agent loop records the tokens, then decides what a cut-off response means.
     seen: list[httpx2.Request] = []
     body = _completion({"content": ""}, "length")
     client = _client([httpx2.Response(200, json=body)], seen)
-    with pytest.raises(LLMError, match="LLM_MAX_TOKENS"):
-        await client.chat(model_id="m/nano", messages=MESSAGES)
+    resp = await client.chat(model_id="m/nano", messages=MESSAGES)
+    assert resp.truncated and resp.content is None and resp.completion_tokens > 0
+
+
+@pytest.mark.anyio
+async def test_invalid_native_arguments_are_kept_raw() -> None:
+    seen: list[httpx2.Request] = []
+    call = {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "restart_fake_service", "arguments": '{"name": "ap'},
+    }
+    body = _completion({"content": None, "tool_calls": [call]}, "length")
+    client = _client([httpx2.Response(200, json=body)], seen)
+    resp = await client.chat(model_id="m/nano", messages=MESSAGES, tools=TOOLS)
+    [parsed] = resp.tool_calls
+    assert parsed.arguments == {} and parsed.arguments_error
+    assert parsed.raw_arguments == '{"name": "ap'
+
+
+def test_private_keys_are_not_sent_to_the_provider() -> None:
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "x", "arguments": "{}"},
+                    "x_arguments_error": "bad",
+                    "x_raw_arguments": "{oops",
+                }
+            ],
+        }
+    ]
+    [wire] = wire_messages(messages)
+    assert wire["tool_calls"] == [
+        {"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}
+    ]
+    assert "x_raw_arguments" in messages[0]["tool_calls"][0]  # the stored copy is unchanged
+
+
+@pytest.mark.anyio
+async def test_reasoning_off_sends_enable_thinking_false() -> None:
+    seen: list[httpx2.Request] = []
+    responses = [httpx2.Response(200, json=_completion({"content": "ok"})) for _ in range(2)]
+    client = _client(responses, seen)
+    await client.chat(model_id="m/nano", messages=MESSAGES, reasoning=False)
+    await client.chat(model_id="m/nano", messages=MESSAGES)
+    off, on = (json.loads(r.content) for r in seen)
+    assert off["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "chat_template_kwargs" not in on
+
+
+def test_reasoning_tiers() -> None:
+    assert not route(TaskType.summarize, _settings()).reasoning
+    assert not route(TaskType.plan, _settings()).reasoning
+    assert route(TaskType.root_cause, _settings()).reasoning
+    assert route(TaskType.summarize, _settings(llm_reasoning_tiers="nano, ultra")).reasoning
+    assert not route(TaskType.root_cause, _settings(llm_reasoning_tiers="")).reasoning
+    with pytest.raises(ValueError, match="unknown tiers"):
+        route(TaskType.plan, _settings(llm_reasoning_tiers="mega"))
 
 
 def test_router_defaults_and_no_ultra() -> None:
@@ -233,10 +295,24 @@ async def _run_with_steps(
 @pytest.mark.anyio
 async def test_budget_checks(session_factory: SessionFactory, workspace: Workspace) -> None:
     run = await _run_with_steps(session_factory, workspace, 900, Tier.ultra)
+    small = {"llm_min_completion_tokens": 50}
     async with session_factory() as session:
-        await check_budget(session, run, Tier.nano, _settings(max_tokens_per_run=1000))
+        cap = await check_budget(
+            session, run, Tier.nano, _settings(max_tokens_per_run=1000, **small)
+        )
+        assert cap == 100  # 1000 - 900 used
+        cap = await check_budget(
+            session, run, Tier.nano, _settings(max_tokens_per_run=1000, **small), prompt_tokens=30
+        )
+        assert cap == 70  # the prompt counts against what is left
+        cap = await check_budget(session, run, Tier.nano, _settings(llm_max_tokens=64, **small))
+        assert cap == 64  # never more than LLM_MAX_TOKENS
+        with pytest.raises(BudgetExceededError, match="not enough left"):
+            await check_budget(session, run, Tier.nano, _settings(max_tokens_per_run=1000))
         with pytest.raises(BudgetExceededError, match="MAX_TOKENS_PER_RUN"):
             await check_budget(session, run, Tier.nano, _settings(max_tokens_per_run=900))
+        with pytest.raises(BudgetExceededError, match="DAILY_TOKEN_BUDGET"):
+            await check_budget(session, run, Tier.nano, _settings(daily_token_budget=1200))
         with pytest.raises(BudgetExceededError, match="DAILY_TOKEN_BUDGET"):
             await check_budget(session, run, Tier.nano, _settings(daily_token_budget=500))
         with pytest.raises(BudgetExceededError, match="MAX_ULTRA_CALLS"):

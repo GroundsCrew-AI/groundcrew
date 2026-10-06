@@ -42,6 +42,17 @@ class Route:
     task_type: TaskType
     tier: Tier
     model_id: str
+    # False sends enable_thinking=false: far fewer tokens, for tasks that do not need it.
+    reasoning: bool = True
+
+
+def reasoning_tiers(settings: Settings) -> frozenset[Tier]:
+    """Tiers that reason before answering, from LLM_REASONING_TIERS (comma separated)."""
+    names = {n.strip().lower() for n in settings.llm_reasoning_tiers.split(",") if n.strip()}
+    unknown = names - {t.value for t in Tier}
+    if unknown:
+        raise ValueError(f"LLM_REASONING_TIERS has unknown tiers: {', '.join(sorted(unknown))}")
+    return frozenset(Tier(n) for n in names)
 
 
 def model_id_for(tier: Tier, settings: Settings) -> str:
@@ -60,4 +71,9 @@ def route(task_type: TaskType, settings: Settings | None = None) -> Route:
     tier = TASK_TIERS[task_type]
     if tier == Tier.ultra and settings.dev_mode_no_ultra:
         tier = Tier.super
-    return Route(task_type=task_type, tier=tier, model_id=model_id_for(tier, settings))
+    return Route(
+        task_type=task_type,
+        tier=tier,
+        model_id=model_id_for(tier, settings),
+        reasoning=tier in reasoning_tiers(settings),
+    )

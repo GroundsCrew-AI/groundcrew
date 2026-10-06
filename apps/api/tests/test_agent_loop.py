@@ -1,6 +1,7 @@
 """Agent loop: step recording, approval pause/resume, limits, and errors. LLM is faked."""
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -21,6 +22,7 @@ from app.db.models import (
 )
 from app.db.session import SessionFactory
 from app.llm.client import LLMError
+from app.llm.tool_calls import ToolCall
 from app.policy.engine import Decision, decide_approval
 from app.worker import Worker
 from tests.fakes import FakeLLM, reply, tool_call
@@ -166,14 +168,126 @@ async def test_max_steps(session_factory: SessionFactory, workspace: Workspace) 
 async def test_run_token_budget_stops_run(
     session_factory: SessionFactory, workspace: Workspace
 ) -> None:
-    llm = FakeLLM(reply(None, tool_call("get_current_time")), repeat_last=True)
-    runner = AgentRunner(session_factory, llm=llm, settings=_settings(max_tokens_per_run=200))
+    llm = FakeLLM(
+        reply(None, tool_call("get_current_time"), prompt_tokens=1000, completion_tokens=500),
+        repeat_last=True,
+    )
+    settings = _settings(max_tokens_per_run=3000, llm_min_completion_tokens=100)
+    runner = AgentRunner(session_factory, llm=llm, settings=settings)
     run_id = await _create_run(session_factory, workspace)
     await runner.run(run_id)
     run, steps = await _load(session_factory, run_id)
     assert (run.status, run.stop_reason) == (RunStatus.stopped, StopReason.budget)
-    assert len(llm.requests) == 2  # 120 tokens, then 240 >= 200
+    # 1500 per call: two calls fit, the third has too little left.
+    assert len(llm.requests) == 2
     assert steps[-1].kind == "budget" and "MAX_TOKENS_PER_RUN" in (steps[-1].output_summary or "")
+    # Every call was capped to what was left of the run budget, prompt included.
+    first, second = llm.max_tokens
+    assert first is not None and second is not None
+    assert first <= 3000 and second <= 3000 - 1500
+
+
+async def test_reasoning_used_all_tokens_fails_but_counts_tokens(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    llm = FakeLLM(reply(None, completion_tokens=4096, finish_reason="length"))
+    runner = AgentRunner(session_factory, llm=llm, settings=_settings())
+    run_id = await _create_run(session_factory, workspace)
+    await runner.run(run_id)
+    run, steps = await _load(session_factory, run_id)
+    assert (run.status, run.stop_reason) == (RunStatus.failed, StopReason.error)
+    assert run.error and "LLM_MAX_TOKENS" in run.error
+    assert [s.kind for s in steps] == ["llm", "error"]
+    assert steps[0].completion_tokens == 4096  # counted toward the daily budget
+    assert run.completion_tokens == 4096
+
+
+async def test_cut_off_answer_is_not_a_success(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    llm = FakeLLM(reply("I listed the services and then I", finish_reason="length"))
+    runner = AgentRunner(session_factory, llm=llm, settings=_settings())
+    run_id = await _create_run(session_factory, workspace)
+    await runner.run(run_id)
+    run, _ = await _load(session_factory, run_id)
+    assert (run.status, run.stop_reason) == (RunStatus.failed, StopReason.error)
+    assert run.error and "cut off" in run.error
+    assert run.result == "I listed the services and then I"
+
+
+async def test_invalid_json_arguments_never_run_the_tool(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    broken = ToolCall(
+        id="call_broken",
+        name="restart_fake_service",
+        arguments={},
+        arguments_error="arguments are not valid JSON: Unterminated string",
+        raw_arguments='{"name": "ap',
+    )
+    llm = FakeLLM(reply(None, broken), reply("Could not restart."))
+    runner = AgentRunner(session_factory, llm=llm, settings=_settings())
+    run_id = await _create_run(session_factory, workspace)
+    await runner.run(run_id)
+    run, steps = await _load(session_factory, run_id)
+    assert run.stop_reason == StopReason.completed
+    [result] = llm.tool_results()
+    assert "not valid JSON" in result
+    tool_step = next(s for s in steps if s.kind == "tool")
+    assert '{"name": "ap' in (tool_step.input_summary or "")  # what the model really sent
+    stored_call = run.messages[2]["tool_calls"][0]
+    assert stored_call["x_raw_arguments"] == '{"name": "ap'
+    async with session_factory() as session:
+        assert await session.scalar(select(Approval)) is None
+
+
+async def test_reused_tool_call_ids_get_unique_approvals(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    # A provider that numbers tool calls per turn would reuse "call_0".
+    def restart() -> ToolCall:
+        return ToolCall(id="call_0", name="restart_fake_service", arguments={"name": "api"})
+
+    llm = FakeLLM(reply(None, restart()), reply(None, restart()), reply("Restarted twice."))
+    runner = AgentRunner(session_factory, llm=llm, settings=_settings())
+    run_id = await _create_run(session_factory, workspace)
+    worker = _worker(session_factory, runner)
+    for _ in range(2):
+        await _drain(worker)
+        async with session_factory() as session:
+            pending = await session.scalar(
+                select(Approval).where(Approval.status == ApprovalStatus.pending)
+            )
+            assert pending is not None
+            await decide_approval(session, pending.id, Decision.approve, "tester")
+    await _drain(worker)
+
+    run, _ = await _load(session_factory, run_id)
+    assert (run.status, run.stop_reason) == (RunStatus.succeeded, StopReason.completed)
+    assert llm.tool_results()[-2:] == ["restarted api", "restarted api"]
+    async with session_factory() as session:
+        approvals = (await session.scalars(select(Approval))).all()
+    assert len({a.tool_call_id for a in approvals}) == 2
+    assert all(a.executed_at is not None for a in approvals)
+
+
+async def test_approved_action_started_before_a_crash_is_not_rerun(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    llm = _toy_script("The restart may not have finished.")
+    run_id, runner, approval = await _pause_at_restart(session_factory, workspace, llm)
+    async with session_factory() as session:
+        await decide_approval(session, approval.id, Decision.approve, "tester")
+        # Simulate a worker that marked the approval used, then died before saving the result.
+        stored = await session.get_one(Approval, approval.id)
+        stored.executed_at = datetime.now(UTC)
+        await session.commit()
+    await _drain(_worker(session_factory, runner))
+
+    run, steps = await _load(session_factory, run_id)
+    assert (run.status, run.stop_reason) == (RunStatus.succeeded, StopReason.completed)
+    assert "may or may not have completed" in llm.tool_results()[-1]
+    assert "restarted api" not in [s.output_summary for s in steps]
 
 
 async def test_daily_budget_stops_before_any_call(

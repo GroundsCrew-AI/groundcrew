@@ -139,6 +139,15 @@ async def handle_tool_call(
         return AwaitingApproval(approval)
     if approval.status == ApprovalStatus.rejected:
         return Rejected(approval)
+    if approval.executed_at is not None:
+        # The worker stopped after starting this action and before saving its result.
+        # Never run it again; tell the model the outcome is unknown.
+        return Executed(
+            f"error: this approved {spec.name} action was started at "
+            f"{approval.executed_at.isoformat()} but its result was not saved (the worker "
+            "stopped). It may or may not have completed. Do not retry it. Check the current "
+            "state with a read tool and report what you find."
+        )
     # Run exactly what was approved, not whatever the conversation says now.
     approved_args = spec.args_model.model_validate(approval.arguments)
     return Executed(await execute_tool(session, ctx, spec, approved_args, approval=approval))
