@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Local secret files (GitHub App private key, kubeconfigs, etc.)
+secrets/
+
 # Python
 __pycache__/
 *.py[cod]
