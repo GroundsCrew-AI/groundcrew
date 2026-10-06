@@ -7,7 +7,7 @@ DB_URL ?= postgresql+asyncpg://groundcrew:groundcrew@localhost:5433/groundcrew
 TEST_DATABASE_URL ?= postgresql+asyncpg://groundcrew:groundcrew@localhost:5433/groundcrew_test
 export TEST_DATABASE_URL
 
-.PHONY: help install dev up down db migrate seed worker keygen test lint format models
+.PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types
 
 help:
 	@echo "make install  Install API (uv) and web (npm) dependencies"
@@ -22,6 +22,7 @@ help:
 	@echo "make lint     ruff + mypy (api, scripts), eslint + tsc (web)"
 	@echo "make format   Auto-format Python code"
 	@echo "make models   Smoke test Nemotron models on Token Factory (uses credits)"
+	@echo "make api-types  Regenerate the web app's typed API client from FastAPI's OpenAPI schema"
 
 install:
 	cd $(API) && $(UV) sync
@@ -52,8 +53,13 @@ worker:
 keygen:
 	@cd $(API) && $(UV) run python -c "from app.security.crypto import generate_key; print(generate_key())"
 
-test:
+test: $(WEB)/node_modules
 	cd $(API) && $(UV) run pytest
+	cd $(WEB) && npm test
+
+api-types: $(WEB)/node_modules
+	cd $(API) && PYTHONPATH=. $(UV) run python ../../scripts/export_openapi.py ../web/lib/api/openapi.json
+	cd $(WEB) && npx openapi-typescript lib/api/openapi.json -o lib/api/schema.d.ts
 
 lint: $(WEB)/node_modules
 	cd $(API) && $(UV) run ruff check . ../../scripts

@@ -4,16 +4,20 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
+from pydantic.json_schema import models_json_schema
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
 from app.routes import approvals, runs, workspaces
+from app.routes.schemas import ApprovalStepEvent, RunStatusEvent, StepOut
 
 VERSION = "0.1.0"
 
@@ -90,6 +94,24 @@ app.add_middleware(RequestIdMiddleware)
 app.include_router(workspaces.router)
 app.include_router(runs.router)
 app.include_router(approvals.router)
+
+
+def _openapi() -> dict[str, Any]:
+    """The OpenAPI schema plus the SSE payload models, which no route returns as JSON, so the
+    web app's generated client has types for the live stream too."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    _, defs = models_json_schema(
+        [(m, "serialization") for m in (StepOut, RunStatusEvent, ApprovalStepEvent)],
+        ref_template="#/components/schemas/{model}",
+    )
+    schema.setdefault("components", {}).setdefault("schemas", {}).update(defs.get("$defs", {}))
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi  # type: ignore[method-assign]
 
 
 class Health(BaseModel):
