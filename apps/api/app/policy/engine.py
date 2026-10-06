@@ -7,6 +7,7 @@
 """
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -26,7 +27,11 @@ class PolicyViolationError(Exception):
 
 
 class ApprovalStateError(Exception):
-    """The approval cannot be decided (not found or already decided)."""
+    """The approval cannot be decided (already decided)."""
+
+
+class ApprovalNotFoundError(ApprovalStateError):
+    pass
 
 
 class Decision(StrEnum):
@@ -141,14 +146,14 @@ async def handle_tool_call(
 
 async def decide_approval(
     session: AsyncSession,
-    approval_id: object,
+    approval_id: uuid.UUID,
     decision: Decision,
     decided_by: str,
 ) -> Approval:
     """Record a decision and enqueue a job that resumes the run. Commits."""
     approval = await session.get(Approval, approval_id, with_for_update=True)
     if approval is None:
-        raise ApprovalStateError("Approval not found.")
+        raise ApprovalNotFoundError("Approval not found.")
     if approval.status != ApprovalStatus.pending:
         raise ApprovalStateError(f"Approval is already {approval.status}.")
 

@@ -1,18 +1,96 @@
-from fastapi import FastAPI
+import logging
+import re
+import time
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.config import get_settings
+from app.db.session import get_engine
+from app.log import request_id_var, setup_logging
+from app.routes import approvals, runs
+from app.routes.deps import require_dev_api_key
 
 VERSION = "0.1.0"
 
-app = FastAPI(title="Groundcrew API", version=VERSION)
+logger = logging.getLogger("groundcrew.api")
+
+# Accept a caller's X-Request-ID only if it is short and plain.
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+
+
+class RequestIdMiddleware:
+    """Give every request an id (or keep a valid incoming X-Request-ID), put it on every log
+    line and on the response, and log one line per request."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        incoming = dict(scope["headers"]).get(b"x-request-id", b"").decode("latin-1")
+        request_id = incoming if _REQUEST_ID.match(incoming) else uuid.uuid4().hex
+        token = request_id_var.set(request_id)
+        start = time.perf_counter()
+        status_code = 500
+
+        async def send_with_id(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                message["headers"] = [
+                    *message.get("headers", []),
+                    (b"x-request-id", request_id.encode()),
+                ]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_id)
+        finally:
+            logger.info(
+                "request",
+                extra={
+                    "method": scope["method"],
+                    "path": scope["path"],
+                    "status": status_code,
+                    "duration_ms": round((time.perf_counter() - start) * 1000),
+                },
+            )
+            request_id_var.reset(token)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    setup_logging(get_settings().log_level)
+    yield
+    if get_settings().database_url is not None:
+        await get_engine().dispose()
+
+
+app = FastAPI(title="Groundcrew API", version=VERSION, lifespan=lifespan)
 
 # Local dev only. Tighten to the hosted web origin in Phase 6.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+app.add_middleware(RequestIdMiddleware)
+
+# TODO Phase 2: real auth. Until then an optional DEV_API_KEY check (off by default).
+protected = [Depends(require_dev_api_key)]
+app.include_router(runs.router, dependencies=protected)
+app.include_router(approvals.router, dependencies=protected)
 
 
 class Health(BaseModel):
