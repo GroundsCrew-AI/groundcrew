@@ -236,7 +236,7 @@ async def test_decide_enqueues_resume_and_handle_uses_decision(
     assert isinstance(first, AwaitingApproval) and isinstance(second, AwaitingApproval)
 
     async with session_factory() as session:
-        await decide_approval(session, first.approval.id, Decision.approve, "tester")
+        await decide_approval(session, first.approval.id, Decision.approve, workspace.owner_id)
     async with session_factory() as session:
         jobs = (await session.scalars(select(Job))).all()
         stored_run = await session.get_one(Run, run.id)
@@ -246,8 +246,8 @@ async def test_decide_enqueues_resume_and_handle_uses_decision(
 
     async with session_factory() as session:
         with pytest.raises(ApprovalStateError, match="already approved"):
-            await decide_approval(session, first.approval.id, Decision.reject, "tester")
-        await decide_approval(session, second.approval.id, Decision.reject, "tester")
+            await decide_approval(session, first.approval.id, Decision.reject, workspace.owner_id)
+        await decide_approval(session, second.approval.id, Decision.reject, workspace.owner_id)
 
     async with session_factory() as session:
         stored_run = await session.get_one(Run, run.id)

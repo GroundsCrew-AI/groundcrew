@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -13,8 +13,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
-from app.routes import approvals, runs
-from app.routes.deps import require_dev_api_key
+from app.routes import approvals, runs, workspaces
 
 VERSION = "0.1.0"
 
@@ -77,20 +76,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Groundcrew API", version=VERSION, lifespan=lifespan)
 
-# Local dev only. Tighten to the hosted web origin in Phase 6.
+# REST calls come through the web app's server-side proxy, so they need no CORS. Only the
+# browser's direct SSE connection (GET /runs/{id}/events) does, and only from WEB_ORIGIN.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
+    allow_origins=[get_settings().web_origin],
+    allow_methods=["GET"],
+    allow_headers=["Last-Event-ID"],
 )
 app.add_middleware(RequestIdMiddleware)
 
-# TODO Phase 2: real auth. Until then an optional DEV_API_KEY check (off by default).
-protected = [Depends(require_dev_api_key)]
-app.include_router(runs.router, dependencies=protected)
-app.include_router(approvals.router, dependencies=protected)
+# Every route except /health and the SSE stream requires the signed-in user (CurrentUser).
+app.include_router(workspaces.router)
+app.include_router(runs.router)
+app.include_router(approvals.router)
 
 
 class Health(BaseModel):

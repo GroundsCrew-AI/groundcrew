@@ -1,5 +1,8 @@
 """Seed a dev user and a "Demo" workspace. Safe to run more than once.
 
+Real users get their own workspace on first GitHub sign-in; this seed is only for scripts and
+API experiments without the web app.
+
 Run: make seed  (uses the local compose database unless DB_URL is passed to make)
 """
 
@@ -9,7 +12,7 @@ import asyncio
 
 from sqlalchemy import select
 
-from app.db.models import User, Workspace
+from app.db.models import User, Workspace, WorkspaceMember, WorkspaceRole
 from app.db.session import get_engine, get_session_factory
 
 DEV_EMAIL = "dev@groundcrew.local"
@@ -30,6 +33,18 @@ async def seed() -> None:
         if workspace is None:
             workspace = Workspace(name=WORKSPACE_NAME, owner_id=user.id)
             session.add(workspace)
+            await session.flush()
+        member = await session.scalar(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == workspace.id, WorkspaceMember.user_id == user.id
+            )
+        )
+        if member is None:
+            session.add(
+                WorkspaceMember(
+                    workspace_id=workspace.id, user_id=user.id, role=WorkspaceRole.owner
+                )
+            )
 
         await session.commit()
         print(f"user      {user.id}  {user.email}")

@@ -82,8 +82,11 @@ class Settings(BaseSettings):
     worker_shutdown_grace_seconds: float = 20.0
     sse_poll_interval_ms: int = 500
 
-    # Dev-only API key check (TODO Phase 2: replace with real auth). Off when unset.
-    dev_api_key: SecretStr | None = None
+    # Auth. The web app signs a short-lived HS256 JWT with this secret for every API call
+    # (and the API signs 60-second SSE stream tokens with it). At least 32 characters.
+    internal_jwt_secret: SecretStr | None = None
+    # The web app's origin. CORS is allowed for it only, for the direct SSE connection.
+    web_origin: str = "http://localhost:3000"
 
     # Logging
     log_level: str = "INFO"

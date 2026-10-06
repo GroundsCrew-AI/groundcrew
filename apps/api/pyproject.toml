@@ -16,6 +16,7 @@ dependencies = [
     "alembic",
     "pgvector",
     "cryptography",
+    "pyjwt>=2.15.1",
 ]
 
 [dependency-groups]

@@ -17,7 +17,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import queue
-from app.db.models import Approval, ApprovalStatus, Run, RunStatus, StopReason, ToolPolicy
+from app.db.models import (
+    TERMINAL_RUN_STATUSES,
+    Approval,
+    ApprovalStatus,
+    Run,
+    RunStatus,
+    StopReason,
+    ToolPolicy,
+    User,
+)
 from app.steps import record_step
 from app.tools.registry import ToolContext, ToolSpec
 
@@ -32,6 +41,10 @@ class ApprovalStateError(Exception):
 
 class ApprovalNotFoundError(ApprovalStateError):
     pass
+
+
+class RunStoppedError(Exception):
+    """The run was stopped (by a user) while the agent was working. The agent exits."""
 
 
 class Decision(StrEnum):
@@ -130,9 +143,15 @@ async def handle_tool_call(
             tool_name=spec.name,
             input_summary=json.dumps(approval.arguments),
             output_summary=f"Waiting for approval {approval.id} ({spec.policy} action).",
+            approval_id=approval.id,
         )
 
     if approval.status == ApprovalStatus.pending:
+        # Lock the run: a user may have stopped it while the model was thinking.
+        locked = await session.get(Run, run.id, with_for_update=True, populate_existing=True)
+        if locked is None or locked.status in TERMINAL_RUN_STATUSES:
+            await session.rollback()
+            raise RunStoppedError(str(run.id))
         run.status = RunStatus.waiting_approval
         run.stop_reason = StopReason.waiting_approval
         await session.commit()
@@ -157,14 +176,19 @@ async def decide_approval(
     session: AsyncSession,
     approval_id: uuid.UUID,
     decision: Decision,
-    decided_by: str,
+    decided_by: uuid.UUID,
 ) -> Approval:
-    """Record a decision and enqueue a job that resumes the run. Commits."""
+    """Record a decision by user `decided_by` and enqueue a job that resumes the run. Commits."""
     approval = await session.get(Approval, approval_id, with_for_update=True)
     if approval is None:
         raise ApprovalNotFoundError("Approval not found.")
     if approval.status != ApprovalStatus.pending:
         raise ApprovalStateError(f"Approval is already {approval.status}.")
+    run = await session.get_one(Run, approval.run_id, with_for_update=True)
+    if run.status in TERMINAL_RUN_STATUSES:
+        raise ApprovalStateError(f"The run is already {run.status}.")
+    decider = await session.get(User, decided_by)
+    label = (decider.github_login or decider.name) if decider else None
 
     approval.status = (
         ApprovalStatus.approved if decision == Decision.approve else ApprovalStatus.rejected
@@ -172,13 +196,13 @@ async def decide_approval(
     approval.decided_by = decided_by
     approval.decided_at = datetime.now(UTC)
 
-    run = await session.get_one(Run, approval.run_id, with_for_update=True)
     await record_step(
         session,
         run,
         kind="approval_decided",
         tool_name=approval.tool_name,
-        output_summary=f"{approval.status} by {decided_by}",
+        output_summary=f"{approval.status} by {label or decided_by}",
+        approval_id=approval.id,
     )
     if run.status == RunStatus.waiting_approval:
         run.status = RunStatus.queued

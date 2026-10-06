@@ -1,17 +1,55 @@
-"""Request and response models for the runs and approvals API.
+"""Request and response models for the API. The web app's TypeScript client is generated
+from these (make api-types), so field names and types are the contract.
 
 runs.messages (the raw conversation) is never returned: it can hold full prompts.
 """
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.db.models import ApprovalStatus, RunStatus, StopReason, ToolPolicy
+from app.db.models import (
+    Approval,
+    ApprovalStatus,
+    Run,
+    RunStatus,
+    RunStep,
+    StopReason,
+    ToolPolicy,
+    User,
+    Workspace,
+    WorkspaceRole,
+)
 from app.policy.engine import Decision
 from app.security.redact import redact_json
+from app.tools.registry import ToolNotFoundError, registry
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    github_login: str | None
+    name: str | None
+    email: str | None
+    avatar_url: str | None
+
+
+class WorkspaceOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    role: WorkspaceRole
+
+    @classmethod
+    def build(cls, workspace: Workspace, role: WorkspaceRole) -> "WorkspaceOut":
+        return cls(id=workspace.id, name=workspace.name, role=role)
+
+
+class MeOut(BaseModel):
+    user: UserOut
+    workspaces: list[WorkspaceOut]
 
 
 class RunCreate(BaseModel):
@@ -25,9 +63,16 @@ class RunCreated(BaseModel):
     status: RunStatus
 
 
-class StepOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+def _tool_policy(tool_name: str | None) -> ToolPolicy | None:
+    if tool_name is None:
+        return None
+    try:
+        return registry.get(tool_name).policy
+    except ToolNotFoundError:
+        return None
 
+
+class StepOut(BaseModel):
     id: uuid.UUID
     seq: int
     agent: str
@@ -35,6 +80,8 @@ class StepOut(BaseModel):
     model_tier: str | None
     model_id: str | None
     tool_name: str | None
+    tool_policy: ToolPolicy | None
+    approval_id: uuid.UUID | None
     input_summary: str | None
     output_summary: str | None
     prompt_tokens: int | None
@@ -43,8 +90,40 @@ class StepOut(BaseModel):
     cost_usd: float | None
     created_at: datetime
 
+    @classmethod
+    def build(cls, step: RunStep) -> "StepOut":
+        return cls(
+            id=step.id,
+            seq=step.seq,
+            agent=step.agent,
+            kind=step.kind,
+            model_tier=step.model_tier,
+            model_id=step.model_id,
+            tool_name=step.tool_name,
+            tool_policy=_tool_policy(step.tool_name),
+            approval_id=step.approval_id,
+            input_summary=step.input_summary,
+            output_summary=step.output_summary,
+            prompt_tokens=step.prompt_tokens,
+            completion_tokens=step.completion_tokens,
+            latency_ms=step.latency_ms,
+            cost_usd=float(step.cost_usd) if step.cost_usd is not None else None,
+            created_at=step.created_at,
+        )
+
+
+def _duration_ms(run: Run) -> int | None:
+    if run.started_at is None:
+        return None
+    end = run.finished_at
+    if end is None:
+        return None
+    return round((end - run.started_at).total_seconds() * 1000)
+
 
 class RunOut(BaseModel):
+    """A run with its totals. duration_ms is set once the run has finished."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -57,35 +136,56 @@ class RunOut(BaseModel):
     error: str | None
     prompt_tokens: int
     completion_tokens: int
+    total_tokens: int
     cost_usd: float | None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    duration_ms: int | None
+
+    @classmethod
+    def build(cls, run: Run) -> "RunOut":
+        return cls(
+            id=run.id,
+            workspace_id=run.workspace_id,
+            agent=run.agent,
+            goal=run.goal,
+            status=run.status,
+            stop_reason=run.stop_reason,
+            result=run.result,
+            error=run.error,
+            prompt_tokens=run.prompt_tokens,
+            completion_tokens=run.completion_tokens,
+            total_tokens=run.total_tokens,
+            cost_usd=float(run.cost_usd) if run.cost_usd is not None else None,
+            created_at=run.created_at,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            duration_ms=_duration_ms(run),
+        )
 
 
-class RunWithSteps(RunOut):
-    steps: list[StepOut]
-
-
-class RunStatusEvent(BaseModel):
-    status: RunStatus
-    stop_reason: StopReason | None
-    result: str | None
-    error: str | None
+class RunPage(BaseModel):
+    items: list[RunOut]
+    # Pass as ?cursor= to get the next page. Null when there are no more runs.
+    next_cursor: str | None
 
 
 class ApprovalOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
     run_id: uuid.UUID
     workspace_id: uuid.UUID
+    run_agent: str
+    run_goal: str
     tool_name: str
     policy: ToolPolicy
     # Redacted for display. The stored arguments, which are what runs, are not changed.
     arguments: dict[str, Any]
     status: ApprovalStatus
-    decided_by: str | None
+    decided_by: uuid.UUID | None
+    decided_by_login: str | None
+    decided_by_name: str | None
+    decided_by_avatar_url: str | None
     decided_at: datetime | None
     executed_at: datetime | None
     created_at: datetime
@@ -96,6 +196,89 @@ class ApprovalOut(BaseModel):
         redacted: dict[str, Any] = redact_json(value)
         return redacted
 
+    @classmethod
+    def build(cls, approval: Approval, run: Run, decider: User | None) -> "ApprovalOut":
+        return cls(
+            id=approval.id,
+            run_id=approval.run_id,
+            workspace_id=approval.workspace_id,
+            run_agent=run.agent,
+            run_goal=run.goal,
+            tool_name=approval.tool_name,
+            policy=approval.policy,
+            arguments=approval.arguments,
+            status=approval.status,
+            decided_by=approval.decided_by,
+            decided_by_login=decider.github_login if decider else None,
+            decided_by_name=decider.name if decider else None,
+            decided_by_avatar_url=decider.avatar_url if decider else None,
+            decided_at=approval.decided_at,
+            executed_at=approval.executed_at,
+            created_at=approval.created_at,
+        )
+
+
+class RunDetail(RunOut):
+    steps: list[StepOut]
+    approvals: list[ApprovalOut]
+
 
 class DecideIn(BaseModel):
     decision: Decision
+
+
+class StreamToken(BaseModel):
+    token: str
+    expires_at: datetime
+
+
+class WorkspaceSummary(BaseModel):
+    runs_today: int
+    pending_approvals: int
+    # Tokens this workspace's runs used today (UTC).
+    workspace_tokens_today: int
+    # DAILY_TOKEN_BUDGET is shared by every workspace; this is what counts against it.
+    budget_tokens_today: int
+    daily_token_budget: int | None
+
+
+# --- SSE payloads -----------------------------------------------------------------------
+
+
+class RunStatusEvent(BaseModel):
+    """Sent as `status` whenever the run's state or totals change, and as the final `done`."""
+
+    status: RunStatus
+    stop_reason: StopReason | None
+    result: str | None
+    error: str | None
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: float | None
+    started_at: datetime | None
+    finished_at: datetime | None
+
+    @classmethod
+    def build(cls, run: Run) -> "RunStatusEvent":
+        return cls(
+            status=run.status,
+            stop_reason=run.stop_reason,
+            result=run.result,
+            error=run.error,
+            prompt_tokens=run.prompt_tokens,
+            completion_tokens=run.completion_tokens,
+            cost_usd=float(run.cost_usd) if run.cost_usd is not None else None,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+        )
+
+
+class ApprovalStepEvent(BaseModel):
+    """Sent as `approval_requested` / `approval_decided`: the step plus the approval."""
+
+    step: StepOut
+    approval: ApprovalOut | None
+
+
+# Event names on the SSE stream, for the web client.
+SseEventName = Literal["step", "approval_requested", "approval_decided", "status", "done"]

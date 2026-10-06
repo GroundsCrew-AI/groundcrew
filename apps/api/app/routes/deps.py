@@ -1,32 +1,47 @@
 """Shared route dependencies."""
 
-import secrets
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.accounts import upsert_user
 from app.config import Settings, get_settings
+from app.db.models import User
 from app.db.session import SessionFactory, get_session, get_session_factory
+from app.security.auth import AuthConfigError, AuthError, verify_internal_token
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SessionFactoryDep = Annotated[SessionFactory, Depends(get_session_factory)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
-async def require_dev_api_key(
-    settings: SettingsDep,
-    x_api_key: Annotated[str | None, Header()] = None,
-) -> None:
-    """TODO Phase 2: replace with real auth (Auth.js + GitHub OAuth).
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(
+        status.HTTP_401_UNAUTHORIZED, detail, headers={"WWW-Authenticate": "Bearer"}
+    )
 
-    Until then, setting DEV_API_KEY makes every route except /health require it in the
-    X-API-Key header. Unset (the default) means no check.
-    """
-    expected = settings.dev_api_key
-    if expected is None:
-        return
-    if x_api_key is None or not secrets.compare_digest(
-        x_api_key.encode(), expected.get_secret_value().encode()
-    ):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing or wrong X-API-Key.")
+
+def bearer_token(authorization: Annotated[str | None, Header()] = None) -> str:
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise _unauthorized("Sign in required.")
+    return token
+
+
+async def current_user(
+    token: Annotated[str, Depends(bearer_token)],
+    session: SessionDep,
+    settings: SettingsDep,
+) -> User:
+    """The signed-in user, from the internal JWT the web app attaches to every call."""
+    try:
+        identity = verify_internal_token(token, settings)
+    except AuthConfigError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from None
+    except AuthError as exc:
+        raise _unauthorized(str(exc)) from None
+    return await upsert_user(session, identity)
+
+
+CurrentUser = Annotated[User, Depends(current_user)]

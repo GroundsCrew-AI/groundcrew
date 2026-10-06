@@ -8,6 +8,8 @@ each pass of the loop handles them first. On resume that runs the approved actio
 tells the model it was rejected.
 
 Every exit sets runs.stop_reason: completed, max_steps, budget, waiting_approval, error.
+A user can stop a run at any time (POST /runs/{id}/stop sets stopped_by_user); the loop checks
+before every model and tool call and exits without overwriting that.
 Runs execute in the worker ("run_agent" / "resume_run" jobs), never in an HTTP request.
 
 No database transaction stays open while the model or a tool runs: the session commits
@@ -39,6 +41,7 @@ from app.policy.engine import (
     Executed,
     PolicyViolationError,
     Rejected,
+    RunStoppedError,
     handle_tool_call,
 )
 from app.security.redact import redact, summarize
@@ -191,6 +194,10 @@ class AgentRunner:
             try:
                 agent = get_agent(run.agent)
                 reason = await self._loop(session, run, agent)
+            except RunStoppedError:
+                await session.rollback()
+                logger.info("run stopped by user", extra={"run_id": str(run_id)})
+                return
             except BudgetExceededError as exc:
                 await session.rollback()
                 await session.refresh(run)
@@ -220,6 +227,11 @@ class AgentRunner:
         *,
         error: str | None = None,
     ) -> None:
+        current = await session.scalar(select(Run.status).where(Run.id == run.id).with_for_update())
+        if current in TERMINAL_RUN_STATUSES:
+            # Stopped by a user meanwhile. Keep their status.
+            await session.rollback()
+            return
         run.status = status
         run.stop_reason = reason
         run.error = error
@@ -243,6 +255,7 @@ class AgentRunner:
         while True:
             if await self._handle_pending(session, run, agent):
                 return StopReason.waiting_approval
+            await self._check_not_stopped(session, run)
 
             llm_calls = await session.scalar(
                 select(func.count(RunStep.id)).where(
@@ -312,10 +325,17 @@ class AgentRunner:
                 run.result = redact(resp.content) if resp.content else None
                 return StopReason.completed
 
+    @staticmethod
+    async def _check_not_stopped(session: AsyncSession, run: Run) -> None:
+        current = await session.scalar(select(Run.status).where(Run.id == run.id))
+        if current in TERMINAL_RUN_STATUSES:
+            raise RunStoppedError(str(run.id))
+
     async def _handle_pending(self, session: AsyncSession, run: Run, agent: Agent) -> bool:
         """Run pending tool calls in order. Returns True when the run must wait for approval."""
         for call in pending_tool_calls(run.messages):
             name: str = call["function"]["name"]
+            await self._check_not_stopped(session, run)
             await session.commit()  # no transaction open while the tool runs
             start = time.perf_counter()
             result = await self._run_tool_call(session, run, agent, call)

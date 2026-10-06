@@ -1,5 +1,6 @@
 """Record run steps. Every summary is redacted and truncated before it is stored."""
 
+import uuid
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -24,6 +25,7 @@ async def record_step(
     completion_tokens: int | None = None,
     latency_ms: int | None = None,
     cost_usd: Decimal | None = None,
+    approval_id: uuid.UUID | None = None,
 ) -> RunStep:
     """Add the next step for this run. One worker runs a run at a time, so max(seq)+1 is safe;
     the (run_id, seq) unique constraint catches it if that ever breaks."""
@@ -44,6 +46,7 @@ async def record_step(
         completion_tokens=completion_tokens,
         latency_ms=latency_ms,
         cost_usd=cost_usd,
+        approval_id=approval_id,
     )
     session.add(step)
     await session.flush()

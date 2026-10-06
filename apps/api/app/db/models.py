@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     DateTime,
     Enum,
     ForeignKey,
@@ -57,6 +58,7 @@ class StopReason(enum.StrEnum):
     budget = "budget"
     waiting_approval = "waiting_approval"
     error = "error"
+    stopped_by_user = "stopped_by_user"
 
 
 class ApprovalStatus(enum.StrEnum):
@@ -69,6 +71,11 @@ class ToolPolicy(enum.StrEnum):
     read = "read"
     write = "write"
     emergency = "emergency"
+
+
+class WorkspaceRole(enum.StrEnum):
+    owner = "owner"
+    member = "member"
 
 
 class JobStatus(enum.StrEnum):
@@ -98,9 +105,13 @@ class TimestampMixin:
 class User(TimestampMixin, Base):
     __tablename__ = "users"
 
-    email: Mapped[str] = mapped_column(String(320), unique=True)
+    # GitHub's numeric user id: stable across login renames. Users are upserted by it.
+    github_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    # GitHub may not share an email, so it is optional.
+    email: Mapped[str | None] = mapped_column(String(320), unique=True)
     name: Mapped[str | None] = mapped_column(String(200))
     github_login: Mapped[str | None] = mapped_column(String(100), unique=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500))
 
 
 class Workspace(TimestampMixin, Base):
@@ -111,6 +122,25 @@ class Workspace(TimestampMixin, Base):
         ForeignKey("users.id", ondelete="RESTRICT"), index=True
     )
     settings: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
+
+
+class WorkspaceMember(TimestampMixin, Base):
+    """Who can see a workspace. Every workspace-scoped route checks this table."""
+
+    __tablename__ = "workspace_members"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "user_id", name="uq_workspace_members_workspace_user"),
+    )
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[WorkspaceRole] = mapped_column(
+        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.member
+    )
 
 
 class Connection(TimestampMixin, Base):
@@ -234,7 +264,7 @@ class RunStep(TimestampMixin, Base):
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     seq: Mapped[int] = mapped_column(Integer)
     agent: Mapped[str] = mapped_column(String(64))
-    # llm | tool | approval_requested | approval_decided | error
+    # llm | tool | approval_requested | approval_decided | budget | stopped | error
     kind: Mapped[str] = mapped_column(String(32))
     model_tier: Mapped[str | None] = mapped_column(String(16))
     model_id: Mapped[str | None] = mapped_column(String(200))
@@ -246,6 +276,10 @@ class RunStep(TimestampMixin, Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    # Set on approval_requested / approval_decided steps, so the timeline can show the approval.
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("approvals.id", ondelete="SET NULL", use_alter=True)
+    )
 
 
 class Approval(TimestampMixin, Base):
@@ -267,8 +301,10 @@ class Approval(TimestampMixin, Base):
     status: Mapped[ApprovalStatus] = mapped_column(
         _pg_enum(ApprovalStatus, "approval_status"), default=ApprovalStatus.pending
     )
-    # TODO Phase 2: set from the logged-in user.
-    decided_by: Mapped[str | None] = mapped_column(String(200))
+    # The user who approved or rejected it (section 7 rule 8).
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set once the approved action ran, so an approval can never be used twice.
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -60,7 +60,7 @@ def _configured_secrets() -> tuple[str, ...]:
         s.database_url,
         s.github_app_client_secret,
         s.github_webhook_secret,
-        s.dev_api_key,
+        s.internal_jwt_secret,
     )
     found = (v.get_secret_value() for v in values if v is not None)
     # Very short values would redact ordinary words.

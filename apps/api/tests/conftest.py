@@ -33,6 +33,7 @@ os.environ["TOKEN_FACTORY_API_KEY"] = "test-key-not-real"  # noqa: S105
 os.environ["MODEL_NANO"] = "test/nano"
 os.environ["MODEL_SUPER"] = "test/super"
 os.environ["MODEL_ULTRA"] = "test/ultra"
+os.environ["INTERNAL_JWT_SECRET"] = "test-internal-jwt-secret-0123456789abcdef"  # noqa: S105
 
 from app.db.models import Base, User, Workspace  # noqa: E402
 from app.db.session import SessionFactory  # noqa: E402

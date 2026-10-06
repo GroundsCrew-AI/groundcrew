@@ -111,7 +111,7 @@ async def test_approve_resumes_and_completes(
     run_id, runner, approval = await _pause_at_restart(session_factory, workspace, llm)
 
     async with session_factory() as session:
-        await decide_approval(session, approval.id, Decision.approve, "tester")
+        await decide_approval(session, approval.id, Decision.approve, workspace.owner_id)
     await _drain(_worker(session_factory, runner))
 
     run, steps = await _load(session_factory, run_id)
@@ -132,7 +132,7 @@ async def test_reject_feeds_rejection_back_and_completes(
     run_id, runner, approval = await _pause_at_restart(session_factory, workspace, llm)
 
     async with session_factory() as session:
-        await decide_approval(session, approval.id, Decision.reject, "tester")
+        await decide_approval(session, approval.id, Decision.reject, workspace.owner_id)
     await _drain(_worker(session_factory, runner))
 
     run, steps = await _load(session_factory, run_id)
@@ -259,7 +259,7 @@ async def test_reused_tool_call_ids_get_unique_approvals(
                 select(Approval).where(Approval.status == ApprovalStatus.pending)
             )
             assert pending is not None
-            await decide_approval(session, pending.id, Decision.approve, "tester")
+            await decide_approval(session, pending.id, Decision.approve, workspace.owner_id)
     await _drain(worker)
 
     run, _ = await _load(session_factory, run_id)
@@ -277,7 +277,7 @@ async def test_approved_action_started_before_a_crash_is_not_rerun(
     llm = _toy_script("The restart may not have finished.")
     run_id, runner, approval = await _pause_at_restart(session_factory, workspace, llm)
     async with session_factory() as session:
-        await decide_approval(session, approval.id, Decision.approve, "tester")
+        await decide_approval(session, approval.id, Decision.approve, workspace.owner_id)
         # Simulate a worker that marked the approval used, then died before saving the result.
         stored = await session.get_one(Approval, approval.id)
         stored.executed_at = datetime.now(UTC)
