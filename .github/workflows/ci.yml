@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   api:
-    name: API (ruff, mypy, migrations, pytest)
+    name: API (ruff, mypy, migrations, pytest, API types)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -49,9 +49,16 @@ jobs:
       - name: Run migrations
         run: uv run alembic upgrade head
       - run: uv run pytest
+      - name: Web client types match the API
+        run: |
+          PYTHONPATH=. uv run python ../../scripts/export_openapi.py ../web/lib/api/openapi.json
+          git diff --exit-code ../web/lib/api/openapi.json || {
+            echo "::error::apps/web/lib/api/openapi.json is out of date. Run make api-types and commit."
+            exit 1
+          }
 
   web:
-    name: Web (eslint, tsc, next build)
+    name: Web (eslint, tsc, vitest, next build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -69,4 +76,10 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - name: Generated API types are current
+        run: |
+          npx openapi-typescript lib/api/openapi.json -o lib/api/schema.d.ts
+          git diff --exit-code lib/api/schema.d.ts
+      - run: npm test
+      # No auth secrets in CI: the build must not need them.
       - run: npm run build
