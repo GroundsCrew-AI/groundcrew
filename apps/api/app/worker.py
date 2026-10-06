@@ -1,7 +1,14 @@
 """Job worker: claims jobs from Postgres and dispatches them by kind.
 
 Run: python -m app.worker  (make worker, or the `worker` compose service)
-SIGTERM / SIGINT stop it after the current job finishes.
+
+While a job runs, a heartbeat refreshes its lock every JOB_LOCK_TIMEOUT_SECONDS / 4. If the
+lock is lost anyway (for example the worker was paused for longer than the timeout and
+another worker took the job), the job is cancelled here so a run never executes twice.
+
+SIGTERM / SIGINT: the current job gets WORKER_SHUTDOWN_GRACE_SECONDS to finish. After that
+it is cancelled and put back in the queue without using up an attempt; the run resumes from
+its last saved message in the next worker.
 """
 
 import asyncio
@@ -23,10 +30,6 @@ logger = logging.getLogger("groundcrew.worker")
 Handler = Callable[[SessionFactory, dict[str, Any]], Awaitable[None]]
 
 
-class UnknownJobKindError(Exception):
-    pass
-
-
 def default_handlers() -> dict[str, Handler]:
     # Imported here so `app.queue` users do not load every agent and tool.
     from app.agents.base import run_agent_job
@@ -46,14 +49,34 @@ class Worker:
         worker_id: str | None = None,
         poll_interval: float = 1.0,
         lock_timeout_seconds: int = 600,
+        heartbeat_seconds: float | None = None,
+        shutdown_grace_seconds: float = 20.0,
     ) -> None:
         self.session_factory = session_factory
         self.handlers = handlers
         self.worker_id = worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
         self.poll_interval = poll_interval
         self.lock_timeout_seconds = lock_timeout_seconds
+        self.heartbeat_seconds = heartbeat_seconds or max(lock_timeout_seconds / 4, 1.0)
+        self.shutdown_grace_seconds = shutdown_grace_seconds
 
-    async def run_once(self) -> bool:
+    async def _heartbeat(self, job_id: uuid.UUID, handler_task: asyncio.Task[None]) -> None:
+        """Keep the job lock fresh. Cancels the handler if another worker took the job."""
+        while True:
+            await asyncio.sleep(self.heartbeat_seconds)
+            try:
+                async with self.session_factory() as session:
+                    held = await queue.heartbeat(session, job_id, self.worker_id)
+            except Exception:
+                # The database blipped. Try again next beat; the lock timeout is much longer.
+                logger.warning("job heartbeat failed", exc_info=True)
+                continue
+            if not held:
+                logger.error("job lock lost, cancelling job", extra={"worker_id": self.worker_id})
+                handler_task.cancel()
+                return
+
+    async def run_once(self, stop: asyncio.Event | None = None) -> bool:
         """Claim and run one job. Returns False when there was nothing to do."""
         async with self.session_factory() as session:
             job = await queue.claim(session, self.worker_id, self.lock_timeout_seconds)
@@ -63,31 +86,95 @@ class Worker:
         token = job_id_var.set(str(job.id))
         try:
             logger.info("job started", extra={"kind": job.kind, "attempt": job.attempts})
-            handler = self.handlers.get(job.kind)
-            try:
-                if handler is None:
-                    raise UnknownJobKindError(f"No handler for job kind {job.kind!r}")
-                await handler(self.session_factory, job.payload)
-            except Exception as exc:
-                retry = not isinstance(exc, UnknownJobKindError)
-                async with self.session_factory() as session:
-                    status = await queue.mark_failed(
-                        session, job.id, f"{type(exc).__name__}: {exc}", retry=retry
-                    )
-                logger.exception("job failed", extra={"kind": job.kind, "status": status})
-            else:
-                async with self.session_factory() as session:
-                    await queue.mark_done(session, job.id)
-                logger.info("job done", extra={"kind": job.kind})
+            await self._run_job(job.id, job.kind, job.payload, stop)
         finally:
             job_id_var.reset(token)
         return True
+
+    async def _run_job(
+        self,
+        job_id: uuid.UUID,
+        kind: str,
+        payload: dict[str, Any],
+        stop: asyncio.Event | None,
+    ) -> None:
+        handler = self.handlers.get(kind)
+        if handler is None:
+            async with self.session_factory() as session:
+                await queue.mark_failed(
+                    session,
+                    job_id,
+                    f"UnknownJobKindError: No handler for job kind {kind!r}",
+                    retry=False,
+                    owner=self.worker_id,
+                )
+            logger.error("job failed: unknown kind", extra={"kind": kind})
+            return
+
+        async def call_handler() -> None:
+            await handler(self.session_factory, payload)
+
+        handler_task: asyncio.Task[None] = asyncio.create_task(call_handler())
+        heartbeat_task = asyncio.create_task(self._heartbeat(job_id, handler_task))
+        stop_task = asyncio.create_task(stop.wait()) if stop is not None else None
+        stopped = False
+        try:
+            waiting: set[asyncio.Future[Any]] = {handler_task}
+            if stop_task is not None:
+                waiting.add(stop_task)
+            done, _ = await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+            if handler_task not in done:
+                # Shutting down: give the job a grace period, then cancel it.
+                stopped = True
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        asyncio.shield(handler_task), timeout=self.shutdown_grace_seconds
+                    )
+                handler_task.cancel()
+            # Wait for the task to settle without raising its exception here; _settle reads it.
+            await asyncio.wait({handler_task})
+        finally:
+            heartbeat_task.cancel()
+            if stop_task is not None:
+                stop_task.cancel()
+            await asyncio.gather(
+                heartbeat_task, *([stop_task] if stop_task else []), return_exceptions=True
+            )
+
+        await self._settle(job_id, kind, handler_task, stopped)
+
+    async def _settle(
+        self, job_id: uuid.UUID, kind: str, task: asyncio.Task[None], stopped: bool
+    ) -> None:
+        """Record how the job ended. Only the lock owner can change the job."""
+        async with self.session_factory() as session:
+            if task.cancelled():
+                if stopped and await queue.release(session, job_id, owner=self.worker_id):
+                    logger.warning("job released for another worker", extra={"kind": kind})
+                else:
+                    logger.warning("job cancelled after its lock was lost", extra={"kind": kind})
+                return
+            exc = task.exception()
+            if exc is not None:
+                status = await queue.mark_failed(
+                    session, job_id, f"{type(exc).__name__}: {exc}", owner=self.worker_id
+                )
+                logger.error(
+                    "job failed",
+                    extra={"kind": kind, "status": status},
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
+                return
+            if await queue.mark_done(session, job_id, owner=self.worker_id):
+                logger.info("job done", extra={"kind": kind})
+            else:
+                logger.warning("job finished but its lock was lost", extra={"kind": kind})
 
     async def run(self, stop: asyncio.Event) -> None:
         logger.info("worker started", extra={"worker_id": self.worker_id})
         while not stop.is_set():
             try:
-                worked = await self.run_once()
+                worked = await self.run_once(stop)
             except Exception:
                 # Usually the database is down or not migrated yet. Keep going.
                 logger.exception("worker loop error")
@@ -111,6 +198,7 @@ async def main() -> None:
         default_handlers(),
         poll_interval=settings.worker_poll_interval_seconds,
         lock_timeout_seconds=settings.job_lock_timeout_seconds,
+        shutdown_grace_seconds=settings.worker_shutdown_grace_seconds,
     )
     try:
         await worker.run(stop)

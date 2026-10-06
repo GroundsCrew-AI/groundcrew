@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app import queue
-from app.db.models import Job, JobStatus
+from app.db.models import Job, JobStatus, Run, RunStatus, RunStep, StopReason, User, Workspace
 from app.db.session import SessionFactory
 from app.worker import Worker
 
@@ -147,3 +147,135 @@ async def test_worker_stops_on_signal_event(session_factory: SessionFactory) -> 
     await asyncio.sleep(0.1)
     stop.set()
     await asyncio.wait_for(task, timeout=2)
+
+
+async def _run_for_job(sf: SessionFactory) -> tuple[uuid.UUID, uuid.UUID]:
+    """A running agent run with its job, as a worker would leave it."""
+    async with sf() as session:
+        user = User(email=f"{uuid.uuid4().hex[:6]}@test.local", name="T")
+        session.add(user)
+        await session.flush()
+        ws = Workspace(name="T", owner_id=user.id)
+        session.add(ws)
+        await session.flush()
+        run = Run(workspace_id=ws.id, agent="echo_ops", goal="g", status=RunStatus.running)
+        session.add(run)
+        await session.flush()
+        job = await queue.enqueue(session, "run_agent", {"run_id": str(run.id)})
+        await session.commit()
+        return run.id, job.id
+
+
+async def test_dead_job_on_final_attempt_fails_its_run(session_factory: SessionFactory) -> None:
+    run_id, job_id = await _run_for_job(session_factory)
+    async with session_factory() as session:
+        await session.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(
+                status=JobStatus.running,
+                attempts=3,
+                locked_by="dead",
+                locked_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        await session.commit()
+        assert await queue.claim(session, "w2", 600) is None
+    async with session_factory() as session:
+        run = await session.get_one(Run, run_id)
+        steps = (await session.scalars(select(RunStep).where(RunStep.run_id == run_id))).all()
+    assert (await _get(session_factory, job_id)).status == JobStatus.failed
+    assert (run.status, run.stop_reason) == (RunStatus.failed, StopReason.error)
+    assert run.finished_at is not None and run.error and "gave up" in run.error
+    assert [s.kind for s in steps] == ["error"]
+
+
+async def test_final_failure_fails_its_run(session_factory: SessionFactory) -> None:
+    run_id, job_id = await _run_for_job(session_factory)
+    async with session_factory() as session:
+        await queue.claim(session, "w1", 600)
+        assert await queue.mark_failed(session, job_id, "boom", retry=False) == JobStatus.failed
+    async with session_factory() as session:
+        assert (await session.get_one(Run, run_id)).status == RunStatus.failed
+
+
+async def test_only_the_lock_owner_can_finish_a_job(session_factory: SessionFactory) -> None:
+    [job_id] = await _enqueue(session_factory)
+    async with session_factory() as session:
+        await queue.claim(session, "w1", 600)
+        assert not await queue.heartbeat(session, job_id, "w2")
+        assert not await queue.mark_done(session, job_id, owner="w2")
+        assert await queue.mark_failed(session, job_id, "x", owner="w2") is None
+        assert await queue.heartbeat(session, job_id, "w1")
+        assert await queue.mark_done(session, job_id, owner="w1")
+    assert (await _get(session_factory, job_id)).status == JobStatus.done
+
+
+async def test_heartbeat_keeps_a_long_job_from_being_reclaimed(
+    session_factory: SessionFactory,
+) -> None:
+    started = asyncio.Event()
+
+    async def slow(_sf: SessionFactory, _payload: dict[str, Any]) -> None:
+        started.set()
+        await asyncio.sleep(2.5)
+
+    worker = Worker(session_factory, {"slow": slow}, lock_timeout_seconds=1, heartbeat_seconds=0.2)
+    async with session_factory() as session:
+        job = await queue.enqueue(session, "slow", {})
+        await session.commit()
+    task = asyncio.create_task(worker.run_once())
+    await started.wait()
+    await asyncio.sleep(1.5)  # longer than the lock timeout
+    async with session_factory() as session:
+        assert await queue.claim(session, "other", 1) is None
+    assert await task
+    assert (await _get(session_factory, job.id)).status == JobStatus.done
+
+
+async def test_lost_lock_cancels_the_job(session_factory: SessionFactory) -> None:
+    started = asyncio.Event()
+    finished = False
+
+    async def slow(_sf: SessionFactory, _payload: dict[str, Any]) -> None:
+        nonlocal finished
+        started.set()
+        await asyncio.sleep(5)
+        finished = True
+
+    worker = Worker(session_factory, {"slow": slow}, heartbeat_seconds=0.1)
+    async with session_factory() as session:
+        job = await queue.enqueue(session, "slow", {})
+        await session.commit()
+    task = asyncio.create_task(worker.run_once())
+    await started.wait()
+    async with session_factory() as session:  # another worker took it over
+        await session.execute(update(Job).where(Job.id == job.id).values(locked_by="other"))
+        await session.commit()
+    await asyncio.wait_for(task, timeout=3)
+    assert not finished
+    stored = await _get(session_factory, job.id)
+    assert stored.status == JobStatus.running and stored.locked_by == "other"
+
+
+async def test_shutdown_releases_the_job_without_using_an_attempt(
+    session_factory: SessionFactory,
+) -> None:
+    started = asyncio.Event()
+
+    async def slow(_sf: SessionFactory, _payload: dict[str, Any]) -> None:
+        started.set()
+        await asyncio.sleep(10)
+
+    worker = Worker(session_factory, {"slow": slow}, shutdown_grace_seconds=0.2)
+    async with session_factory() as session:
+        job = await queue.enqueue(session, "slow", {})
+        await session.commit()
+    stop = asyncio.Event()
+    task = asyncio.create_task(worker.run(stop))
+    await started.wait()
+    stop.set()
+    await asyncio.wait_for(task, timeout=3)
+    stored = await _get(session_factory, job.id)
+    assert stored.status == JobStatus.queued and stored.attempts == 0
+    assert stored.locked_by is None

@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # LLM calls
     llm_timeout_seconds: float = 60.0
     llm_max_tokens: int = 4096
+    # A call is not made if budgets leave less than this for the completion (reasoning included)
+    llm_min_completion_tokens: int = 512
+    # Tiers that reason before answering (comma separated). Others send enable_thinking=false,
+    # which cut a tiny test reply from 20+ tokens to 2 on all three Nemotron models.
+    llm_reasoning_tiers: str = "ultra"
     # Use Super wherever Ultra would be used (Ultra credits are limited)
     dev_mode_no_ultra: bool = False
 
@@ -73,6 +78,8 @@ class Settings(BaseSettings):
     # Worker and live updates
     worker_poll_interval_seconds: float = 1.0
     job_lock_timeout_seconds: int = 600
+    # On SIGTERM, how long the current job may keep running before it is put back in the queue
+    worker_shutdown_grace_seconds: float = 20.0
     sse_poll_interval_ms: int = 500
 
     # Dev-only API key check (TODO Phase 2: replace with real auth). Off when unset.
