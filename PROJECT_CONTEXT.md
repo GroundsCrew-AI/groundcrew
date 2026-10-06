@@ -125,7 +125,8 @@ Web app (Vercel) ──REST+SSE──▶ Control plane (FastAPI on VM)
 | Medic | Cross-cloud root cause; propose + verify fixes | Nemotron 3 **Ultra** | read telemetry, Tavily, open PR, emergency actions (approval) |
 
 Model routing (`app/llm/router.py`): classify / summarize / detect → Nano; write_config / plan / patch → Super;
-root_cause → Ultra. `DEV_MODE_NO_ULTRA=true` sends Ultra tasks to Super.
+root_cause → Ultra. `DEV_MODE_NO_ULTRA=true` sends Ultra tasks to Super. Only tiers in `LLM_REASONING_TIERS`
+(default Ultra) reason before answering; Nano and Super calls send `enable_thinking=false`.
 
 Env vars (exact model IDs must be copied from the Token Factory docs; `.env.example` has a comment for each).
 Blank means unset; defaults in brackets.
@@ -140,6 +141,8 @@ MODEL_EMBED=                  # NVIDIA embedding model if available
 EMBED_DIM=                    # [1024] incidents.embedding size; changing it needs a migration
 LLM_TIMEOUT_SECONDS=          # [60]
 LLM_MAX_TOKENS=               # [4096] per call, reasoning included
+LLM_MIN_COMPLETION_TOKENS=    # [512] stop the run instead of a call with less room than this
+LLM_REASONING_TIERS=          # [ultra] tiers that think first; others send enable_thinking=false
 DEV_MODE_NO_ULTRA=            # [false] route Ultra tasks to Super
 PRICE_NANO_INPUT_PER_M=       # optional USD per 1M tokens; unset = cost not estimated
 PRICE_NANO_OUTPUT_PER_M=
@@ -168,7 +171,8 @@ MAX_TOKENS_PER_RUN=           # [60000]
 
 # Worker, SSE, logging, dev auth
 WORKER_POLL_INTERVAL_SECONDS= # [1.0]
-JOB_LOCK_TIMEOUT_SECONDS=     # [600] a running job is reclaimed after this
+JOB_LOCK_TIMEOUT_SECONDS=     # [600] a job whose worker stopped heartbeating is reclaimed after this
+WORKER_SHUTDOWN_GRACE_SECONDS= # [20] on SIGTERM, then the job is requeued
 SSE_POLL_INTERVAL_MS=         # [500]
 LOG_LEVEL=                    # [INFO]
 DEV_API_KEY=                  # [off] X-API-Key check until Phase 2 auth
@@ -285,7 +289,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] Neon Postgres project, `DATABASE_URL` in `.env` (pooled, `sslmode=require`; Postgres 18.6, pgvector 0.8.6 available, connection verified)
   - [ ] Tavily account and API key
   - [ ] Budget alerts: AWS $20 / $50, Azure $20 (section 12)
-- [ ] Phase 1 — Backend + agent loop (in progress, awaiting review)
+- [x] Phase 1 — Backend + agent loop
   - [x] Postgres (pgvector container), SQLAlchemy async models for all section 9 tables, Alembic, `make seed`
   - [x] Fernet secrets helper, `make keygen`
   - [x] Postgres job queue (`SKIP LOCKED`, 3 attempts with backoff) and worker with graceful shutdown
@@ -295,6 +299,12 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] API: runs, run SSE events, approvals; JSON logs with request id; optional DEV_API_KEY
   - [x] Tests on real Postgres with a fake LLM; CI runs migrations and tests without secrets
   - [x] Verified end to end with Nemotron Nano: run pauses at `restart_fake_service`, approve, run completes
+  - [x] Review fixes: job heartbeat and owner checks, dead jobs fail their run, shutdown requeues the job,
+        SSE no longer holds a DB connection, no transaction open during model or tool calls, invalid tool
+        arguments kept and reported, cut-off answers fail the run, per-call token caps, unique tool call IDs,
+        log extras and approval arguments redacted (101 tests)
+  - [x] Reasoning off for Nano and Super (`LLM_REASONING_TIERS`, default ultra). Echo Ops end to end on Nano:
+        3 calls, 64 completion tokens in total (was 700 to 950 per call with reasoning on)
 - [ ] Phase 2 — Frontend shell
 - [ ] Phase 3 — Discovery + graph
 - [ ] Phase 4 — Build + deploy agents
@@ -303,19 +313,25 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 - [ ] Phase 7 — Submission
 - [ ] Phase 8 — Judging upkeep
 
-**Current phase:** 1
+**Current phase:** 2
 **Last updated:** 2026-10-06
 **Known issues / blockers:**
-- Nemotron models reason before answering. Handled in `app/llm/client.py`: `LLM_MAX_TOKENS` defaults to 4096,
-  `<think>` blocks are stripped from content, and empty content with `finish_reason=length` raises a clear error.
-  In the Phase 1 test run, Nano used 700 to 950 completion tokens for one simple tool call, mostly reasoning.
-  Turning reasoning off per request is not tried yet; it would cut cost.
+- Phase 0 open items: Tavily API key; budget alerts (AWS $20 / $50, Azure $20).
+- No auth yet: anyone who can reach the API can approve, and approvals are recorded as
+  `dev (no auth yet)`. Phase 2 must add login and record the real approver (section 7 rule 8)
+  before any real write or emergency tool ships.
+- The daily token budget is checked without a lock. Exact with one worker; with several workers the
+  overshoot is at most one capped call per worker.
+- Tool calling with reasoning off is verified only on the Echo Ops toy agent. Re-check quality when
+  Scout, Builder, and Deployer land, and add their tiers to `LLM_REASONING_TIERS` if needed.
 - The demo runs locally only; nothing in Phase 1 targets Neon. Run `make migrate DB_URL=<neon url>` when hosting.
 
 ## 15. Decisions log (newest first)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-06 | Reasoning off by default for Nano and Super (`enable_thinking=false`), on for Ultra (`LLM_REASONING_TIERS`) | Verified on all three models: a test reply went from 20+ tokens with no answer to 2 tokens; Echo Ops tool calls went from 700 to 950 completion tokens per call to under 30. Medic's root cause work keeps reasoning |
+| 2026-10-06 | Worker heartbeats its job lock; only the lock owner can finish a job; budgets cap each call's max_tokens | A long run is never run twice, a dead job never leaves a run stuck, and one call cannot blow far past a budget |
 | 2026-10-06 | Local dev and CI use a `pgvector/pgvector:pg16` container (host port 5433); Neon only for the hosted demo | Fast, free, resettable; CI needs no secrets; avoids clashing with a host Postgres on 5432 |
 | 2026-10-06 | SQLAlchemy 2.0 async with asyncpg; Alembic migrations in `apps/api/app/db/migrations` | Async fits FastAPI and the worker; Alembic gives reviewable schema changes |
 | 2026-10-06 | SSE streams run steps by polling the DB every ~500 ms, not LISTEN/NOTIFY | Neon's pooler does not support LISTEN/NOTIFY; polling is simple and good enough |
