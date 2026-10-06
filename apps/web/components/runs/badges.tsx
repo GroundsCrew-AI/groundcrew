@@ -93,3 +93,16 @@ export function PolicyTag({ policy }: { policy: ToolPolicy | null | undefined })
     </span>
   );
 }
+
+/** Shown next to a run's status when people rejected some of its actions. */
+export function RejectedMarker({ count, className }: { count: number; className?: string }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className={cn("text-[12px] whitespace-nowrap text-[var(--status-failed)]", className)}
+      title="These actions were rejected and did not run"
+    >
+      {count === 1 ? "1 action rejected" : `${count} actions rejected`}
+    </span>
+  );
+}

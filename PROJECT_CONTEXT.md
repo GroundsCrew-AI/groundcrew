@@ -335,6 +335,9 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] Verified in Chrome with an Auth.js session for a test GitHub identity: start a run from the UI,
         live steps, refresh mid-run (no duplicates), approve inline, decider shown, second user gets 404,
         signed-out URLs redirect to sign-in
+  - [x] Rejections read honestly: the model is told the exact rejected action and to say it was rejected;
+        the step is recorded as `tool_rejected` and shown as "Not run: rejected"; runs carry
+        `rejected_actions`, shown as "N actions rejected" beside the status (verified live on Nano)
   - [ ] Real GitHub sign-in once: set `AUTH_GITHUB_ID`/`GITHUB_APP_CLIENT_ID` and the GitHub App callback
         URL `http://localhost:3000/api/auth/callback/github`
 - [ ] Phase 3 — Discovery + graph
@@ -362,6 +365,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-06 | A run whose action was rejected still ends `succeeded` / `completed`, with a `rejected_actions` count shown beside the status | The agent did finish cleanly; the marker keeps it from reading as a full success, without a new stop reason or migration |
 | 2026-10-06 | Sign-in with Auth.js (NextAuth v5) and the GitHub provider, using our GitHub App's OAuth client | One identity for login now and repo access in Phase 3; no passwords to store |
 | 2026-10-06 | REST goes browser -> Next.js `/api/gc/*` proxy -> FastAPI with a 5-minute HS256 internal JWT (`INTERNAL_JWT_SECRET`) | The browser never holds an API credential, and REST needs no CORS |
 | 2026-10-06 | SSE goes browser -> FastAPI directly with a 60-second stream token bound to run and user; CORS only for `WEB_ORIGIN` | Long-lived streams time out behind serverless proxies |

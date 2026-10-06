@@ -368,6 +368,11 @@
             "title": "Prompt Tokens",
             "type": "integer"
           },
+          "rejected_actions": {
+            "default": 0,
+            "title": "Rejected Actions",
+            "type": "integer"
+          },
           "result": {
             "anyOf": [
               {
@@ -516,6 +521,11 @@
           },
           "prompt_tokens": {
             "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "rejected_actions": {
+            "default": 0,
+            "title": "Rejected Actions",
             "type": "integer"
           },
           "result": {

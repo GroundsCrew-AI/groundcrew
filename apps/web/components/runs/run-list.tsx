@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Run } from "@/lib/api/client";
 import { agentName, elapsedMs, formatDuration, formatRelative, formatTimestamp, formatTokens } from "@/lib/format";
 
-import { StatusPill } from "./badges";
+import { RejectedMarker, StatusPill } from "./badges";
 
 /** Dense run rows: status, agent, goal, tokens, duration, when. */
 export function RunList({ runs, now = Date.now() }: { runs: Run[]; now?: number }) {
@@ -21,7 +21,10 @@ export function RunList({ runs, now = Date.now() }: { runs: Run[]; now?: number 
                 <StatusPill status={run.status} />
               </span>
               <span className="hidden truncate text-muted-foreground sm:block">{agentName(run.agent)}</span>
-              <span className="truncate">{run.goal}</span>
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span className="truncate">{run.goal}</span>
+                <RejectedMarker count={run.rejected_actions} className="shrink-0" />
+              </span>
               <span className="tabular hidden text-right font-mono text-[12px] text-muted-foreground sm:block">
                 {formatTokens(run.total_tokens)}
               </span>

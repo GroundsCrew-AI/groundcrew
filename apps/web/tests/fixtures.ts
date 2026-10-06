@@ -62,6 +62,7 @@ export function runDetail(overrides: Partial<RunDetail> = {}): RunDetail {
     started_at: "2026-10-06T12:00:00Z",
     finished_at: null,
     duration_ms: null,
+    rejected_actions: 0,
     steps: [],
     approvals: [],
     ...overrides,

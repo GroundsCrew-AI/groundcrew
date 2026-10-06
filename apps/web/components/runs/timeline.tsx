@@ -26,6 +26,7 @@ function nodeColor(step: Step, approval: Approval | undefined): string {
     case "approval_decided":
       return approval?.status === "rejected" ? "var(--status-failed)" : "var(--status-ok)";
     case "error":
+    case "tool_rejected":
       return "var(--status-failed)";
     case "budget":
       return "var(--status-waiting)";
@@ -106,6 +107,16 @@ function StepTitle({ step }: { step: Step }) {
         <>
           <span className="font-mono text-[12.5px] font-medium">{step.tool_name}</span>
           <PolicyTag policy={step.tool_policy} />
+        </>
+      );
+    case "tool_rejected":
+      return (
+        <>
+          <span className="font-mono text-[12.5px] font-medium text-muted-foreground line-through decoration-subtle">
+            {step.tool_name}
+          </span>
+          <PolicyTag policy={step.tool_policy} />
+          <span className="text-[12.5px] text-[var(--status-failed)]">Not run: rejected</span>
         </>
       );
     case "error":
@@ -205,7 +216,13 @@ export function Timeline({
                       <Meta step={step} />
                     </span>
                   </div>
-                  <Summaries step={step} />
+                  {step.kind === "tool_rejected" ? (
+                    <p className="mt-1 text-[12.5px] text-muted-foreground">
+                      A person rejected this action, so it did not run. The agent was told why.
+                    </p>
+                  ) : (
+                    <Summaries step={step} />
+                  )}
                 </>
               )}
             </div>

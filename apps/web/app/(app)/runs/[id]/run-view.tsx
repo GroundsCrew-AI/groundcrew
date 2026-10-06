@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { StatusPill, stopReasonLabel } from "@/components/runs/badges";
+import { RejectedMarker, StatusPill, stopReasonLabel } from "@/components/runs/badges";
 import { Timeline } from "@/components/runs/timeline";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { EmptyState, ErrorState } from "@/components/states/states";
@@ -221,6 +221,8 @@ export function RunView({ runId }: { runId: string }) {
 
   const elapsed = elapsedMs(run.started_at ?? run.created_at, run.finished_at, now);
   const cost = formatCost(run.cost_usd);
+  // Counted from live approvals, so the marker appears the moment someone rejects.
+  const rejected = Object.values(state.approvals).filter((a) => a.status === "rejected").length;
   // The status pill already says "Succeeded" or "Needs approval"; only explain other stops.
   const reason =
     run.stop_reason === "completed" || run.stop_reason === "waiting_approval"
@@ -259,7 +261,10 @@ export function RunView({ runId }: { runId: string }) {
             <p className="text-[15px] leading-snug font-medium">{run.goal}</p>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-5">
               <Fact label="Status">
-                <StatusPill status={run.status} />
+                <span className="flex flex-col items-start gap-1">
+                  <StatusPill status={run.status} />
+                  <RejectedMarker count={rejected} />
+                </span>
               </Fact>
               <Fact label="Tokens">
                 <span className="font-mono">{formatTokens(totalTokens(run))}</span>

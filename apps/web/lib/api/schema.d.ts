@@ -365,6 +365,11 @@ export interface components {
             id: string;
             /** Prompt Tokens */
             prompt_tokens: number;
+            /**
+             * Rejected Actions
+             * @default 0
+             */
+            rejected_actions: number;
             /** Result */
             result: string | null;
             /** Started At */
@@ -412,6 +417,11 @@ export interface components {
             id: string;
             /** Prompt Tokens */
             prompt_tokens: number;
+            /**
+             * Rejected Actions
+             * @default 0
+             */
+            rejected_actions: number;
             /** Result */
             result: string | null;
             /** Started At */
