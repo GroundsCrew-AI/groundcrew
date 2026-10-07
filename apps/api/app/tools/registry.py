@@ -7,6 +7,7 @@ Tools are only ever run through app.policy.engine, never by calling `fn` directl
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 from pydantic import BaseModel
@@ -18,6 +19,8 @@ from app.db.models import ToolPolicy
 class ToolContext:
     run_id: uuid.UUID
     workspace_id: uuid.UUID
+    # The repository this run works on (repo tools need it). None when there is none.
+    repo_root: Path | None = None
 
 
 ToolFn = Callable[[ToolContext, Any], Awaitable[str]]
