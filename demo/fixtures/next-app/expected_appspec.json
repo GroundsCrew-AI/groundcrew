@@ -1,0 +1,14 @@
+{
+  "language": "typescript",
+  "framework": "nextjs",
+  "runtime_version": "20",
+  "package_manager": "npm",
+  "install_cmd": "npm install",
+  "build_cmd": "npm run build",
+  "start_cmd": "npm start",
+  "port": 3000,
+  "database": "none",
+  "health_path": null,
+  "has_dockerfile": false,
+  "env_vars": []
+}

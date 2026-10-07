@@ -399,6 +399,12 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         shallow, token via git's environment, size cap, always cleaned up); read-tier `list_files` and
         `read_file` tools: sorted output, caps on entries, lines, and bytes, truncation markers, .gitignore
         respected, secret files and paths outside the repo refused, excerpts redacted
+  - [x] Step 3: Scout. Rule detectors (package.json / lockfiles, requirements / pyproject / Pipfile, go.mod,
+        Dockerfile, Procfile, env templates, ports, env vars, health routes in code) with file:line evidence, then
+        one Nano call (detect_app_spec: low reasoning, prompt capped at ~6k tokens, Super fallback, strict schema).
+        Rules win conflicts (recorded); model values with no supporting line are not applied (`low_confidence` +
+        `unverified`); per-field source rule/model; deterministic confidence. `summarize_system` (Nano, off).
+        Fixtures in `demo/fixtures/` with golden specs; `scripts/live_scout.py` (not run)
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission
@@ -434,6 +440,9 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-07 | Scout is rules first: a detector value (with file:line evidence) beats the model, and each disagreement is recorded as a conflict | Strict enums force confident wrong answers; files are the ground truth |
+| 2026-10-07 | A model value no cited line supports is not applied: the field stays unknown, listed in `low_confidence`, with the value in `unverified` | Applying it let invented values (a `DATABASE_URL` for a Next.js app) flow into Builder and Deployer; later steps can still see the suggestion |
+| 2026-10-07 | Scout's confidence is computed (known key fields, conflicts, unsupported values), not taken from the model | Model self-reported confidence is not calibrated |
 | 2026-10-07 | Repo tools return capped, sorted text with explicit truncation markers; secret files (.env, keys) are listed by name only and never read | Model-facing output must be small and deterministic: predictable token costs and stable FakeLLM tests |
 | 2026-10-07 | `GitCloneSource` takes https URLs only and sends `GIT_CLONE_TOKEN` as a header through git's environment | No ssh/file/ext transports or option injection; the token never appears in a URL, argv, or error |
 | 2026-10-07 | `pathspec` for .gitignore rules | Exact git semantics (negation, anchors, nested files) without shelling out to git for local paths |
