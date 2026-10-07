@@ -2,7 +2,7 @@
 fallback, escalation, retries, reasoning capture (never re-sent), cost, the on_call hook."""
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from pydantic import BaseModel
@@ -241,18 +241,71 @@ async def test_tools_and_schema_together_are_rejected() -> None:
         )
 
 
-async def test_embed_counts_spend_and_checks_dimensions() -> None:
-    settings = _settings(model_embed="e/model", price_embed_per_m=0.01, embed_dim=3)
+async def test_embed_asks_for_embed_dim_and_normalizes() -> None:
+    settings = _settings(price_embed_per_m=0.01, embed_dim=2)
     store = MemoryUsageStore()
-    llm = FakeLLM(settings=settings, embeddings=[[[0.1, 0.2, 0.3]], [[0.1, 0.2]]])
-    assert await llm.embed(["oom"], usage=store) == [[0.1, 0.2, 0.3]]
+    llm = FakeLLM(settings=settings, embeddings=[[[3.0, 4.0]]])
+    assert await llm.embed(["oom"], usage=store) == [[0.6, 0.8]]
+    [request] = llm.calls
+    assert request["model"] == "Qwen/Qwen3-Embedding-8B"  # the default
+    assert request["dimensions"] == 2
     assert store.tokens_today == 8
+
+
+async def test_embed_truncates_when_dimensions_are_ignored() -> None:
+    # Qwen3-Embedding-8B returns 4096 values; a Matryoshka prefix is a valid embedding.
+    settings = _settings(price_embed_per_m=0.01, embed_dim=2)
+    llm = FakeLLM(settings=settings, embeddings=[[[3.0, 4.0, 99.0, 99.0]]])
+    assert await llm.embed(["oom"], usage=MemoryUsageStore()) == [[0.6, 0.8]]
+
+
+async def test_embed_drops_rejected_dimensions_parameter_once() -> None:
+    settings = _settings(price_embed_per_m=0.01, embed_dim=2)
+    llm = FakeLLM(
+        settings=settings,
+        embeddings=[status_error(400, "unknown field dimensions"), [[0.0, 2.0, 5.0]], [[1.0, 0.0]]],
+    )
+    assert await llm.embed(["a"], usage=MemoryUsageStore()) == [[0.0, 1.0]]
+    assert await llm.embed(["b"], usage=MemoryUsageStore()) == [[1.0, 0.0]]
+    assert ["dimensions" in c for c in llm.calls] == [True, False, False]
+
+
+async def test_embed_too_short_is_an_error() -> None:
+    settings = _settings(price_embed_per_m=0.01, embed_dim=4)
+    llm = FakeLLM(settings=settings, embeddings=[[[0.1, 0.2]]])
     with pytest.raises(LLMError, match="EMBED_DIM"):
-        await llm.embed(["oom"], usage=store)
+        await llm.embed(["oom"], usage=MemoryUsageStore())
+
+
+async def test_lightning_is_refused_without_a_price() -> None:
+    from app.llm.models import model_spec
+
+    with pytest.raises(PriceMissingError, match="PRICE_LIGHTNING_INPUT_PER_M"):
+        model_spec(Tier.lightning, _settings())  # the model ID has a default; the price does not
+    spec = model_spec(
+        Tier.lightning,
+        _settings(
+            model_lightning="nvidia/Nemotron-3_5-Lightning",
+            price_lightning_input_per_m=0.05,
+            price_lightning_output_per_m=0.2,
+        ),
+    )
+    assert (spec.model_id, spec.max_context) == ("nvidia/Nemotron-3_5-Lightning", 64_000)
+
+
+async def test_schema_values_are_normalized_before_validation() -> None:
+    class Lang(BaseModel):
+        language: Literal["javascript", "typescript", "python", "other"]
+        port: int
+
+    llm = FakeLLM(reply('{"language": "TypeScript", "port": 3000}'), settings=_settings())
+    result = await llm.chat(Task.detect_app_spec, MESSAGES, budget=_budget(), schema=Lang)
+    assert result.parsed == Lang(language="typescript", port=3000)
+    assert len(llm.calls) == 1  # no repair needed
 
 
 async def test_embed_and_rerank_refuse_without_price() -> None:
-    llm = FakeLLM(settings=_settings(model_embed="e/model", model_rerank="r/model"))
+    llm = FakeLLM(settings=_settings(model_rerank="r/model"))
     with pytest.raises(LLMError, match="PRICE_EMBED_PER_M"):
         await llm.embed(["x"], usage=MemoryUsageStore())
     with pytest.raises(LLMError, match="PRICE_RERANK_PER_M"):
@@ -262,3 +315,38 @@ async def test_embed_and_rerank_refuse_without_price() -> None:
 async def test_rerank_without_model_keeps_order() -> None:
     llm = FakeLLM(settings=_settings())
     assert await llm.rerank("q", ["a", "b", "c"], top_k=2) == [(0, 0.0), (1, 0.0)]
+
+
+async def test_nano_prompts_over_its_usable_context_go_to_super() -> None:
+    # About 8.5k tokens: within what Nano accepts, past what it reads reliably (8000).
+    big = [{"role": "user", "content": "x" * 34_000}]
+    llm = FakeLLM(reply('{"language": "go", "port": 8080}'), settings=_settings())
+    result = await llm.chat(Task.detect_app_spec, big, budget=_budget(), schema=Spec)
+    assert result.tier == Tier.super and result.fell_back
+
+
+async def test_lightning_route_is_used_once_priced() -> None:
+    priced = _settings(price_lightning_input_per_m=0.05, price_lightning_output_per_m=0.2)
+    llm = FakeLLM(reply("next"), reply("next"), settings=priced)
+    result = await llm.chat(Task.tool_step, MESSAGES, budget=_budget())
+    assert result.tier == Tier.lightning and llm.models == ["nvidia/Nemotron-3_5-Lightning"]
+    assert llm.reasoning_kwargs == [{"enable_thinking": False}]
+    unpriced = FakeLLM(reply("next"), settings=_settings())
+    assert (await unpriced.chat(Task.tool_step, MESSAGES, budget=_budget())).tier == Tier.super
+
+
+async def test_schema_without_other_is_refused() -> None:
+    class Closed(BaseModel):
+        language: Literal["python", "go"]
+
+    llm = FakeLLM(reply('{"language": "go"}'), settings=_settings())
+    with pytest.raises(ValueError, match="must allow 'other': language"):
+        await llm.chat(Task.detect_app_spec, MESSAGES, budget=_budget(), schema=Closed)
+    assert llm.calls == []
+
+
+async def test_schema_prompt_allows_other_and_null() -> None:
+    llm = FakeLLM(reply('{"language": "go", "port": 1}'), settings=_settings())
+    await llm.chat(Task.detect_app_spec, MESSAGES, budget=_budget(), schema=Spec)
+    system = llm.calls[0]["messages"][0]["content"]
+    assert 'use "other"' in system and "use null" in system

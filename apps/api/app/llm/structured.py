@@ -2,13 +2,23 @@
 
 Nebius recommends giving the schema both in response_format and in the prompt. Pydantic
 validation of the reply is the real guard either way.
-TODO(nebius): confirm whether Token Factory enforces `strict: true` for Nemotron, and which
-JSON-schema keywords it accepts (scripts/probe_token_factory.py checks a simple schema).
-https://docs.tokenfactory.nebius.com/llms.txt
+
+Probes (2026-10-07):
+- Free-text values differ in casing between tiers ("TypeScript", "JavaScript", "javascript").
+- Strict json_schema IS enforced: every tier returned a value inside the enum. But for a Rust
+  repo with no "rust" option, Nano answered "python" and Super / Ultra "javascript": the enum
+  forces a valid but wrong value when nothing fits.
+
+So every field the code compares on is a lowercase Literal (or StrEnum) that includes "other"
+(chat() refuses a schema without it), the prompt says to use "other" or null when nothing fits,
+and normalize_choices() maps the model's spelling onto the allowed values before validation.
 """
 
+import enum
 import json
-from typing import Any
+import re
+import types
+from typing import Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
@@ -69,7 +79,9 @@ def with_schema_instruction(messages: list[dict[str, Any]], schema: Schema) -> l
     expect a single system message first)."""
     instruction = (
         "Reply with one JSON object only, no prose and no code fences, matching this JSON "
-        f"schema:\n{json.dumps(json_schema(schema))}"
+        f"schema:\n{json.dumps(json_schema(schema))}\n"
+        'If none of a field\'s allowed values fits, use "other". If you do not know a value, '
+        "use null where the schema allows it. Do not guess."
     )
     if messages and messages[0].get("role") == "system":
         first = messages[0]
@@ -78,6 +90,104 @@ def with_schema_instruction(messages: list[dict[str, Any]], schema: Schema) -> l
             *messages[1:],
         ]
     return [{"role": "system", "content": instruction}, *messages]
+
+
+OTHER = "other"
+_SEPARATORS = re.compile(r"[\s_\-./]+")
+
+
+def _choices(annotation: Any) -> tuple[str, ...] | None:
+    """The allowed strings of a Literal[...] or StrEnum annotation, else None."""
+    if get_origin(annotation) is Literal:
+        options = get_args(annotation)
+        return options if all(isinstance(o, str) for o in options) else None
+    if isinstance(annotation, type) and issubclass(annotation, enum.Enum):
+        values = tuple(m.value for m in annotation)
+        return values if all(isinstance(v, str) for v in values) else None
+    return None
+
+
+def _squash(text: str) -> str:
+    return _SEPARATORS.sub("", text.strip().lower())
+
+
+def normalize_choice(value: Any, choices: tuple[str, ...]) -> Any:
+    """Map a model's spelling onto an allowed value: case, spaces, and separators are ignored
+    ("TypeScript" -> "typescript", "Node JS" -> "nodejs"). Unknown values become "other" when
+    it is allowed; otherwise the value is left for validation (and the repair prompt)."""
+    if not isinstance(value, str):
+        return value
+    if value in choices:
+        return value
+    wanted = _squash(value)
+    for choice in choices:
+        if _squash(choice) == wanted:
+            return choice
+    return OTHER if OTHER in choices else value
+
+
+def _normalize(annotation: Any, value: Any) -> Any:
+    choices = _choices(annotation)
+    if choices is not None:
+        return normalize_choice(value, choices)
+    origin = get_origin(annotation)
+    if origin in (Union, types.UnionType):
+        if value is None:
+            return value
+        for arg in get_args(annotation):
+            if arg is type(None):
+                continue
+            normalized = _normalize(arg, value)
+            if normalized is not value:
+                return normalized
+        return value
+    if origin in (list, tuple, set, frozenset) and isinstance(value, list):
+        args = get_args(annotation)
+        return [_normalize(args[0], item) for item in value] if args else value
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return normalize_choices(annotation, value)
+    return value
+
+
+def choices_without_other(
+    model: type[BaseModel], _seen: frozenset[type] = frozenset()
+) -> list[str]:
+    """Literal / StrEnum fields of `model` (nested models and lists included) that do not
+    allow "other". Strict schemas force a value from the list, so a list without "other"
+    makes the model pick a wrong value when nothing fits."""
+    missing: list[str] = []
+    if model in _seen:
+        return missing
+    seen = _seen | {model}
+
+    def walk(annotation: Any, path: str) -> None:
+        choices = _choices(annotation)
+        if choices is not None:
+            if OTHER not in choices:
+                missing.append(path)
+            return
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            missing.extend(f"{path}.{p}" for p in choices_without_other(annotation, seen))
+            return
+        for arg in get_args(annotation):
+            walk(arg, path)
+
+    for name, info in model.model_fields.items():
+        walk(info.annotation, name)
+    return missing
+
+
+def normalize_choices(model: type[BaseModel], data: Any) -> Any:
+    """Normalize every Literal / StrEnum field of `model` in `data` (nested models and lists
+    included) before validation."""
+    if not isinstance(data, dict):
+        return data
+    out = dict(data)
+    for name, info in model.model_fields.items():
+        key = info.alias or name
+        if key in out:
+            out[key] = _normalize(info.annotation, out[key])
+    return out
 
 
 def _json_text(content: str) -> str:
@@ -108,7 +218,7 @@ def parse_structured(content: str | None, schema: Schema) -> tuple[Any, str | No
     if isinstance(schema, dict):
         return data, None
     try:
-        return schema.model_validate(data), None
+        return schema.model_validate(normalize_choices(schema, data)), None
     except ValidationError as exc:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in e['loc']) or '(root)'}: {e['msg']}"

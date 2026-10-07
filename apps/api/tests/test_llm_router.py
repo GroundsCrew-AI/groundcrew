@@ -6,7 +6,15 @@ import pytest
 
 from app.config import Settings
 from app.llm.models import Reasoning, Tier, next_tier
-from app.llm.router import ROUTES, ModelNotConfiguredError, Task, TaskType, model_id, route
+from app.llm.router import (
+    ROUTES,
+    ModelNotConfiguredError,
+    Task,
+    TaskType,
+    lightning_enabled,
+    model_id,
+    route,
+)
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -28,6 +36,7 @@ def _settings(**overrides: Any) -> Settings:
         (Task.fix_build, Tier.super, Reasoning.on),
         (Task.plan_deploy, Tier.super, Reasoning.low),
         (Task.root_cause, Tier.ultra, Reasoning.on),
+        (Task.propose_fix, Tier.ultra, Reasoning.on),
         (Task.summarize, Tier.nano, Reasoning.off),  # Echo Ops keeps its Phase 1 route
         (Task.plan, Tier.super, Reasoning.off),
     ],
@@ -40,6 +49,62 @@ def test_routes(task: Task, tier: Tier, reasoning: Reasoning) -> None:
 def test_every_task_has_a_route() -> None:
     assert set(ROUTES) == set(Task)
     assert TaskType is Task
+
+
+LIGHTNING_PRICED = {"price_lightning_input_per_m": 0.05, "price_lightning_output_per_m": 0.2}
+
+
+def test_ultra_and_lightning_never_run_with_low_reasoning() -> None:
+    # Probes: low saved little or cost more on these tiers. Holds for every task, escalated or
+    # not, with and without DEV_MODE_NO_ULTRA and Lightning routing.
+    for overrides in ({}, {"dev_mode_no_ultra": True}, LIGHTNING_PRICED):
+        settings = _settings(**overrides)
+        for task in Task:
+            for escalate in (False, True):
+                r = route(task, escalate=escalate, settings=settings)
+                low_on_big = r.tier in (Tier.ultra, Tier.lightning) and r.reasoning == Reasoning.low
+                assert not low_on_big, (task, overrides)
+
+
+def test_no_task_routes_to_lightning_until_priced() -> None:
+    for task in Task:
+        for escalate in (False, True):
+            r = route(task, escalate=escalate, settings=_settings())
+            assert Tier.lightning not in (r.tier, r.fallback)
+    half = _settings(price_lightning_input_per_m=0.05)  # both prices are needed
+    assert route(Task.tool_step, settings=half).tier == Tier.super
+    assert not lightning_enabled(half)
+
+
+@pytest.mark.parametrize(
+    ("task", "fallback"),
+    [
+        (Task.tool_step, Tier.super),
+        (Task.investigate_step, Tier.super),
+        (Task.verify_recovery, Tier.nano),
+    ],
+)
+def test_lightning_routes_once_priced(task: Task, fallback: Tier) -> None:
+    r = route(task, settings=_settings(**LIGHTNING_PRICED))
+    assert (r.tier, r.reasoning, r.fallback) == (Tier.lightning, Reasoning.off, fallback)
+    up = route(task, escalate=True, settings=_settings(**LIGHTNING_PRICED))
+    assert (up.tier, up.reasoning) == (Tier.super, Reasoning.on)  # Lightning escalates to Super
+
+
+def test_nano_keeps_its_tasks_when_lightning_is_on() -> None:
+    settings = _settings(**LIGHTNING_PRICED)
+    for task in (
+        Task.classify_signal,
+        Task.summarize_graph,
+        Task.compress_evidence,
+        Task.detect_app_spec,
+    ):
+        assert route(task, settings=settings).tier == Tier.nano
+
+
+def test_lightning_escalates_to_super() -> None:
+    assert next_tier(Tier.lightning) == Tier.super
+    assert next_tier(Tier.nano) == Tier.super
 
 
 def test_escalate_bumps_one_tier_with_full_reasoning() -> None:

@@ -129,17 +129,25 @@ Model routing (`app/llm/router.py`) has two dials per task: a tier and a reasoni
 
 | Task | Tier | Reasoning | Max tokens | Fallback |
 |---|---|---|---|---|
-| summarize_graph, compress_evidence, classify_signal, verify_recovery | Nano | off | 300 to 1,500 | |
+| summarize_graph, compress_evidence, classify_signal | Nano | off | 300 to 1,500 | |
+| verify_recovery | Nano, or **Lightning** once priced | off | 800 | Nano when on Lightning |
 | detect_app_spec (Scout) | Nano | low | 2,000 | Super |
 | write_dockerfile, plan_deploy | Super | low | 3,000 | |
 | fix_build | Super | on | 6,000 | |
-| tool_step, investigate_step | Super | off | 1,500 | Nano (tool_step) |
+| tool_step, investigate_step | Super, or **Lightning** once priced | off | 1,500 | Nano (tool_step); Super when on Lightning |
 | root_cause | Ultra | on | 10,000 | Super |
-| propose_fix | Ultra | low | 6,000 | Super |
+| propose_fix | Ultra | on | 6,000 | Super |
 | classify, summarize, detect / write_config, plan, patch (Phase 1 generic, Echo Ops) | Nano / Super | off | `LLM_MAX_TOKENS` | |
 
 `escalate=True` bumps one tier, turns reasoning fully on, and gives 1.5x the tokens (Builder's 4th build attempt
-goes to Ultra). `DEV_MODE_NO_ULTRA=true` keeps everything on Super or below. All calls send `temperature=1.0`,
+goes to Ultra). Ultra and Lightning never run with reasoning `low` (in the probes it saved little or cost more).
+Nemotron 3.5 Lightning is its own tier (`lightning`, escalates to Super); its routes (`LIGHTNING_ROUTES`) switch
+on when `PRICE_LIGHTNING_*` is set, with no code change. Each tier has a *usable* context (`LLM_CONTEXT_*`): a
+bigger prompt goes to the route's fallback tier (Nano: 8,000 tokens, so large Scout inputs go to Super).
+Schema fields the code compares on are lowercase Literals with an `other` value (the client refuses a schema
+without it); prompts say to use `other` or null when nothing fits; model output is normalized onto the allowed
+values before validation. Evidence for Medic is ranked by embedding cosine similarity (no rerank model on
+Token Factory). `DEV_MODE_NO_ULTRA=true` keeps everything on Super or below. All calls send `temperature=1.0`,
 `top_p=0.95` (NVIDIA's Nemotron 3 guidance). Every call goes through `app/llm/client.py` (`TokenFactory.chat`):
 retries, fallback, JSON-schema output with one repair, reasoning capture (shown, never re-sent), cost and
 Ultra-equivalent cost on every step, and the spend caps in `app/llm/budget.py`.
@@ -153,12 +161,14 @@ TOKEN_FACTORY_API_KEY=
 MODEL_NANO=
 MODEL_SUPER=
 MODEL_ULTRA=
-MODEL_EMBED=                  # NVIDIA embedding model if available
+MODEL_LIGHTNING=              # [nvidia/Nemotron-3_5-Lightning] routes switch on once PRICE_LIGHTNING_* is set
+MODEL_EMBED=                  # [Qwen/Qwen3-Embedding-8B] returns 4096 dims; cut to EMBED_DIM and re-normalised
 EMBED_DIM=                    # [1024] incidents.embedding size; changing it needs a migration
 MODEL_RERANK=                 # e.g. Qwen/Qwen3-Reranker-8B; unset = rerank keeps input order
-LLM_CONTEXT_NANO=             # [32000] confirm with scripts/probe_token_factory.py
+LLM_CONTEXT_NANO=             # [8000] usable context: accepts 65k, answers wrong from ~20k
 LLM_CONTEXT_SUPER=            # [256000]
 LLM_CONTEXT_ULTRA=            # [256000]
+LLM_CONTEXT_LIGHTNING=        # [64000] read 60k-token prompts correctly
 LLM_TIMEOUT_SECONDS=          # [120]
 LLM_MAX_ATTEMPTS=             # [3] per model on 429/5xx/connection errors; a timeout is retried once at most
 LLM_RETRY_BASE_SECONDS=       # [1.0] backoff base * 2**n plus jitter
@@ -171,6 +181,8 @@ PRICE_SUPER_INPUT_PER_M=      # [0.30]   A model with no price is never called.
 PRICE_SUPER_OUTPUT_PER_M=     # [0.90]
 PRICE_ULTRA_INPUT_PER_M=      # [1.00]
 PRICE_ULTRA_OUTPUT_PER_M=     # [3.00]
+PRICE_LIGHTNING_INPUT_PER_M=  # no default: Lightning is refused, and its routes stay off, until both are set
+PRICE_LIGHTNING_OUTPUT_PER_M=
 PRICE_EMBED_PER_M=            # no default: embeddings are refused until set
 PRICE_RERANK_PER_M=           # no default: rerank is refused until set (if MODEL_RERANK is set)
 
@@ -371,7 +383,14 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] Step 1: LLM layer. Task routing (tier + reasoning mode, fallback, escalation), `TokenFactory.chat` with
         retries, JSON-schema output and one repair, reasoning capture, `embed` / `rerank`; USD caps per run, per day,
         and in total backed by `llm_usage`; `cost_usd` and `ultra_equiv_usd` on every step and run; FakeLLM runs
-        the real client code with scripted replies; `scripts/probe_token_factory.py` (not run yet)
+        the real client code with scripted replies; `scripts/probe_token_factory.py` (run 2026-10-07)
+  - [x] Step 1 follow-up (probe results): Ultra never uses reasoning `low` (`propose_fix` is Ultra/on); Literal and
+        StrEnum schema values normalized before validation; embeddings default to Qwen3-Embedding-8B, ask for 1024
+        dims and otherwise truncate and re-normalise; evidence ranked by embedding cosine (rerank only if
+        configured); Nemotron 3.5 Lightning registered as a tier, not routed; `scripts/probe_followup.py`
+  - [x] Follow-up config: usable context Nano 8,000 / Lightning 64,000 (oversize prompts go to the fallback tier),
+        Lightning routes for tool_step / investigate_step / verify_recovery that switch on with its price, no
+        `low` on Ultra or Lightning, every enum must allow `other`; `FEEDBACK.md` started
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission
@@ -388,9 +407,17 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 - Spend caps (llm_usage) are checked without a lock. Exact with one worker; with several workers or
   concurrent calls the overshoot is at most one call each. `app/llm/evidence.py` (Medic, not wired yet) runs
   calls in parallel and needs per-call reservations before it is used.
-- Unverified until `scripts/probe_token_factory.py` runs (`TODO(nebius)` in code): `low_effort` support, where
-  the reasoning trace comes back, strict `json_schema` support, Nano's context size, embedding and rerank models
-  and their usage fields, and the default prices.
+- Probe results (2026-10-07, `scripts/probe_token_factory.py`): all three tiers work with the configured IDs; tool
+  calls parse on every tier with reasoning on and off; `off` gives zero thinking tokens; `low` cuts thinking on
+  Nano and Super but not on Ultra; the trace comes back in `reasoning` (Nano) or `reasoning_content` (Super,
+  Ultra); `json_schema` returned valid JSON but free-text casing varied; no rerank model; the only embedding model
+  is Qwen/Qwen3-Embedding-8B (4096 dims); Nano's first call took 20.6 s (likely a cold start).
+- Follow-up probe (2026-10-07, `scripts/probe_followup.py`): strict `json_schema` is enforced but forces a wrong
+  value inside the enum when nothing fits; Nano answers wrong from ~20k tokens (right at 6k), Lightning right at
+  60k; embeddings honour `dimensions=1024`; Lightning ran a 3-turn tool loop exactly right at ~270 ms; Ultra low vs
+  on is 311 vs 362 tokens on average with a wide spread. Details and asks for Nebius / NVIDIA: `FEEDBACK.md`.
+- Still unverified: the default prices (third-party listing) and Lightning's price (none found, so its routes
+  stay off).
 - Tool calling with reasoning off is verified only on the Echo Ops toy agent. Re-check quality when
   Scout, Builder, and Deployer land.
 - The demo runs locally only; nothing in Phase 1 targets Neon. Run `make migrate DB_URL=<neon url>` when hosting.
@@ -399,6 +426,17 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-07 | `LLM_CONTEXT_*` is the *usable* context (Nano 8,000, Lightning 64,000); bigger prompts go to the route's fallback tier | Probe: Nano accepted 65k tokens but answered wrong from ~20k; Lightning was right at 60k |
+| 2026-10-07 | tool_step, investigate_step (fallback Super) and verify_recovery (fallback Nano) move to Lightning, reasoning off, automatically once `PRICE_LIGHTNING_*` is set | Lightning ran a tool loop exactly right at Nano-like latency; it is never called while its cost cannot be counted |
+| 2026-10-07 | Ultra and Lightning never use reasoning `low` | It saved little (Ultra) or cost more (Lightning 603 vs 460 tokens) |
+| 2026-10-07 | Every enum in a schema must allow `other` (the client refuses schemas without it); prompts allow `other` / null | Strict json_schema forces a value inside the enum even when none fits (a Rust repo came back as python / javascript) |
+| 2026-10-07 | `FEEDBACK.md` in the repo root records Token Factory / Nemotron findings as we hit them | Feedback for the hackathon, Nebius, and NVIDIA, with numbers |
+| 2026-10-07 | **AI agents never merge and never touch `main`.** Agents may create, commit, and push their own branches, open and update draft PRs, and rebase or fix conflicts on their own branches. They may not merge any PR (into `main` or any other branch), push or force-push to `main` or change it in any way, mark PRs ready for review, approve them, or enable auto-merge. If work seems to need a merge to continue (e.g. stacked branches), the agent stops and asks. | The project owner reviews and merges everything |
+| 2026-10-07 | Ultra never runs with reasoning `low`; `propose_fix` is Ultra/on | Probe: on Ultra, `low` used more completion tokens than `on` (327 vs 218) |
+| 2026-10-07 | Every schema field the code compares on is a lowercase Literal / StrEnum with `other`; model output is normalized before validation | Probe: valid JSON, but "TypeScript" / "JavaScript" / "javascript" for the same answer; strict enforcement is unproven |
+| 2026-10-07 | Embeddings: Qwen/Qwen3-Embedding-8B, `dimensions=1024` requested, else the first 1024 values re-normalised; column stays 1024 | Only embedding model on Token Factory; it is a Matryoshka model, so a prefix is a valid embedding and no migration is needed |
+| 2026-10-07 | Evidence ranking by embedding cosine similarity; rerank only when `MODEL_RERANK` is set | Token Factory has no rerank model |
+| 2026-10-07 | Nemotron 3.5 Lightning registered as tier `lightning` (escalates to Super), no routes yet | Built for tool-call execution; route to it only after the follow-up probe measures latency, context, and tool loops |
 | 2026-10-07 | Per-task routes (tier + reasoning mode) replace `LLM_REASONING_TIERS` | Reasoning depends on the job, not the model size: Scout and Dockerfile writing need a little, fixing a build needs it all, tool steps need none |
 | 2026-10-07 | USD caps: $0.40 per run, `LLM_DAILY_USD_CAP` (2.00 dev, 0.50 hosted), `LLM_TOTAL_USD_CAP=25` as the hard stop, all counted in a `llm_usage` table | About $30 of credits must last through judging (Dec 15); in-memory counters would reset and not be shared |
 | 2026-10-07 | Default prices from a third-party listing, marked unverified; a model with no price is never called | Spend is always counted; real prices go in `PRICE_*` once checked on the pricing page |

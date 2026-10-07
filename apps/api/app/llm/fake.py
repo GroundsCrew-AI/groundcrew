@@ -128,7 +128,7 @@ class FakeLLM(TokenFactory):
         repeat_last: bool = False,
         settings: Settings | None = None,
         on_call: OnCall | None = None,
-        embeddings: Sequence[list[list[float]]] = (),
+        embeddings: Sequence[list[list[float]] | BaseException] = (),
         rerank_results: Sequence[dict[str, Any]] = (),
     ) -> None:
         self.script: list[Scripted] = list(script)
@@ -166,6 +166,8 @@ class FakeLLM(TokenFactory):
     async def _create_embeddings(self, kwargs: dict[str, Any]) -> Any:
         self.calls.append(copy.deepcopy(kwargs))
         vectors = self.embedding_script.pop(0)
+        if isinstance(vectors, BaseException):
+            raise vectors
         return CreateEmbeddingResponse.model_validate(
             {
                 "object": "list",
