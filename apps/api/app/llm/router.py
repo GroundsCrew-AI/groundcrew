@@ -17,7 +17,16 @@ from app.llm.models import (
     next_tier,
 )
 
-__all__ = ["ModelNotConfiguredError", "Reasoning", "Route", "Task", "TaskType", "Tier", "route"]
+__all__ = [
+    "ModelNotConfiguredError",
+    "Reasoning",
+    "Route",
+    "Task",
+    "TaskType",
+    "Tier",
+    "lightning_enabled",
+    "route",
+]
 
 
 class Task(enum.StrEnum):
@@ -78,7 +87,8 @@ ROUTES: dict[Task, Route] = {
     Task.tool_step: Route(Task.tool_step, _S, _OFF, 1_500, fallback=_N),
     Task.investigate_step: Route(Task.investigate_step, _S, _OFF, 1_500),
     Task.root_cause: Route(Task.root_cause, _U, _ON, 10_000, fallback=_S),
-    # Ultra never runs with reasoning=low: in the probe, low used more tokens than on (327 vs 218).
+    # Ultra and Lightning never run with reasoning=low: in the probes it saved little or cost
+    # more (Ultra 311 vs 362 tokens over 5 samples, wide spread; Lightning 603 vs 460).
     Task.propose_fix: Route(Task.propose_fix, _U, _ON, 6_000, fallback=_S),
     Task.verify_recovery: Route(Task.verify_recovery, _N, _OFF, 800),
     # Phase 1 generic types: reasoning off (verified on Echo Ops: tool calls dropped from
@@ -90,6 +100,28 @@ ROUTES: dict[Task, Route] = {
     Task.plan: Route(Task.plan, _S, _OFF, None),
     Task.patch: Route(Task.patch, _S, _OFF, None),
 }
+
+
+# Tasks that move to Nemotron 3.5 Lightning once it has a price (lightning_enabled). Until
+# then they keep their ROUTES entry. Probe: Lightning ran a 3-turn tool loop exactly right at
+# Nano-like latency (about 270 ms) and read 60k-token prompts correctly.
+LIGHTNING_ROUTES: dict[Task, Route] = {
+    Task.tool_step: Route(Task.tool_step, Tier.lightning, _OFF, 1_500, fallback=_S),
+    Task.investigate_step: Route(Task.investigate_step, Tier.lightning, _OFF, 1_500, fallback=_S),
+    Task.verify_recovery: Route(Task.verify_recovery, Tier.lightning, _OFF, 800, fallback=_N),
+}
+
+# Tiers for which reasoning=low costs more than on (probes): low is sent as on instead.
+_NO_LOW_TIERS = frozenset({Tier.ultra, Tier.lightning})
+
+
+def lightning_enabled(settings: Settings) -> bool:
+    """Lightning routes are on when Lightning has a model ID and both prices."""
+    return bool(
+        settings.model_lightning
+        and settings.price_lightning_input_per_m is not None
+        and settings.price_lightning_output_per_m is not None
+    )
 
 
 def _no_ultra(tier: Tier | None) -> Tier | None:
@@ -105,6 +137,8 @@ def route(task: Task, *, escalate: bool = False, settings: Settings | None = Non
     """
     settings = settings or get_settings()
     r = ROUTES[task]
+    if task in LIGHTNING_ROUTES and lightning_enabled(settings):
+        r = LIGHTNING_ROUTES[task]
     if escalate:
         cap = int((r.max_tokens or settings.llm_max_tokens) * 1.5)
         r = replace(
@@ -119,8 +153,8 @@ def route(task: Task, *, escalate: bool = False, settings: Settings | None = Non
         tier = _no_ultra(r.tier) or r.tier
         fallback = _no_ultra(r.fallback)
         r = replace(r, tier=tier, fallback=None if fallback == tier else fallback)
-    if r.tier == Tier.ultra and r.reasoning == Reasoning.low:
-        r = replace(r, reasoning=Reasoning.on)  # low costs more than on for Ultra
+    if r.tier in _NO_LOW_TIERS and r.reasoning == Reasoning.low:
+        r = replace(r, reasoning=Reasoning.on)  # low costs more than on for these tiers
     return r
 
 

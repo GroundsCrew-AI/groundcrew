@@ -66,7 +66,8 @@ async def distill(
     top_k: int = 8,
     concurrency: int = 6,
 ) -> list[Finding]:
-    # Leave room for the prompt and the output inside Nano's window.
+    # Leave room for the prompt and the output inside Nano's usable window: about 5k tokens of
+    # evidence per chunk with LLM_CONTEXT_NANO=8000 (Nano reads reliably only up to about 6k).
     max_chunk = int(getattr(tf.settings, f"llm_context_{Tier.nano}") * 0.6)
     semaphore = asyncio.Semaphore(concurrency)
 

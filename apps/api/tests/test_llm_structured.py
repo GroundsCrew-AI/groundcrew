@@ -114,3 +114,18 @@ def test_schema_instruction_merges_into_the_one_system_message() -> None:
     assert merged[0]["content"].startswith("You are Scout.\n\nReply with one JSON object")
     added = with_schema_instruction([{"role": "user", "content": "go"}], Spec)
     assert [m["role"] for m in added] == ["system", "user"]
+
+
+def test_choices_without_other() -> None:
+    from app.llm.evidence import Findings
+    from app.llm.structured import choices_without_other
+
+    assert choices_without_other(Spec) == []
+    assert choices_without_other(Findings) == []
+
+    class Closed(BaseModel):
+        kind: Literal["a", "b"]
+        items: list[Literal["x", "y"]] = []
+        nested: EnvVar | None = None
+
+    assert choices_without_other(Closed) == ["kind", "items"]

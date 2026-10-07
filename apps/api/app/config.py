@@ -33,20 +33,22 @@ class Settings(BaseSettings):
     model_nano: str | None = None
     model_super: str | None = None
     model_ultra: str | None = None
-    # Nemotron 3.5 Lightning (30B MoE, 3B active, built for tool-call execution). Registered as
-    # its own tier; no task routes to it until the follow-up probe shows how it behaves.
-    model_lightning: str | None = None
+    # Nemotron 3.5 Lightning (30B MoE, 3B active, built for tool-call execution). Its routes
+    # (tool_step, investigate_step, verify_recovery) switch on once PRICE_LIGHTNING_* are set.
+    model_lightning: str | None = "nvidia/Nemotron-3_5-Lightning"
     # The only embedding model on Token Factory (probe, 2026-10-07). It returns 4096 dimensions;
     # embed() asks for EMBED_DIM, else truncates and re-normalises (it is a Matryoshka model).
     model_embed: str | None = "Qwen/Qwen3-Embedding-8B"
     # Reranker on Token Factory (POST /v1/rerank). Unset = rerank keeps the input order.
     model_rerank: str | None = None
-    # Context window per tier, in tokens. Nano's 32k is the conservative listing; the probe
-    # (scripts/probe_token_factory.py) confirms the real sizes.
-    llm_context_nano: int = 32_000
+    # Usable context per tier, in tokens: the largest prompt the tier reads reliably, not the
+    # largest it accepts. A bigger prompt goes to the route's fallback tier. Probe (2026-10-07):
+    # Nano accepted 65k tokens but answered wrong from about 20k, right at 6k; Lightning was
+    # right at 60k.
+    llm_context_nano: int = 8_000
     llm_context_super: int = 256_000
     llm_context_ultra: int = 256_000
-    llm_context_lightning: int = 32_000
+    llm_context_lightning: int = 64_000
 
     # LLM calls
     llm_timeout_seconds: float = 120.0
@@ -71,7 +73,7 @@ class Settings(BaseSettings):
     price_super_output_per_m: float | None = 0.90
     price_ultra_input_per_m: float | None = 1.00
     price_ultra_output_per_m: float | None = 3.00
-    # No public price seen for Lightning yet: it is refused until these are set.
+    # No public price seen for Lightning yet: it is refused, and its routes stay off, until set.
     price_lightning_input_per_m: float | None = None
     price_lightning_output_per_m: float | None = None
     # Embedding and rerank prices per million input tokens. No default: unset means not called.

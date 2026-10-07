@@ -3,12 +3,15 @@
 Nebius recommends giving the schema both in response_format and in the prompt. Pydantic
 validation of the reply is the real guard either way.
 
-The probe (2026-10-07) got valid JSON from all three tiers, but free-text values differed in
-casing ("TypeScript", "JavaScript", "javascript"). So every field the code compares on is a
-lowercase Literal (or StrEnum) with an "other" value, and normalize_choices() maps the model's
-spelling onto it before validation.
-TODO(nebius): whether Token Factory enforces `strict: true` (e.g. an enum) is not proven yet;
-scripts/probe_followup.py tests it. https://docs.tokenfactory.nebius.com/llms.txt
+Probes (2026-10-07):
+- Free-text values differ in casing between tiers ("TypeScript", "JavaScript", "javascript").
+- Strict json_schema IS enforced: every tier returned a value inside the enum. But for a Rust
+  repo with no "rust" option, Nano answered "python" and Super / Ultra "javascript": the enum
+  forces a valid but wrong value when nothing fits.
+
+So every field the code compares on is a lowercase Literal (or StrEnum) that includes "other"
+(chat() refuses a schema without it), the prompt says to use "other" or null when nothing fits,
+and normalize_choices() maps the model's spelling onto the allowed values before validation.
 """
 
 import enum
@@ -76,7 +79,9 @@ def with_schema_instruction(messages: list[dict[str, Any]], schema: Schema) -> l
     expect a single system message first)."""
     instruction = (
         "Reply with one JSON object only, no prose and no code fences, matching this JSON "
-        f"schema:\n{json.dumps(json_schema(schema))}"
+        f"schema:\n{json.dumps(json_schema(schema))}\n"
+        'If none of a field\'s allowed values fits, use "other". If you do not know a value, '
+        "use null where the schema allows it. Do not guess."
     )
     if messages and messages[0].get("role") == "system":
         first = messages[0]
@@ -142,6 +147,34 @@ def _normalize(annotation: Any, value: Any) -> Any:
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         return normalize_choices(annotation, value)
     return value
+
+
+def choices_without_other(
+    model: type[BaseModel], _seen: frozenset[type] = frozenset()
+) -> list[str]:
+    """Literal / StrEnum fields of `model` (nested models and lists included) that do not
+    allow "other". Strict schemas force a value from the list, so a list without "other"
+    makes the model pick a wrong value when nothing fits."""
+    missing: list[str] = []
+    if model in _seen:
+        return missing
+    seen = _seen | {model}
+
+    def walk(annotation: Any, path: str) -> None:
+        choices = _choices(annotation)
+        if choices is not None:
+            if OTHER not in choices:
+                missing.append(path)
+            return
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            missing.extend(f"{path}.{p}" for p in choices_without_other(annotation, seen))
+            return
+        for arg in get_args(annotation):
+            walk(arg, path)
+
+    for name, info in model.model_fields.items():
+        walk(info.annotation, name)
+    return missing
 
 
 def normalize_choices(model: type[BaseModel], data: Any) -> Any:

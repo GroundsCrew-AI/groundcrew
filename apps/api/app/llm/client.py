@@ -27,7 +27,13 @@ from app.config import Settings, get_settings
 from app.llm.budget import BudgetExceededError, RunBudget, UsageStore, estimate_prompt_tokens
 from app.llm.models import ModelSpec, Reasoning, Tier, model_spec, ultra_equivalent, usd
 from app.llm.router import Route, Task, route
-from app.llm.structured import Schema, parse_structured, response_format, with_schema_instruction
+from app.llm.structured import (
+    Schema,
+    choices_without_other,
+    parse_structured,
+    response_format,
+    with_schema_instruction,
+)
 from app.llm.tool_calls import (
     ToolCall,
     parse_arguments,
@@ -282,6 +288,10 @@ class TokenFactory:
         JSON is still invalid after the repair."""
         if schema is not None and tools:
             raise ValueError("Use either tools or a schema in one call, not both.")
+        if isinstance(schema, type) and (missing := choices_without_other(schema)):
+            raise ValueError(
+                f"{schema.__name__}: choice fields must allow 'other': {', '.join(missing)}"
+            )
         r = route(task, escalate=escalate, settings=self.settings)
         hook = on_call or self.on_call
         sent = list(messages)
