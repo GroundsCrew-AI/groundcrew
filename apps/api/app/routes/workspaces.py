@@ -12,7 +12,7 @@ from sqlalchemy import and_, func, or_, select
 from app.accounts import NotFoundError, member_workspace, user_workspaces
 from app.config import get_settings
 from app.db.models import TERMINAL_RUN_STATUSES, Approval, ApprovalStatus, Run, RunStep, User
-from app.llm.budget import tokens_used_today
+from app.llm.budget import usage_totals
 from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.runs import rejected_counts
 from app.routes.schemas import (
@@ -154,10 +154,16 @@ async def summary(
         .join(Run, Run.id == RunStep.run_id)
         .where(Run.workspace_id == workspace_id, RunStep.created_at >= today)
     )
+    settings = settings or get_settings()
+    usage_today, usage_total = await usage_totals(session)
     return WorkspaceSummary(
         runs_today=int(runs_today or 0),
         pending_approvals=int(pending or 0),
         workspace_tokens_today=int(workspace_tokens or 0),
-        budget_tokens_today=await tokens_used_today(session),
-        daily_token_budget=(settings or get_settings()).daily_token_budget,
+        budget_tokens_today=usage_today.tokens,
+        daily_token_budget=settings.daily_token_budget,
+        usd_today=float(usage_today.usd),
+        daily_usd_cap=settings.llm_daily_usd_cap,
+        usd_total=float(usage_total),
+        total_usd_cap=settings.llm_total_usd_cap,
     )

@@ -1,27 +1,39 @@
-"""Async OpenAI-compatible client for Nebius Token Factory.
+"""The only place in Groundcrew that talks to Nebius Token Factory.
 
-Base URL, key, and model IDs come only from settings. One retry on 429/5xx with jitter.
-Never logs the API key or prompts: only model ID, tokens, latency, and attempt.
+Every model call goes through `TokenFactory.chat(task, ...)`: routing (tier + reasoning mode),
+budgets, retries, fallback, schema output with one repair, reasoning capture, cost, and the
+on_call hook all happen here. Base URL, key, model IDs, and prices come only from settings.
+
+Never logs the API key or prompts: only task, model, tokens, cost, latency, and attempts.
+Reasoning traces are captured for the UI (run_steps.reasoning_excerpt) and never sent back
+to the model.
 """
 
 import asyncio
+import json
 import logging
 import random
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from decimal import Decimal
 from typing import Any, Protocol, cast
 
+import httpx
 import openai
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.config import Settings, get_settings
+from app.llm.budget import BudgetExceededError, RunBudget, UsageStore, estimate_prompt_tokens
+from app.llm.models import ModelSpec, Reasoning, Tier, model_spec, ultra_equivalent, usd
+from app.llm.router import Route, Task, route
+from app.llm.structured import Schema, parse_structured, response_format, with_schema_instruction
 from app.llm.tool_calls import (
     ToolCall,
     parse_arguments,
     parse_text_tool_calls,
     raw_text,
-    strip_reasoning,
+    split_reasoning,
 )
 from app.security.redact import summarize
 
@@ -29,6 +41,13 @@ logger = logging.getLogger("groundcrew.llm")
 
 Message = dict[str, Any]
 ToolSchema = dict[str, Any]
+
+# Keys we keep on stored messages for our own bookkeeping. Never sent to the provider.
+PRIVATE_KEY_PREFIX = "x_"
+# Reasoning keys a provider may put on an assistant message. Never re-sent.
+_REASONING_KEYS = frozenset({"reasoning", "reasoning_content"})
+# A timed-out request may still be billed, so a timeout is retried once at most.
+_MAX_TIMEOUT_RETRIES = 1
 
 
 class LLMError(RuntimeError):
@@ -39,156 +58,440 @@ class LLMConfigError(LLMError):
     pass
 
 
-class LLMResponse(BaseModel):
+class SchemaError(LLMError):
+    """The model returned JSON that did not match the schema, twice (first try and repair)."""
+
+
+class _FallbackEligibleError(Exception):
+    """The primary model failed in a way another tier might not (retries exhausted, 5xx,
+    prompt too large for its context)."""
+
+
+class LLMResult(BaseModel):
+    """One model call: the answer plus everything the timeline shows about it."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    task: Task | None = None
+    tier: Tier | None = None
     model_id: str
+    reasoning_mode: Reasoning | None = None
     content: str | None
     tool_calls: list[ToolCall]
     # True when tool calls were parsed from text, not returned natively.
     tool_calls_from_text: bool = False
+    # Reasoning trace, for display only. Never part of the conversation history.
+    reasoning: str | None = None
+    # Set when a schema was requested and the reply validated.
+    parsed: Any = None
     finish_reason: str | None
     prompt_tokens: int
     completion_tokens: int
+    cost_usd: Decimal = Decimal(0)
+    ultra_equiv_usd: Decimal = Decimal(0)
     latency_ms: int
+    max_tokens: int | None = None
+    attempts: int = 1
+    fell_back: bool = False
+    escalated: bool = False
+    # This call was the schema repair attempt.
+    repair: bool = False
+    # Short description of what was sent (redacted when stored).
+    input_summary: str | None = None
 
     @property
     def truncated(self) -> bool:
         """The model hit max_tokens: the answer (or a tool call) may be cut off."""
         return self.finish_reason == "length"
 
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
 
-# Keys we keep on stored tool calls for our own bookkeeping. Never sent to the provider.
-PRIVATE_KEY_PREFIX = "x_"
 
+# Phase 1 name.
+LLMResponse = LLMResult
 
-def wire_messages(messages: Sequence[Message]) -> list[Message]:
-    """Messages as the provider should see them: private bookkeeping keys removed."""
-    out: list[Message] = []
-    for message in messages:
-        calls = message.get("tool_calls")
-        if calls:
-            message = {
-                **message,
-                "tool_calls": [
-                    {k: v for k, v in call.items() if not k.startswith(PRIVATE_KEY_PREFIX)}
-                    for call in calls
-                ],
-            }
-        out.append(message)
-    return out
+OnCall = Callable[[LLMResult], Awaitable[None]]
 
 
 class ChatModel(Protocol):
-    """What the agent loop needs. Tests pass a fake that implements this."""
+    """What agents need. TokenFactory and FakeLLM implement it."""
 
     async def chat(
         self,
-        *,
-        model_id: str,
+        task: Task,
         messages: Sequence[Message],
-        tools: Sequence[ToolSchema] = (),
+        *,
+        budget: RunBudget,
+        tools: Sequence[ToolSchema] | None = None,
+        tool_choice: Any = None,
+        schema: Schema | None = None,
+        escalate: bool = False,
         max_tokens: int | None = None,
-        reasoning: bool = True,
-    ) -> LLMResponse: ...
+        on_call: OnCall | None = None,
+    ) -> LLMResult: ...
 
 
-def _is_retryable(exc: openai.OpenAIError) -> bool:
-    return isinstance(exc, openai.RateLimitError) or (
-        isinstance(exc, openai.APIStatusError) and exc.status_code >= 500
-    )
+def wire_messages(messages: Sequence[Message]) -> list[Message]:
+    """Messages as the provider should see them: no private `x_` keys, no reasoning traces."""
+    out: list[Message] = []
+    for message in messages:
+        clean = {k: v for k, v in message.items() if k not in _REASONING_KEYS}
+        calls = clean.get("tool_calls")
+        if calls:
+            clean["tool_calls"] = [
+                {k: v for k, v in call.items() if not k.startswith(PRIVATE_KEY_PREFIX)}
+                for call in calls
+            ]
+        out.append(clean)
+    return out
 
 
-class TokenFactoryClient:
-    MAX_ATTEMPTS = 2  # first try + one retry
+def reasoning_kwargs(mode: Reasoning) -> dict[str, Any]:
+    """chat_template_kwargs for a reasoning mode.
+
+    TODO(nebius): `low_effort` is from NVIDIA's Nemotron 3 docs; confirm Token Factory passes it
+    through (scripts/probe_token_factory.py compares completion tokens for off/low/on).
+    https://docs.tokenfactory.nebius.com/llms.txt
+    """
+    if mode == Reasoning.off:
+        return {"enable_thinking": False}
+    if mode == Reasoning.low:
+        return {"enable_thinking": True, "low_effort": True}
+    return {"enable_thinking": True}
+
+
+def describe_message(message: Message) -> str:
+    role = message.get("role", "?")
+    if role == "tool":
+        return f"tool result: {message.get('content', '')}"
+    return f"{role}: {message.get('content') or ''}"
+
+
+def describe_result(result: LLMResult) -> str:
+    """The step's output summary."""
+    prefix = "(schema repair) " if result.repair else ""
+    if result.tool_calls:
+        calls = ", ".join(
+            f"{c.name}({c.raw_arguments if c.arguments_error else json.dumps(c.arguments)})"
+            for c in result.tool_calls
+        )
+        source = " (parsed from text)" if result.tool_calls_from_text else ""
+        return f"{prefix}tool calls{source}: {calls}"
+    return prefix + (result.content or "")
+
+
+def _redacted_error(exc: BaseException) -> str:
+    return summarize(f"{type(exc).__name__}: {exc}", 500) or type(exc).__name__
+
+
+class TokenFactory:
+    """Async Token Factory client. One instance can serve many runs."""
 
     def __init__(
         self,
         settings: Settings | None = None,
         *,
+        on_call: OnCall | None = None,
         http_client: Any = None,
-        retry_delay_seconds: float = 1.0,
+        rerank_http_client: httpx.AsyncClient | None = None,
+        retry_base_seconds: float | None = None,
     ) -> None:
-        settings = settings or get_settings()
-        if not settings.token_factory_base_url or settings.token_factory_api_key is None:
+        self.settings = settings or get_settings()
+        self.on_call = on_call
+        self.retry_base_seconds = (
+            self.settings.llm_retry_base_seconds
+            if retry_base_seconds is None
+            else retry_base_seconds
+        )
+        self._rerank_http = rerank_http_client
+        self._connect(http_client)
+
+    def _connect(self, http_client: Any) -> None:
+        s = self.settings
+        if not s.token_factory_base_url or s.token_factory_api_key is None:
             raise LLMConfigError(
                 "TOKEN_FACTORY_BASE_URL and TOKEN_FACTORY_API_KEY must be set. See .env.example."
             )
-        self._settings = settings
-        self._retry_delay = retry_delay_seconds
-        self._client = AsyncOpenAI(
-            base_url=settings.token_factory_base_url,
-            api_key=settings.token_factory_api_key.get_secret_value(),
-            timeout=settings.llm_timeout_seconds,
-            max_retries=0,  # we retry ourselves, once, only on 429/5xx
+        self._oai: AsyncOpenAI | None = AsyncOpenAI(
+            base_url=s.token_factory_base_url,
+            api_key=s.token_factory_api_key.get_secret_value(),
+            timeout=s.llm_timeout_seconds,
+            max_retries=0,  # we retry ourselves, so each retry is visible and capped
             http_client=http_client,
         )
 
+    # ------------------------------------------------------------------ transport
+    # FakeLLM overrides these three; everything else runs the same code in tests.
+
+    def _openai(self) -> AsyncOpenAI:
+        if self._oai is None:
+            raise LLMConfigError("Token Factory client is not connected.")
+        return self._oai
+
+    async def _create(self, kwargs: dict[str, Any]) -> Any:
+        return await self._openai().chat.completions.create(**kwargs)
+
+    async def _create_embeddings(self, kwargs: dict[str, Any]) -> Any:
+        return await self._openai().embeddings.create(**kwargs)
+
+    async def _post_rerank(self, body: dict[str, Any]) -> dict[str, Any]:
+        s = self.settings
+        if not s.token_factory_base_url or s.token_factory_api_key is None:
+            raise LLMConfigError("TOKEN_FACTORY_BASE_URL and TOKEN_FACTORY_API_KEY must be set.")
+        if self._rerank_http is None:
+            self._rerank_http = httpx.AsyncClient(timeout=s.llm_timeout_seconds)
+        response = await self._rerank_http.post(
+            s.token_factory_base_url.rstrip("/") + "/rerank",
+            json=body,
+            headers={"Authorization": f"Bearer {s.token_factory_api_key.get_secret_value()}"},
+        )
+        if response.status_code >= 400:
+            raise LLMError(f"Token Factory rerank failed: HTTP {response.status_code}")
+        data: dict[str, Any] = response.json()
+        return data
+
+    async def aclose(self) -> None:
+        if self._rerank_http is not None:
+            await self._rerank_http.aclose()
+        if self._oai is not None:
+            await self._oai.close()
+
+    # ----------------------------------------------------------------------- chat
+
     async def chat(
         self,
-        *,
-        model_id: str,
+        task: Task,
         messages: Sequence[Message],
-        tools: Sequence[ToolSchema] = (),
+        *,
+        budget: RunBudget,
+        tools: Sequence[ToolSchema] | None = None,
+        tool_choice: Any = None,
+        schema: Schema | None = None,
+        escalate: bool = False,
         max_tokens: int | None = None,
-        reasoning: bool = True,
-    ) -> LLMResponse:
-        """One chat completion. `reasoning=False` asks Nemotron to answer without thinking."""
+        on_call: OnCall | None = None,
+    ) -> LLMResult:
+        """One task-routed call. `schema` asks for JSON (validated, one repair attempt);
+        `escalate` bumps one tier with full reasoning. Raises BudgetExceededError before
+        calling when a cap is hit, LLMError when every model failed, SchemaError when the
+        JSON is still invalid after the repair."""
+        if schema is not None and tools:
+            raise ValueError("Use either tools or a schema in one call, not both.")
+        r = route(task, escalate=escalate, settings=self.settings)
+        hook = on_call or self.on_call
+        sent = list(messages)
+        if schema is not None:
+            sent = with_schema_instruction(sent, schema)
+
+        tiers = [r.tier] + ([r.fallback] if r.fallback and r.fallback != r.tier else [])
+        last_error: BaseException | None = None
+        for index, tier in enumerate(tiers):
+            try:
+                result = await self._checked_call(
+                    r, tier, sent, budget, tools, tool_choice, schema, max_tokens
+                )
+            except _FallbackEligibleError as exc:
+                last_error = exc.__cause__ or exc
+                if index + 1 < len(tiers):
+                    logger.warning(
+                        "llm falling back",
+                        extra={"task": task, "from_tier": tier, "to_tier": tiers[index + 1]},
+                    )
+                continue
+            result.fell_back = index > 0
+            await self._account(result, budget, hook)
+            if schema is None:
+                return result
+            return await self._parse_or_repair(
+                r, tier, sent, result, budget, schema, max_tokens, hook
+            )
+
+        detail = _redacted_error(last_error) if last_error else "no model available"
+        raise LLMError(f"Token Factory call for {task} failed on every model: {detail}")
+
+    async def _parse_or_repair(
+        self,
+        r: Route,
+        tier: Tier,
+        sent: list[Message],
+        result: LLMResult,
+        budget: RunBudget,
+        schema: Schema,
+        max_tokens: int | None,
+        hook: OnCall | None,
+    ) -> LLMResult:
+        parsed, error = parse_structured(result.content, schema)
+        if parsed is not None:
+            result.parsed = parsed
+            return result
+        # One repair on the same tier. Budgets are checked again before it.
+        repair_messages = [
+            *sent,
+            {"role": "assistant", "content": result.content or ""},
+            {
+                "role": "user",
+                "content": f"That reply {error}. Return only the corrected JSON object.",
+            },
+        ]
+        try:
+            repaired = await self._checked_call(
+                r, tier, repair_messages, budget, None, None, schema, max_tokens
+            )
+        except _FallbackEligibleError as exc:
+            cause = exc.__cause__ or exc
+            raise LLMError(f"Schema repair call failed: {_redacted_error(cause)}") from None
+        repaired.repair = True
+        repaired.fell_back = result.fell_back
+        await self._account(repaired, budget, hook)
+        parsed, error = parse_structured(repaired.content, schema)
+        if parsed is None:
+            raise SchemaError(f"{r.task} returned invalid JSON twice; last reply {error}.")
+        repaired.parsed = parsed
+        return repaired
+
+    async def _checked_call(
+        self,
+        r: Route,
+        tier: Tier,
+        messages: list[Message],
+        budget: RunBudget,
+        tools: Sequence[ToolSchema] | None,
+        tool_choice: Any,
+        schema: Schema | None,
+        max_tokens: int | None,
+    ) -> LLMResult:
+        """Budget checks, then one call (with retries) to `tier`."""
+        spec = model_spec(tier, self.settings)  # config errors are not fallback-eligible
+        budget.check(tier)
+        today = await budget.check_usage()
+        prompt_tokens = estimate_prompt_tokens(messages, tools or ())
+        if prompt_tokens >= spec.max_context:
+            raise _FallbackEligibleError(
+                f"prompt is about {prompt_tokens} tokens; {tier} context is {spec.max_context}"
+            )
+        route_cap = r.max_tokens or self.settings.llm_max_tokens
+        wanted = min(max_tokens, route_cap) if max_tokens else route_cap
+        cap = budget.completion_cap(wanted, prompt_tokens, today)
+        return await self._call(r, spec, messages, tools, tool_choice, schema, cap)
+
+    async def _call(
+        self,
+        r: Route,
+        spec: ModelSpec,
+        messages: list[Message],
+        tools: Sequence[ToolSchema] | None,
+        tool_choice: Any,
+        schema: Schema | None,
+        cap: int,
+    ) -> LLMResult:
         kwargs: dict[str, Any] = {
-            "model": model_id,
+            "model": spec.model_id,
             "messages": wire_messages(messages),
-            "max_tokens": max_tokens or self._settings.llm_max_tokens,
+            "max_tokens": cap,
+            "temperature": r.temperature,
+            "top_p": r.top_p,
+            "extra_body": {"chat_template_kwargs": reasoning_kwargs(r.reasoning)},
         }
         if tools:
             kwargs["tools"] = list(tools)
-            kwargs["tool_choice"] = "auto"
-        if not reasoning:
-            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+            kwargs["tool_choice"] = tool_choice or "auto"
+        if schema is not None:
+            kwargs["response_format"] = response_format(schema)
 
         start = time.perf_counter()
-        for attempt in range(1, self.MAX_ATTEMPTS + 1):
-            try:
-                completion = await self._client.chat.completions.create(**kwargs)
-                break
-            except openai.OpenAIError as exc:
-                if attempt < self.MAX_ATTEMPTS and _is_retryable(exc):
-                    delay = self._retry_delay * random.uniform(0.5, 1.5)  # noqa: S311
-                    logger.warning(
-                        "llm call retrying",
-                        extra={"model_id": model_id, "error": type(exc).__name__},
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                message = summarize(f"{type(exc).__name__}: {exc}", 500)
-                raise LLMError(f"Token Factory call to {model_id} failed: {message}") from None
+        completion, attempts = await self._create_with_retries(kwargs, spec.model_id)
         latency_ms = round((time.perf_counter() - start) * 1000)
 
-        response = self._parse(model_id, completion, latency_ms, tools)
+        result = self._parse(completion, spec, r, tools, latency_ms)
+        result.max_tokens = cap
+        result.attempts = attempts
+        result.input_summary = (
+            f"{len(messages)} messages; last {describe_message(messages[-1])}" if messages else None
+        )
         logger.info(
             "llm call",
             extra={
-                "model_id": model_id,
-                "prompt_tokens": response.prompt_tokens,
-                "completion_tokens": response.completion_tokens,
+                "task": r.task,
+                "tier": spec.tier,
+                "model_id": spec.model_id,
+                "reasoning_mode": r.reasoning,
+                "prompt_tokens": result.prompt_tokens,
+                "completion_tokens": result.completion_tokens,
+                "cost_usd": str(result.cost_usd),
                 "latency_ms": latency_ms,
-                "attempts": attempt,
-                "tool_calls": len(response.tool_calls),
-                "finish_reason": response.finish_reason,
-                "reasoning": reasoning,
+                "attempts": attempts,
+                "tool_calls": len(result.tool_calls),
+                "finish_reason": result.finish_reason,
+                "escalated": r.escalated,
             },
         )
-        return response
+        return result
 
-    @staticmethod
+    async def _create_with_retries(self, kwargs: dict[str, Any], model_id: str) -> tuple[Any, int]:
+        attempts = 0
+        timeouts = 0
+        error: openai.OpenAIError
+        while True:
+            attempts += 1
+            try:
+                return await self._create(kwargs), attempts
+            except openai.APITimeoutError as exc:  # before APIConnectionError: it subclasses it
+                timeouts += 1
+                if timeouts > _MAX_TIMEOUT_RETRIES or attempts >= self.settings.llm_max_attempts:
+                    raise _FallbackEligibleError(str(exc)) from exc
+                error = exc
+            except (
+                openai.RateLimitError,
+                openai.InternalServerError,
+                openai.APIConnectionError,
+            ) as exc:
+                if attempts >= self.settings.llm_max_attempts:
+                    raise _FallbackEligibleError(str(exc)) from exc
+                error = exc
+            except openai.APIStatusError as exc:
+                # 4xx other than 429: a bad request, key, or model. Retrying will not help.
+                raise LLMError(
+                    f"Token Factory call to {model_id} failed: {_redacted_error(exc)}"
+                ) from None
+            except openai.OpenAIError as exc:
+                raise LLMError(
+                    f"Token Factory call to {model_id} failed: {_redacted_error(exc)}"
+                ) from None
+            delay = self.retry_base_seconds * (2 ** (attempts - 1)) + random.uniform(  # noqa: S311
+                0, self.retry_base_seconds
+            )
+            logger.warning(
+                "llm call retrying",
+                extra={"model_id": model_id, "error": type(error).__name__, "attempt": attempts},
+            )
+            await asyncio.sleep(delay)
+
     def _parse(
-        model_id: str, completion: Any, latency_ms: int, tools: Sequence[ToolSchema]
-    ) -> LLMResponse:
+        self,
+        completion: Any,
+        spec: ModelSpec,
+        r: Route,
+        tools: Sequence[ToolSchema] | None,
+        latency_ms: int,
+    ) -> LLMResult:
         usage = completion.usage
         prompt_tokens = int(usage.prompt_tokens) if usage else 0
         completion_tokens = int(usage.completion_tokens) if usage else 0
         if not completion.choices:
-            raise LLMError(f"Token Factory returned no choices for {model_id}.")
+            raise LLMError(f"Token Factory returned no choices for {spec.model_id}.")
         choice = completion.choices[0]
         message = choice.message
-        content = strip_reasoning(message.content) if message.content else None
+
+        # The trace may be a separate field or inline in the content.
+        # TODO(nebius): the probe reports which one Token Factory uses for Nemotron 3.
+        extra = message.model_extra or {}
+        trace = extra.get("reasoning_content") or extra.get("reasoning")
+        content = message.content
+        if content:
+            content, inline = split_reasoning(content)
+            trace = trace or inline
 
         tool_calls = []
         for call in message.tool_calls or []:
@@ -212,15 +515,122 @@ class TokenFactoryClient:
             if from_text:
                 content = None
 
-        # finish_reason="length" is not an error here: the tokens were spent and the caller
-        # must record them. The agent loop decides what a truncated response means.
-        return LLMResponse(
-            model_id=model_id,
+        # finish_reason="length" is not an error here: the tokens were spent and must be
+        # recorded. The caller decides what a truncated response means.
+        return LLMResult(
+            task=r.task,
+            tier=spec.tier,
+            model_id=spec.model_id,
+            reasoning_mode=r.reasoning,
             content=content or None,
             tool_calls=tool_calls,
             tool_calls_from_text=from_text,
+            reasoning=str(trace) if trace else None,
             finish_reason=choice.finish_reason,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cost_usd=spec.cost(prompt_tokens, completion_tokens),
+            ultra_equiv_usd=ultra_equivalent(prompt_tokens, completion_tokens, self.settings),
             latency_ms=latency_ms,
+            escalated=r.escalated,
         )
+
+    async def _account(self, result: LLMResult, budget: RunBudget, hook: OnCall | None) -> None:
+        if result.tier is None:
+            raise LLMError("A chat result without a tier cannot be counted.")
+        budget.record(result.tier, result.cost_usd, result.total_tokens, result.ultra_equiv_usd)
+        await budget.usage.add(result.cost_usd, result.total_tokens)
+        if hook is not None:
+            await hook(result)
+
+    # -------------------------------------------------------------- embed / rerank
+
+    async def embed(
+        self, texts: list[str], *, budget: RunBudget | None = None, usage: UsageStore | None = None
+    ) -> list[list[float]]:
+        """Embeddings with MODEL_EMBED. Refuses without PRICE_EMBED_PER_M.
+
+        TODO(nebius): choose the model from the probe's /v1/models list, preferring one that
+        returns EMBED_DIM (1024) dimensions so incidents.embedding needs no migration.
+        https://docs.tokenfactory.nebius.com/llms.txt
+        """
+        s = self.settings
+        if not s.model_embed:
+            raise LLMConfigError("MODEL_EMBED is not set.")
+        if s.price_embed_per_m is None:
+            raise LLMConfigError("PRICE_EMBED_PER_M is not set; refusing an uncounted call.")
+        store = budget.usage if budget is not None else usage
+        if store is None:
+            raise LLMConfigError("embed() needs a budget or a usage store to count spend.")
+        await _check_store(store, budget, s)
+        try:
+            response = await self._create_embeddings(
+                {"model": s.model_embed, "input": texts, "encoding_format": "float"}
+            )
+        except openai.OpenAIError as exc:
+            raise LLMError(f"Token Factory embeddings failed: {_redacted_error(exc)}") from None
+        vectors = [list(d.embedding) for d in response.data]
+        tokens = int(getattr(response.usage, "prompt_tokens", 0) or 0) if response.usage else 0
+        cost = usd(tokens, s.price_embed_per_m)
+        if budget is not None:
+            budget.record_spend(cost, tokens)
+        await store.add(cost, tokens)
+        if vectors and len(vectors[0]) != s.embed_dim:
+            raise LLMError(
+                f"{s.model_embed} returned {len(vectors[0])} dimensions; EMBED_DIM is "
+                f"{s.embed_dim}. Pick a model with {s.embed_dim} dimensions or add a migration."
+            )
+        return vectors
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int = 8,
+        *,
+        budget: RunBudget | None = None,
+        usage: UsageStore | None = None,
+    ) -> list[tuple[int, float]]:
+        """(document index, score), best first. Without MODEL_RERANK: input order, score 0.
+
+        TODO(nebius): the rerank response's `usage` fields are not documented in detail; cost
+        uses usage.total_tokens / prompt_tokens when present, else about 4 characters per token.
+        https://docs.tokenfactory.nebius.com/llms.txt
+        """
+        s = self.settings
+        if not s.model_rerank or not documents:
+            return [(i, 0.0) for i in range(min(top_k, len(documents)))]
+        if s.price_rerank_per_m is None:
+            raise LLMConfigError("PRICE_RERANK_PER_M is not set; refusing an uncounted call.")
+        store = budget.usage if budget is not None else usage
+        if store is None:
+            raise LLMConfigError("rerank() needs a budget or a usage store to count spend.")
+        await _check_store(store, budget, s)
+        data = await self._post_rerank(
+            {"model": s.model_rerank, "query": query, "documents": documents}
+        )
+        used = data.get("usage") or {}
+        tokens = int(
+            used.get("total_tokens")
+            or used.get("prompt_tokens")
+            or (len(query) + sum(len(d) for d in documents)) // 4
+        )
+        cost = usd(tokens, s.price_rerank_per_m)
+        if budget is not None:
+            budget.record_spend(cost, tokens)
+        await store.add(cost, tokens)
+        scored = [(int(x["index"]), float(x["relevance_score"])) for x in data.get("results", [])]
+        return sorted(scored, key=lambda pair: -pair[1])[:top_k]
+
+
+async def _check_store(store: UsageStore, budget: RunBudget | None, settings: Settings) -> None:
+    if budget is not None:
+        if budget.spent_usd >= Decimal(str(settings.llm_run_usd_cap)):
+            raise BudgetExceededError("run_usd_cap", f"run spent ${budget.spent_usd}")
+        await budget.check_usage()
+        return
+    await RunBudget(usage=store, settings=settings).check_usage()
+
+
+# Phase 1 name.
+TokenFactoryClient = TokenFactory

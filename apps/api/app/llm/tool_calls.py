@@ -38,9 +38,24 @@ def raw_text(raw: object) -> str | None:
         return repr(raw)
 
 
+def split_reasoning(text: str) -> tuple[str, str | None]:
+    """(answer, reasoning trace) from content that may carry the trace inline.
+
+    Handles `<think>...</think>` blocks, and a lone `...</think>` prefix (when the chat
+    template opened the think block, the content starts mid-trace).
+    """
+    traces = [m.group(0) for m in _THINK.finditer(text)]
+    answer = _THINK.sub("", text)
+    if "</think>" in answer:
+        before, _, answer = answer.partition("</think>")
+        traces.insert(0, before)
+    trace = "\n".join(t.replace("<think>", "").replace("</think>", "").strip() for t in traces)
+    return answer.strip(), (trace.strip() or None)
+
+
 def strip_reasoning(text: str) -> str:
-    """Remove <think> blocks some models put in the content."""
-    return _THINK.sub("", text).strip()
+    """Remove the reasoning trace some models put in the content."""
+    return split_reasoning(text)[0]
 
 
 def parse_arguments(raw: str | dict[str, Any] | None) -> tuple[dict[str, Any], str | None]:

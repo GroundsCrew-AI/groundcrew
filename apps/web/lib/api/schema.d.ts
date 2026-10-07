@@ -380,6 +380,8 @@ export interface components {
             stop_reason: components["schemas"]["StopReason"] | null;
             /** Total Tokens */
             total_tokens: number;
+            /** Ultra Equiv Usd */
+            ultra_equiv_usd?: number | null;
             /**
              * Workspace Id
              * Format: uuid
@@ -430,6 +432,8 @@ export interface components {
             stop_reason: components["schemas"]["StopReason"] | null;
             /** Total Tokens */
             total_tokens: number;
+            /** Ultra Equiv Usd */
+            ultra_equiv_usd?: number | null;
             /**
              * Workspace Id
              * Format: uuid
@@ -469,6 +473,8 @@ export interface components {
             started_at: string | null;
             status: components["schemas"]["RunStatus"];
             stop_reason: components["schemas"]["StopReason"] | null;
+            /** Ultra Equiv Usd */
+            ultra_equiv_usd?: number | null;
         };
         /** StepOut */
         StepOut: {
@@ -485,6 +491,10 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Escalated */
+            escalated?: boolean;
+            /** Fell Back */
+            fell_back?: boolean;
             /**
              * Id
              * Format: uuid
@@ -504,11 +514,17 @@ export interface components {
             output_summary: string | null;
             /** Prompt Tokens */
             prompt_tokens: number | null;
+            /** Reasoning Excerpt */
+            reasoning_excerpt?: string | null;
+            /** Reasoning Mode */
+            reasoning_mode?: string | null;
             /** Seq */
             seq: number;
             /** Tool Name */
             tool_name: string | null;
             tool_policy: components["schemas"]["ToolPolicy"] | null;
+            /** Ultra Equiv Usd */
+            ultra_equiv_usd?: number | null;
         };
         /**
          * StopReason
@@ -581,10 +597,18 @@ export interface components {
             budget_tokens_today: number;
             /** Daily Token Budget */
             daily_token_budget: number | null;
+            /** Daily Usd Cap */
+            daily_usd_cap?: number | null;
             /** Pending Approvals */
             pending_approvals: number;
             /** Runs Today */
             runs_today: number;
+            /** Total Usd Cap */
+            total_usd_cap?: number | null;
+            /** Usd Today */
+            usd_today?: number;
+            /** Usd Total */
+            usd_total?: number;
             /** Workspace Tokens Today */
             workspace_tokens_today: number;
         };

@@ -384,20 +384,60 @@ async def test_steps_are_redacted_and_truncated(
     for text in (step.input_summary or "", step.output_summary or ""):
         assert secret not in text and "hunter2hunter2" not in text
         assert len(text) <= 2000
-    assert (step.prompt_tokens, step.completion_tokens, step.latency_ms) == (100, 20, 5)
+    assert (step.prompt_tokens, step.completion_tokens) == (100, 20)
+    assert step.latency_ms is not None
     assert step.model_id == "test/nano" and step.model_tier == "nano"
+    assert step.reasoning_mode == "off"
 
 
-async def test_cost_recorded_when_prices_set(
+async def test_cost_and_ultra_equivalent_recorded(
     session_factory: SessionFactory, workspace: Workspace
 ) -> None:
     settings = _settings(price_nano_input_per_m=1.0, price_nano_output_per_m=2.0)
-    runner = AgentRunner(session_factory, llm=FakeLLM(reply("ok")), settings=settings)
+    llm = FakeLLM(reply("ok"), settings=settings)
+    runner = AgentRunner(session_factory, llm=llm, settings=settings)
     run_id = await _create_run(session_factory, workspace)
     await runner.run(run_id)
     run, [step] = await _load(session_factory, run_id)
     assert step.cost_usd is not None and float(step.cost_usd) == pytest.approx(0.00014)
+    # Default Ultra prices: 1.00 in / 3.00 out per million.
+    assert step.ultra_equiv_usd is not None
+    assert float(step.ultra_equiv_usd) == pytest.approx(0.00016)
     assert run.cost_usd == step.cost_usd
+    assert run.ultra_equiv_usd == step.ultra_equiv_usd
+
+
+async def test_run_usd_cap_stops_run_with_the_cap_in_error(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    settings = _settings(llm_run_usd_cap=0.00001)  # one Nano call here costs $0.000011
+    llm = FakeLLM(reply(None, tool_call("get_current_time")), repeat_last=True, settings=settings)
+    run_id = await _create_run(session_factory, workspace)
+    await AgentRunner(session_factory, llm=llm, settings=settings).run(run_id)
+    run, steps = await _load(session_factory, run_id)
+    assert (run.status, run.stop_reason) == (RunStatus.stopped, StopReason.budget)
+    assert run.error and run.error.startswith("run_usd_cap:")
+    assert steps[-1].kind == "budget" and "LLM_RUN_USD_CAP" in (steps[-1].output_summary or "")
+    assert len(llm.requests) == 1
+
+
+async def test_reasoning_excerpt_is_stored_redacted_and_not_in_history(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    trace = "The user wants services. password=hunter2hunter2 " + "t" * 3000
+    llm = FakeLLM(
+        reply(None, tool_call("list_fake_services"), reasoning=trace),
+        reply("Listed them."),
+    )
+    run_id = await _create_run(session_factory, workspace)
+    await AgentRunner(session_factory, llm=llm, settings=_settings()).run(run_id)
+    run, steps = await _load(session_factory, run_id)
+    excerpt = steps[0].reasoning_excerpt or ""
+    assert excerpt.startswith("The user wants services.")
+    assert "hunter2hunter2" not in excerpt and len(excerpt) <= 2000
+    assert "The user wants services" not in str(run.messages)
+    assert "The user wants services" not in str(llm.requests[1])
+    assert (steps[0].fell_back, steps[0].escalated) == (False, False)
 
 
 def test_pending_tool_calls() -> None:

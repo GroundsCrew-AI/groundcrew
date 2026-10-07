@@ -5,7 +5,9 @@ runs.messages (the raw conversation) is never returned: it can hold full prompts
 """
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -63,6 +65,30 @@ class RunCreated(BaseModel):
     status: RunStatus
 
 
+def _optional_in_schema(*names: str) -> Callable[[dict[str, Any]], None]:
+    """Keep fields added in Phase 4 out of the OpenAPI `required` list. The API always sends
+    them, but the web app's hand-written fixtures do not have them yet, so marking them
+    required would break its typecheck. TODO(frontend): remove once the web app uses them
+    (see docs/api-changes.md)."""
+
+    def drop(schema: dict[str, Any]) -> None:
+        schema["required"] = [n for n in schema.get("required", []) if n not in names]
+        # openapi-typescript makes any property with a default non-optional, so drop it too.
+        for name in names:
+            schema.get("properties", {}).get(name, {}).pop("default", None)
+
+    return drop
+
+
+_PHASE4_STEP_FIELDS = (
+    "reasoning_mode",
+    "ultra_equiv_usd",
+    "fell_back",
+    "escalated",
+    "reasoning_excerpt",
+)
+
+
 def _tool_policy(tool_name: str | None) -> ToolPolicy | None:
     if tool_name is None:
         return None
@@ -73,6 +99,8 @@ def _tool_policy(tool_name: str | None) -> ToolPolicy | None:
 
 
 class StepOut(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_optional_in_schema(*_PHASE4_STEP_FIELDS))
+
     id: uuid.UUID
     seq: int
     agent: str
@@ -88,6 +116,14 @@ class StepOut(BaseModel):
     completion_tokens: int | None
     latency_ms: int | None
     cost_usd: float | None
+    # LLM steps: reasoning mode sent (off | low | on), what the same tokens would cost on Ultra,
+    # whether the route's fallback tier answered or the call was escalated one tier, and the
+    # start of the model's reasoning trace (redacted, at most 2,000 characters).
+    reasoning_mode: str | None = None
+    ultra_equiv_usd: float | None = None
+    fell_back: bool = False
+    escalated: bool = False
+    reasoning_excerpt: str | None = None
     created_at: datetime
 
     @classmethod
@@ -108,8 +144,17 @@ class StepOut(BaseModel):
             completion_tokens=step.completion_tokens,
             latency_ms=step.latency_ms,
             cost_usd=float(step.cost_usd) if step.cost_usd is not None else None,
+            reasoning_mode=step.reasoning_mode,
+            ultra_equiv_usd=_float(step.ultra_equiv_usd),
+            fell_back=step.fell_back,
+            escalated=step.escalated,
+            reasoning_excerpt=step.reasoning_excerpt,
             created_at=step.created_at,
         )
+
+
+def _float(value: Decimal | None) -> float | None:
+    return float(value) if value is not None else None
 
 
 def _duration_ms(run: Run) -> int | None:
@@ -124,7 +169,9 @@ def _duration_ms(run: Run) -> int | None:
 class RunOut(BaseModel):
     """A run with its totals. duration_ms is set once the run has finished."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_extra=_optional_in_schema("ultra_equiv_usd")
+    )
 
     id: uuid.UUID
     workspace_id: uuid.UUID
@@ -138,6 +185,8 @@ class RunOut(BaseModel):
     completion_tokens: int
     total_tokens: int
     cost_usd: float | None
+    # What the same tokens would have cost on Ultra alone.
+    ultra_equiv_usd: float | None = None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
@@ -160,6 +209,7 @@ class RunOut(BaseModel):
             completion_tokens=run.completion_tokens,
             total_tokens=run.total_tokens,
             cost_usd=float(run.cost_usd) if run.cost_usd is not None else None,
+            ultra_equiv_usd=_float(run.ultra_equiv_usd),
             created_at=run.created_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
@@ -236,6 +286,12 @@ class StreamToken(BaseModel):
 
 
 class WorkspaceSummary(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra=_optional_in_schema(
+            "usd_today", "daily_usd_cap", "usd_total", "total_usd_cap"
+        )
+    )
+
     runs_today: int
     pending_approvals: int
     # Tokens this workspace's runs used today (UTC).
@@ -243,6 +299,11 @@ class WorkspaceSummary(BaseModel):
     # DAILY_TOKEN_BUDGET is shared by every workspace; this is what counts against it.
     budget_tokens_today: int
     daily_token_budget: int | None
+    # Token Factory spend in USD across all workspaces (llm_usage), and its caps.
+    usd_today: float = 0.0
+    daily_usd_cap: float | None = None
+    usd_total: float = 0.0
+    total_usd_cap: float | None = None
 
 
 # --- SSE payloads -----------------------------------------------------------------------
@@ -251,6 +312,8 @@ class WorkspaceSummary(BaseModel):
 class RunStatusEvent(BaseModel):
     """Sent as `status` whenever the run's state or totals change, and as the final `done`."""
 
+    model_config = ConfigDict(json_schema_extra=_optional_in_schema("ultra_equiv_usd"))
+
     status: RunStatus
     stop_reason: StopReason | None
     result: str | None
@@ -258,6 +321,7 @@ class RunStatusEvent(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float | None
+    ultra_equiv_usd: float | None = None
     started_at: datetime | None
     finished_at: datetime | None
 
@@ -271,6 +335,7 @@ class RunStatusEvent(BaseModel):
             prompt_tokens=run.prompt_tokens,
             completion_tokens=run.completion_tokens,
             cost_usd=float(run.cost_usd) if run.cost_usd is not None else None,
+            ultra_equiv_usd=_float(run.ultra_equiv_usd),
             started_at=run.started_at,
             finished_at=run.finished_at,
         )
