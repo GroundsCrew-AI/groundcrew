@@ -124,9 +124,25 @@ Web app (Vercel) ──REST+SSE──▶ Control plane (FastAPI on VM)
 | Deployer | `app_spec` → target config; preflight; deploy; verify | Nemotron 3 **Super** | target plan / apply (approval) / verify |
 | Medic | Cross-cloud root cause; propose + verify fixes | Nemotron 3 **Ultra** | read telemetry, Tavily, open PR, emergency actions (approval) |
 
-Model routing (`app/llm/router.py`): classify / summarize / detect → Nano; write_config / plan / patch → Super;
-root_cause → Ultra. `DEV_MODE_NO_ULTRA=true` sends Ultra tasks to Super. Only tiers in `LLM_REASONING_TIERS`
-(default Ultra) reason before answering; Nano and Super calls send `enable_thinking=false`.
+Model routing (`app/llm/router.py`) has two dials per task: a tier and a reasoning mode
+(`off` = `enable_thinking: false`, `low` = `enable_thinking: true, low_effort: true`, `on` = `enable_thinking: true`).
+
+| Task | Tier | Reasoning | Max tokens | Fallback |
+|---|---|---|---|---|
+| summarize_graph, compress_evidence, classify_signal, verify_recovery | Nano | off | 300 to 1,500 | |
+| detect_app_spec (Scout) | Nano | low | 2,000 | Super |
+| write_dockerfile, plan_deploy | Super | low | 3,000 | |
+| fix_build | Super | on | 6,000 | |
+| tool_step, investigate_step | Super | off | 1,500 | Nano (tool_step) |
+| root_cause | Ultra | on | 10,000 | Super |
+| propose_fix | Ultra | low | 6,000 | Super |
+| classify, summarize, detect / write_config, plan, patch (Phase 1 generic, Echo Ops) | Nano / Super | off | `LLM_MAX_TOKENS` | |
+
+`escalate=True` bumps one tier, turns reasoning fully on, and gives 1.5x the tokens (Builder's 4th build attempt
+goes to Ultra). `DEV_MODE_NO_ULTRA=true` keeps everything on Super or below. All calls send `temperature=1.0`,
+`top_p=0.95` (NVIDIA's Nemotron 3 guidance). Every call goes through `app/llm/client.py` (`TokenFactory.chat`):
+retries, fallback, JSON-schema output with one repair, reasoning capture (shown, never re-sent), cost and
+Ultra-equivalent cost on every step, and the spend caps in `app/llm/budget.py`.
 
 Env vars (exact model IDs must be copied from the Token Factory docs; `.env.example` has a comment for each).
 Blank means unset; defaults in brackets.
@@ -139,17 +155,24 @@ MODEL_SUPER=
 MODEL_ULTRA=
 MODEL_EMBED=                  # NVIDIA embedding model if available
 EMBED_DIM=                    # [1024] incidents.embedding size; changing it needs a migration
-LLM_TIMEOUT_SECONDS=          # [60]
-LLM_MAX_TOKENS=               # [4096] per call, reasoning included
+MODEL_RERANK=                 # e.g. Qwen/Qwen3-Reranker-8B; unset = rerank keeps input order
+LLM_CONTEXT_NANO=             # [32000] confirm with scripts/probe_token_factory.py
+LLM_CONTEXT_SUPER=            # [256000]
+LLM_CONTEXT_ULTRA=            # [256000]
+LLM_TIMEOUT_SECONDS=          # [120]
+LLM_MAX_ATTEMPTS=             # [3] per model on 429/5xx/connection errors; a timeout is retried once at most
+LLM_RETRY_BASE_SECONDS=       # [1.0] backoff base * 2**n plus jitter
+LLM_MAX_TOKENS=               # [4096] per call for generic agent-loop tasks; pipeline tasks set their own
 LLM_MIN_COMPLETION_TOKENS=    # [512] stop the run instead of a call with less room than this
-LLM_REASONING_TIERS=          # [ultra] tiers that think first; others send enable_thinking=false
 DEV_MODE_NO_ULTRA=            # [false] route Ultra tasks to Super
-PRICE_NANO_INPUT_PER_M=       # optional USD per 1M tokens; unset = cost not estimated
-PRICE_NANO_OUTPUT_PER_M=
-PRICE_SUPER_INPUT_PER_M=
-PRICE_SUPER_OUTPUT_PER_M=
-PRICE_ULTRA_INPUT_PER_M=
-PRICE_ULTRA_OUTPUT_PER_M=
+PRICE_NANO_INPUT_PER_M=       # [0.06] USD per 1M tokens. Defaults UNVERIFIED (third-party listing):
+PRICE_NANO_OUTPUT_PER_M=      # [0.24]   set the real ones from the Token Factory pricing page.
+PRICE_SUPER_INPUT_PER_M=      # [0.30]   A model with no price is never called.
+PRICE_SUPER_OUTPUT_PER_M=     # [0.90]
+PRICE_ULTRA_INPUT_PER_M=      # [1.00]
+PRICE_ULTRA_OUTPUT_PER_M=     # [3.00]
+PRICE_EMBED_PER_M=            # no default: embeddings are refused until set
+PRICE_RERANK_PER_M=           # no default: rerank is refused until set (if MODEL_RERANK is set)
 
 # Services and secrets
 TAVILY_API_KEY=
@@ -163,11 +186,15 @@ GITHUB_APP_CLIENT_SECRET=
 GITHUB_APP_PRIVATE_KEY_PATH=  # PEM file in secrets/ (git-ignored)
 GITHUB_WEBHOOK_SECRET=
 
-# Budgets and limits
+# Budgets and limits (USD caps count in the llm_usage table; the total cap is the hard stop)
+LLM_RUN_USD_CAP=              # [0.40] per run
+LLM_DAILY_USD_CAP=            # [2.00] per UTC day, all runs and scripts; 0.50 on the hosted demo
+LLM_TOTAL_USD_CAP=            # [25] all time; credits are about $30
+MAX_ULTRA_CALLS_PER_RUN=      # [3]
 DAILY_TOKEN_BUDGET=           # [no limit] tokens per UTC day, all agents
 MAX_ULTRA_CALLS_PER_INCIDENT= # [no limit]
 MAX_STEPS_PER_RUN=            # [12] model calls per run
-MAX_TOKENS_PER_RUN=           # [60000]
+MAX_TOKENS_PER_RUN=           # [400000]
 
 # Worker, SSE, logging
 WORKER_POLL_INTERVAL_SECONDS= # [1.0]
@@ -340,30 +367,45 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         `rejected_actions`, shown as "N actions rejected" beside the status (verified live on Nano)
   - [x] Real GitHub sign-in works (approvals recorded as the signed-in GitHub user)
 - [ ] Phase 3 — Discovery + graph
-- [ ] Phase 4 — Build + deploy agents
+- [ ] Phase 4 — Build + deploy agents (in progress)
+  - [x] Step 1: LLM layer. Task routing (tier + reasoning mode, fallback, escalation), `TokenFactory.chat` with
+        retries, JSON-schema output and one repair, reasoning capture, `embed` / `rerank`; USD caps per run, per day,
+        and in total backed by `llm_usage`; `cost_usd` and `ultra_equiv_usd` on every step and run; FakeLLM runs
+        the real client code with scripted replies; `scripts/probe_token_factory.py` (not run yet)
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission
 - [ ] Phase 8 — Judging upkeep
 
 **Current phase:** 3
-**Last updated:** 2026-10-06
+**Last updated:** 2026-10-07
 **Known issues / blockers:**
 - Phase 0 open items: Tavily API key; budget alerts (AWS $20 / $50, Azure $20).
 - Any member of a workspace can approve. Roles (who may approve write vs emergency actions) come with
   Settings in Phase 6.
 - The browser opens the run stream directly on the API, so the hosted API needs `WEB_ORIGIN` set to the
   web app's URL and must be reachable from the browser (Phase 6).
-- The daily token budget is checked without a lock. Exact with one worker; with several workers the
-  overshoot is at most one capped call per worker.
+- Spend caps (llm_usage) are checked without a lock. Exact with one worker; with several workers or
+  concurrent calls the overshoot is at most one call each. `app/llm/evidence.py` (Medic, not wired yet) runs
+  calls in parallel and needs per-call reservations before it is used.
+- Unverified until `scripts/probe_token_factory.py` runs (`TODO(nebius)` in code): `low_effort` support, where
+  the reasoning trace comes back, strict `json_schema` support, Nano's context size, embedding and rerank models
+  and their usage fields, and the default prices.
 - Tool calling with reasoning off is verified only on the Echo Ops toy agent. Re-check quality when
-  Scout, Builder, and Deployer land, and add their tiers to `LLM_REASONING_TIERS` if needed.
+  Scout, Builder, and Deployer land.
 - The demo runs locally only; nothing in Phase 1 targets Neon. Run `make migrate DB_URL=<neon url>` when hosting.
 
 ## 15. Decisions log (newest first)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-07 | Per-task routes (tier + reasoning mode) replace `LLM_REASONING_TIERS` | Reasoning depends on the job, not the model size: Scout and Dockerfile writing need a little, fixing a build needs it all, tool steps need none |
+| 2026-10-07 | USD caps: $0.40 per run, `LLM_DAILY_USD_CAP` (2.00 dev, 0.50 hosted), `LLM_TOTAL_USD_CAP=25` as the hard stop, all counted in a `llm_usage` table | About $30 of credits must last through judging (Dec 15); in-memory counters would reset and not be shared |
+| 2026-10-07 | Default prices from a third-party listing, marked unverified; a model with no price is never called | Spend is always counted; real prices go in `PRICE_*` once checked on the pricing page |
+| 2026-10-07 | Budget stops keep `stop_reason=budget` with the exact cap in `runs.error`; `no_progress` comes with Builder (Step 5) | One stop reason for the UI to badge, with the detail where people read it |
+| 2026-10-07 | Phase 4 API fields are optional in the OpenAPI schema until the web app uses them; only generated web files change (`docs/api-changes.md`) | Phase 3 and the frontend work in parallel; hand-written web code is theirs |
+| 2026-10-07 | Reuse `run_steps.model_tier` and `cost_usd`; add `reasoning_mode`, `ultra_equiv_usd`, `fell_back`, `escalated`, `reasoning_excerpt` | No duplicate columns; the web app already reads `model_tier` |
+| 2026-10-07 | FakeLLM subclasses the real client and replaces only the HTTP calls | Tests exercise the real routing, budget, repair, and accounting code without a key or network |
 | 2026-10-06 | A run whose action was rejected still ends `succeeded` / `completed`, with a `rejected_actions` count shown beside the status | The agent did finish cleanly; the marker keeps it from reading as a full success, without a new stop reason or migration |
 | 2026-10-06 | Sign-in with Auth.js (NextAuth v5) and the GitHub provider, using our GitHub App's OAuth client | One identity for login now and repo access in Phase 3; no passwords to store |
 | 2026-10-06 | REST goes browser -> Next.js `/api/gc/*` proxy -> FastAPI with a 5-minute HS256 internal JWT (`INTERNAL_JWT_SECRET`) | The browser never holds an API credential, and REST needs no CORS |
