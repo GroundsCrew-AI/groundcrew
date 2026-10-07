@@ -17,6 +17,8 @@ class Tier(enum.StrEnum):
     nano = "nano"
     super = "super"
     ultra = "ultra"
+    # Nemotron 3.5 Lightning: a side tier for fast tool execution, outside the size ladder.
+    lightning = "lightning"
 
 
 class Reasoning(enum.StrEnum):
@@ -25,6 +27,7 @@ class Reasoning(enum.StrEnum):
     on = "on"  # full reasoning
 
 
+# The size ladder escalation climbs. Lightning sits beside it and escalates to Super.
 TIER_ORDER = (Tier.nano, Tier.super, Tier.ultra)
 
 _MILLION = Decimal(1_000_000)
@@ -40,6 +43,8 @@ class PriceMissingError(ModelNotConfiguredError):
 
 
 def next_tier(tier: Tier) -> Tier:
+    if tier == Tier.lightning:
+        return Tier.super
     index = TIER_ORDER.index(tier)
     return TIER_ORDER[min(index + 1, len(TIER_ORDER) - 1)]
 

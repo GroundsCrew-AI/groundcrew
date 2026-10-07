@@ -33,7 +33,12 @@ class Settings(BaseSettings):
     model_nano: str | None = None
     model_super: str | None = None
     model_ultra: str | None = None
-    model_embed: str | None = None
+    # Nemotron 3.5 Lightning (30B MoE, 3B active, built for tool-call execution). Registered as
+    # its own tier; no task routes to it until the follow-up probe shows how it behaves.
+    model_lightning: str | None = None
+    # The only embedding model on Token Factory (probe, 2026-10-07). It returns 4096 dimensions;
+    # embed() asks for EMBED_DIM, else truncates and re-normalises (it is a Matryoshka model).
+    model_embed: str | None = "Qwen/Qwen3-Embedding-8B"
     # Reranker on Token Factory (POST /v1/rerank). Unset = rerank keeps the input order.
     model_rerank: str | None = None
     # Context window per tier, in tokens. Nano's 32k is the conservative listing; the probe
@@ -41,6 +46,7 @@ class Settings(BaseSettings):
     llm_context_nano: int = 32_000
     llm_context_super: int = 256_000
     llm_context_ultra: int = 256_000
+    llm_context_lightning: int = 32_000
 
     # LLM calls
     llm_timeout_seconds: float = 120.0
@@ -65,6 +71,9 @@ class Settings(BaseSettings):
     price_super_output_per_m: float | None = 0.90
     price_ultra_input_per_m: float | None = 1.00
     price_ultra_output_per_m: float | None = 3.00
+    # No public price seen for Lightning yet: it is refused until these are set.
+    price_lightning_input_per_m: float | None = None
+    price_lightning_output_per_m: float | None = None
     # Embedding and rerank prices per million input tokens. No default: unset means not called.
     price_embed_per_m: float | None = None
     price_rerank_per_m: float | None = None

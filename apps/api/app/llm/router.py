@@ -78,7 +78,8 @@ ROUTES: dict[Task, Route] = {
     Task.tool_step: Route(Task.tool_step, _S, _OFF, 1_500, fallback=_N),
     Task.investigate_step: Route(Task.investigate_step, _S, _OFF, 1_500),
     Task.root_cause: Route(Task.root_cause, _U, _ON, 10_000, fallback=_S),
-    Task.propose_fix: Route(Task.propose_fix, _U, _LOW, 6_000, fallback=_S),
+    # Ultra never runs with reasoning=low: in the probe, low used more tokens than on (327 vs 218).
+    Task.propose_fix: Route(Task.propose_fix, _U, _ON, 6_000, fallback=_S),
     Task.verify_recovery: Route(Task.verify_recovery, _N, _OFF, 800),
     # Phase 1 generic types: reasoning off (verified on Echo Ops: tool calls dropped from
     # 700 to 950 completion tokens to under 30), LLM_MAX_TOKENS per call.
@@ -118,6 +119,8 @@ def route(task: Task, *, escalate: bool = False, settings: Settings | None = Non
         tier = _no_ultra(r.tier) or r.tier
         fallback = _no_ultra(r.fallback)
         r = replace(r, tier=tier, fallback=None if fallback == tier else fallback)
+    if r.tier == Tier.ultra and r.reasoning == Reasoning.low:
+        r = replace(r, reasoning=Reasoning.on)  # low costs more than on for Ultra
     return r
 
 

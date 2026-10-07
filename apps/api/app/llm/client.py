@@ -35,6 +35,7 @@ from app.llm.tool_calls import (
     raw_text,
     split_reasoning,
 )
+from app.llm.vectors import fit_dimensions
 from app.security.redact import summarize
 
 logger = logging.getLogger("groundcrew.llm")
@@ -151,9 +152,9 @@ def wire_messages(messages: Sequence[Message]) -> list[Message]:
 def reasoning_kwargs(mode: Reasoning) -> dict[str, Any]:
     """chat_template_kwargs for a reasoning mode.
 
-    TODO(nebius): `low_effort` is from NVIDIA's Nemotron 3 docs; confirm Token Factory passes it
-    through (scripts/probe_token_factory.py compares completion tokens for off/low/on).
-    https://docs.tokenfactory.nebius.com/llms.txt
+    Probe (2026-10-07): off gives zero thinking tokens on every tier; low cuts thinking on Nano
+    (152 vs 234 completion tokens) and Super (48 vs 144) but not on Ultra (327 vs 218, one
+    sample), so routes never send low to Ultra.
     """
     if mode == Reasoning.off:
         return {"enable_thinking": False}
@@ -206,6 +207,8 @@ class TokenFactory:
             else retry_base_seconds
         )
         self._rerank_http = rerank_http_client
+        # Cleared if the embeddings API rejects the `dimensions` parameter.
+        self._send_embed_dimensions = True
         self._connect(http_client)
 
     def _connect(self, http_client: Any) -> None:
@@ -484,8 +487,8 @@ class TokenFactory:
         choice = completion.choices[0]
         message = choice.message
 
-        # The trace may be a separate field or inline in the content.
-        # TODO(nebius): the probe reports which one Token Factory uses for Nemotron 3.
+        # Probe (2026-10-07): Nano returns the trace in `reasoning`, Super and Ultra in
+        # `reasoning_content`; no <think> tags were seen. Inline tags are still handled.
         extra = message.model_extra or {}
         trace = extra.get("reasoning_content") or extra.get("reasoning")
         content = message.content
@@ -548,11 +551,13 @@ class TokenFactory:
     async def embed(
         self, texts: list[str], *, budget: RunBudget | None = None, usage: UsageStore | None = None
     ) -> list[list[float]]:
-        """Embeddings with MODEL_EMBED. Refuses without PRICE_EMBED_PER_M.
+        """L2-normalised embeddings of EMBED_DIM values with MODEL_EMBED (Qwen3-Embedding-8B,
+        the only embedding model on Token Factory). Refuses without PRICE_EMBED_PER_M.
 
-        TODO(nebius): choose the model from the probe's /v1/models list, preferring one that
-        returns EMBED_DIM (1024) dimensions so incidents.embedding needs no migration.
-        https://docs.tokenfactory.nebius.com/llms.txt
+        Asks for `dimensions=EMBED_DIM`. If the API rejects that parameter, it is dropped for
+        this client and the call retried once. Longer vectors are cut to their first EMBED_DIM
+        values and re-normalised (valid for Matryoshka models), so incidents.embedding stays
+        at 1024 with no migration.
         """
         s = self.settings
         if not s.model_embed:
@@ -563,24 +568,42 @@ class TokenFactory:
         if store is None:
             raise LLMConfigError("embed() needs a budget or a usage store to count spend.")
         await _check_store(store, budget, s)
+        request: dict[str, Any] = {
+            "model": s.model_embed,
+            "input": texts,
+            "encoding_format": "float",
+        }
+        if self._send_embed_dimensions:
+            request["dimensions"] = s.embed_dim
         try:
-            response = await self._create_embeddings(
-                {"model": s.model_embed, "input": texts, "encoding_format": "float"}
-            )
+            response = await self._create_embeddings(request)
+        except openai.APIStatusError as exc:
+            if "dimensions" not in request or exc.status_code not in (400, 422):
+                raise LLMError(f"Token Factory embeddings failed: {_redacted_error(exc)}") from None
+            logger.info("embeddings: dimensions parameter rejected; truncating instead")
+            self._send_embed_dimensions = False
+            request.pop("dimensions")
+            try:
+                response = await self._create_embeddings(request)
+            except openai.OpenAIError as retry_exc:
+                raise LLMError(
+                    f"Token Factory embeddings failed: {_redacted_error(retry_exc)}"
+                ) from None
         except openai.OpenAIError as exc:
             raise LLMError(f"Token Factory embeddings failed: {_redacted_error(exc)}") from None
-        vectors = [list(d.embedding) for d in response.data]
+        raw = [list(d.embedding) for d in response.data]
         tokens = int(getattr(response.usage, "prompt_tokens", 0) or 0) if response.usage else 0
         cost = usd(tokens, s.price_embed_per_m)
         if budget is not None:
             budget.record_spend(cost, tokens)
         await store.add(cost, tokens)
-        if vectors and len(vectors[0]) != s.embed_dim:
+        try:
+            return [fit_dimensions(vector, s.embed_dim) for vector in raw]
+        except ValueError as exc:
             raise LLMError(
-                f"{s.model_embed} returned {len(vectors[0])} dimensions; EMBED_DIM is "
-                f"{s.embed_dim}. Pick a model with {s.embed_dim} dimensions or add a migration."
-            )
-        return vectors
+                f"{s.model_embed}: {exc} (EMBED_DIM={s.embed_dim}). "
+                "Use another model or a migration."
+            ) from None
 
     async def rerank(
         self,
@@ -593,6 +616,9 @@ class TokenFactory:
     ) -> list[tuple[int, float]]:
         """(document index, score), best first. Without MODEL_RERANK: input order, score 0.
 
+        No rerank model is available on Token Factory yet (probe, 2026-10-07), so evidence
+        ranking uses embedding similarity by default (app/llm/evidence.py). This stays for when
+        one appears.
         TODO(nebius): the rerank response's `usage` fields are not documented in detail; cost
         uses usage.total_tokens / prompt_tokens when present, else about 4 characters per token.
         https://docs.tokenfactory.nebius.com/llms.txt

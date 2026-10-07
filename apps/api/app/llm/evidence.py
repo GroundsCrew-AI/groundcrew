@@ -3,7 +3,8 @@
 raw logs / metrics / events (100k+ tokens)
   -> chunk to fit Nano's context
   -> Nano compresses each chunk (in parallel) into structured findings
-  -> rerank findings against the symptom
+  -> rank findings against the symptom (embedding cosine similarity; a rerank model if one is
+     configured; severity if embeddings are unavailable)
   -> Ultra reasons over about 8 findings (a few thousand tokens)
 
 This is what keeps "Ultra for root cause" affordable, and it shows the three tiers working.
@@ -19,9 +20,10 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.llm.budget import RunBudget
-from app.llm.client import TokenFactory
+from app.llm.client import LLMConfigError, TokenFactory
 from app.llm.models import Tier
 from app.llm.router import Task
+from app.llm.vectors import cosine
 
 CHARS_PER_TOKEN = 4  # rough; good enough for chunk sizing
 
@@ -91,9 +93,34 @@ async def distill(
     if not findings:
         return []
 
-    ranked = await tf.rerank(
-        symptom, [f"{f.kind}: {f.summary} | {f.quote}" for f in findings], top_k, budget=budget
-    )
-    if ranked and ranked[0][1] == 0.0:  # rerank disabled: fall back to severity
+    return await rank(tf, budget, symptom, findings, top_k)
+
+
+def _finding_text(finding: Finding) -> str:
+    return f"{finding.kind}: {finding.summary} | {finding.quote}"
+
+
+async def rank(
+    tf: TokenFactory, budget: RunBudget, symptom: str, findings: list[Finding], top_k: int = 8
+) -> list[Finding]:
+    """The `top_k` findings most related to the symptom.
+
+    Token Factory has no rerank model (probe, 2026-10-07), so the default is cosine similarity
+    of embeddings (one embed call for the symptom and all findings). A rerank model is used
+    only when MODEL_RERANK is set. Without embeddings (no model or price), most severe first.
+    """
+    if not findings:
+        return []
+    texts = [_finding_text(f) for f in findings]
+    if tf.settings.model_rerank:
+        ranked = await tf.rerank(symptom, texts, top_k, budget=budget)
+        return [findings[i] for i, _ in ranked]
+    try:
+        query, *vectors = await tf.embed([symptom, *texts], budget=budget)
+    except LLMConfigError:
         return sorted(findings, key=lambda f: -f.severity)[:top_k]
-    return [findings[i] for i, _ in ranked]
+    scored = sorted(
+        range(len(findings)),
+        key=lambda i: (-cosine(query, vectors[i]), -findings[i].severity, i),
+    )
+    return [findings[i] for i in scored[:top_k]]

@@ -28,6 +28,7 @@ def _settings(**overrides: Any) -> Settings:
         (Task.fix_build, Tier.super, Reasoning.on),
         (Task.plan_deploy, Tier.super, Reasoning.low),
         (Task.root_cause, Tier.ultra, Reasoning.on),
+        (Task.propose_fix, Tier.ultra, Reasoning.on),
         (Task.summarize, Tier.nano, Reasoning.off),  # Echo Ops keeps its Phase 1 route
         (Task.plan, Tier.super, Reasoning.off),
     ],
@@ -40,6 +41,29 @@ def test_routes(task: Task, tier: Tier, reasoning: Reasoning) -> None:
 def test_every_task_has_a_route() -> None:
     assert set(ROUTES) == set(Task)
     assert TaskType is Task
+
+
+def test_ultra_never_runs_with_low_reasoning() -> None:
+    # Probe: on Ultra, low used more tokens than on. Holds for every task, escalated or not,
+    # with and without DEV_MODE_NO_ULTRA.
+    for dev_mode in (False, True):
+        settings = _settings(dev_mode_no_ultra=dev_mode)
+        for task in Task:
+            for escalate in (False, True):
+                r = route(task, escalate=escalate, settings=settings)
+                assert not (r.tier == Tier.ultra and r.reasoning == Reasoning.low), task
+
+
+def test_no_task_routes_to_lightning_yet() -> None:
+    for task in Task:
+        for escalate in (False, True):
+            r = route(task, escalate=escalate, settings=_settings())
+            assert Tier.lightning not in (r.tier, r.fallback)
+
+
+def test_lightning_escalates_to_super() -> None:
+    assert next_tier(Tier.lightning) == Tier.super
+    assert next_tier(Tier.nano) == Tier.super
 
 
 def test_escalate_bumps_one_tier_with_full_reasoning() -> None:
