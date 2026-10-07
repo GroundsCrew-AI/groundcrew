@@ -416,6 +416,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-07 | **AI agents never merge and never touch `main`.** Agents may create, commit, and push their own branches, open and update draft PRs, and rebase or fix conflicts on their own branches. They may not merge any PR (into `main` or any other branch), push or force-push to `main` or change it in any way, mark PRs ready for review, approve them, or enable auto-merge. If work seems to need a merge to continue (e.g. stacked branches), the agent stops and asks. | The project owner reviews and merges everything |
 | 2026-10-07 | Ultra never runs with reasoning `low`; `propose_fix` is Ultra/on | Probe: on Ultra, `low` used more completion tokens than `on` (327 vs 218) |
 | 2026-10-07 | Every schema field the code compares on is a lowercase Literal / StrEnum with `other`; model output is normalized before validation | Probe: valid JSON, but "TypeScript" / "JavaScript" / "javascript" for the same answer; strict enforcement is unproven |
 | 2026-10-07 | Embeddings: Qwen/Qwen3-Embedding-8B, `dimensions=1024` requested, else the first 1024 values re-normalised; column stays 1024 | Only embedding model on Token Factory; it is a Matryoshka model, so a prefix is a valid embedding and no migration is needed |
