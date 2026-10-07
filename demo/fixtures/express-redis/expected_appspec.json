@@ -1,0 +1,25 @@
+{
+  "language": "javascript",
+  "framework": "express",
+  "runtime_version": "20",
+  "package_manager": "npm",
+  "install_cmd": "npm install",
+  "build_cmd": null,
+  "start_cmd": "npm start",
+  "port": 8080,
+  "database": "redis",
+  "health_path": "/healthz",
+  "has_dockerfile": false,
+  "env_vars": [
+    {
+      "name": "PORT",
+      "required": false,
+      "secret": false
+    },
+    {
+      "name": "REDIS_URL",
+      "required": true,
+      "secret": true
+    }
+  ]
+}

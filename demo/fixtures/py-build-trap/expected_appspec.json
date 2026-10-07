@@ -1,0 +1,20 @@
+{
+  "language": "python",
+  "framework": "flask",
+  "runtime_version": "3.12",
+  "package_manager": "pip",
+  "install_cmd": "pip install --no-cache-dir -r requirements.txt",
+  "build_cmd": null,
+  "start_cmd": "gunicorn app:app --bind 0.0.0.0:8000",
+  "port": 8000,
+  "database": "postgres",
+  "health_path": "/health",
+  "has_dockerfile": false,
+  "env_vars": [
+    {
+      "name": "DATABASE_URL",
+      "required": true,
+      "secret": true
+    }
+  ]
+}

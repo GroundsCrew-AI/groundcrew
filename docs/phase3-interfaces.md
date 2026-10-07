@@ -31,6 +31,23 @@ GitHub App, then either reuse `GitCloneSource` with that token (pass a `Settings
 The repo tools (`list_files`, `read_file`) read from `ToolContext.repo_root`, the path `materialize()`
 returned.
 
+## Scout's system summary input (`apps/api/app/agents/scout/summary.py`)
+
+`summarize_system(llm, budget, resources)` takes a plain list of `ResourceSummary`:
+
+```python
+class ResourceSummary(BaseModel):
+    provider: str              # aws | azure | gcp | k8s | vercel | vm
+    type: str
+    name: str
+    region: str | None = None
+    relations: list[str] = []  # names of resources this one calls, reads, or is deployed by
+    notes: str | None = None
+```
+
+The graph module can map its `resources` and `edges` rows into this. Scout sorts them, keeps the prompt under
+about 6k tokens (Nano's reliable range), and says how many were left out.
+
 ## Coming with later steps
 
 - `CredentialsProvider` (Step 6): `kubeconfig(connection_id) -> Path`, `aws_session(connection_id) -> boto3.Session`.
