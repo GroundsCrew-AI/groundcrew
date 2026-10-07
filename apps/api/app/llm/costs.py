@@ -1,12 +1,15 @@
-"""Cost estimate per LLM call from optional PRICE_<TIER>_INPUT/OUTPUT_PER_M settings."""
+"""Cost per call from the PRICE_<TIER>_INPUT/OUTPUT_PER_M settings.
+
+The client prices every call through app.llm.models (and refuses models with no price);
+these helpers are for scripts and reports that only have token counts.
+"""
 
 from decimal import Decimal
 
 from app.config import Settings, get_settings
-from app.llm.router import Tier
+from app.llm.models import Tier, ultra_equivalent, usd
 
-_MILLION = Decimal(1_000_000)
-_PLACES = Decimal("0.000001")
+__all__ = ["estimate_cost", "ultra_equivalent"]
 
 
 def estimate_cost(
@@ -17,12 +20,8 @@ def estimate_cost(
 ) -> Decimal | None:
     """USD cost, or None when the tier's input or output price is not set."""
     settings = settings or get_settings()
-    input_price: float | None = getattr(settings, f"price_{tier}_input_per_m")
-    output_price: float | None = getattr(settings, f"price_{tier}_output_per_m")
-    if input_price is None or output_price is None:
+    price_in: float | None = getattr(settings, f"price_{tier}_input_per_m")
+    price_out: float | None = getattr(settings, f"price_{tier}_output_per_m")
+    if price_in is None or price_out is None:
         return None
-    cost = (
-        Decimal(prompt_tokens) * Decimal(str(input_price))
-        + Decimal(completion_tokens) * Decimal(str(output_price))
-    ) / _MILLION
-    return cost.quantize(_PLACES)
+    return usd(prompt_tokens, price_in) + usd(completion_tokens, price_out)

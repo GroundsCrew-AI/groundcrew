@@ -31,10 +31,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.db.models import TERMINAL_RUN_STATUSES, Run, RunStatus, RunStep, StopReason
 from app.db.session import SessionFactory
-from app.llm.budget import BudgetExceededError, check_budget, estimate_prompt_tokens
-from app.llm.client import ChatModel, LLMError, LLMResponse, Message, TokenFactoryClient
-from app.llm.costs import estimate_cost
-from app.llm.router import TaskType, route
+from app.llm.budget import BudgetExceededError, PgUsageStore, RunBudget
+from app.llm.client import ChatModel, LLMError, LLMResult, Message, TokenFactory
+from app.llm.recorder import StepRecorder
+from app.llm.router import TaskType
 from app.llm.tool_calls import parse_arguments
 from app.policy.engine import (
     AwaitingApproval,
@@ -97,9 +97,10 @@ def _used_tool_call_ids(messages: list[Message]) -> set[str]:
     }
 
 
-def _assistant_message(resp: LLMResponse, used_ids: set[str] | None = None) -> Message:
+def _assistant_message(resp: LLMResult, used_ids: set[str] | None = None) -> Message:
     """The assistant message to store.
 
+    Only the answer is stored: the reasoning trace is never put back into the conversation.
     Tool call IDs are made unique within the run, because approvals are keyed by
     (run_id, tool_call_id) and a provider may reuse IDs across turns. Arguments the model
     sent as invalid JSON are kept in private `x_` keys (never sent to the provider), so the
@@ -125,25 +126,6 @@ def _assistant_message(resp: LLMResponse, used_ids: set[str] | None = None) -> M
             calls.append(entry)
         message["tool_calls"] = calls
     return message
-
-
-def _describe(message: Message) -> str:
-    """Short description of the newest message sent to the model (for the step summary)."""
-    role = message.get("role", "?")
-    if role == "tool":
-        return f"tool result: {message.get('content', '')}"
-    return f"{role}: {message.get('content') or ''}"
-
-
-def _describe_response(resp: LLMResponse) -> str:
-    if resp.tool_calls:
-        calls = ", ".join(
-            f"{c.name}({c.raw_arguments if c.arguments_error else json.dumps(c.arguments)})"
-            for c in resp.tool_calls
-        )
-        source = " (parsed from text)" if resp.tool_calls_from_text else ""
-        return f"tool calls{source}: {calls}"
-    return resp.content or ""
 
 
 def _call_arguments_text(call: dict[str, Any]) -> str:
@@ -181,7 +163,7 @@ class AgentRunner:
     @property
     def llm(self) -> ChatModel:
         if self._llm is None:
-            self._llm = TokenFactoryClient(self.settings)
+            self._llm = TokenFactory(self.settings)
         return self._llm
 
     async def handle_job(self, _sf: SessionFactory, payload: dict[str, Any]) -> None:
@@ -213,10 +195,14 @@ class AgentRunner:
                 logger.info("run stopped by user", extra={"run_id": str(run_id)})
                 return
             except BudgetExceededError as exc:
+                # stop_reason=budget; the exact cap (run_usd_cap, total_usd_cap, ...) is in
+                # runs.error and on the budget step.
                 await session.rollback()
                 await session.refresh(run)
                 await record_step(session, run, kind="budget", output_summary=str(exc))
-                await self._finish(session, run, RunStatus.stopped, StopReason.budget)
+                await self._finish(
+                    session, run, RunStatus.stopped, StopReason.budget, error=str(exc)
+                )
                 return
             except Exception as exc:
                 logger.exception("run failed", extra={"run_id": str(run_id)})
@@ -265,6 +251,10 @@ class AgentRunner:
             ]
             await session.commit()
         schemas = [self.tools.get(name).openai_schema() for name in agent.tools]
+        budget = await RunBudget.load(
+            session, run, PgUsageStore(self.session_factory), self.settings
+        )
+        recorder = StepRecorder(session, run, agent.name)
 
         while True:
             if await self._handle_pending(session, run, agent):
@@ -279,44 +269,15 @@ class AgentRunner:
             if (llm_calls or 0) >= self.settings.max_steps_per_run:
                 return StopReason.max_steps
 
-            target = route(agent.task_type, self.settings)
-            max_tokens = await check_budget(
-                session,
-                run,
-                target.tier,
-                self.settings,
-                prompt_tokens=estimate_prompt_tokens(run.messages, schemas),
-            )
             await session.commit()  # no transaction open during the model call
             resp = await self.llm.chat(
-                model_id=target.model_id,
-                messages=run.messages,
+                agent.task_type,
+                run.messages,
+                budget=budget,
                 tools=schemas,
-                max_tokens=max_tokens,
-                reasoning=target.reasoning,
+                on_call=recorder,  # writes the llm step and the run totals
             )
 
-            cost = estimate_cost(
-                target.tier, resp.prompt_tokens, resp.completion_tokens, self.settings
-            )
-            run.prompt_tokens += resp.prompt_tokens
-            run.completion_tokens += resp.completion_tokens
-            if cost is not None:
-                run.cost_usd = (run.cost_usd or 0) + cost
-            await record_step(
-                session,
-                run,
-                kind="llm",
-                agent=agent.name,
-                model_tier=target.tier,
-                model_id=resp.model_id,
-                input_summary=f"{len(run.messages)} messages; last {_describe(run.messages[-1])}",
-                output_summary=_describe_response(resp),
-                prompt_tokens=resp.prompt_tokens,
-                completion_tokens=resp.completion_tokens,
-                latency_ms=resp.latency_ms,
-                cost_usd=cost,
-            )
             # Reassign (not append) so SQLAlchemy sees the JSONB change.
             assistant = _assistant_message(resp, _used_tool_call_ids(run.messages))
             run.messages = [*run.messages, assistant]
@@ -329,11 +290,11 @@ class AgentRunner:
                         run.result = redact(resp.content)
                         await session.commit()
                         raise LLMError(
-                            f"The answer was cut off at max_tokens={max_tokens}. "
+                            f"The answer was cut off at max_tokens={resp.max_tokens}. "
                             "Raise LLM_MAX_TOKENS. The partial answer is in the run result."
                         )
                     raise LLMError(
-                        f"{resp.model_id} hit max_tokens={max_tokens} before answering "
+                        f"{resp.model_id} hit max_tokens={resp.max_tokens} before answering "
                         "(reasoning used the budget). Raise LLM_MAX_TOKENS."
                     )
                 run.result = redact(resp.content) if resp.content else None

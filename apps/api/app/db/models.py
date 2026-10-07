@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, ClassVar
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -245,6 +247,8 @@ class Run(TimestampMixin, Base):
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    # What the same tokens would have cost on Ultra. cost_usd / ultra_equiv_usd shows the saving.
+    ultra_equiv_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -276,6 +280,14 @@ class RunStep(TimestampMixin, Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    # LLM steps: reasoning mode sent (off | low | on), Ultra-equivalent cost, whether the call
+    # went to the route's fallback tier or was escalated one tier, and the start of the
+    # reasoning trace (redacted, truncated). The trace is shown, never sent back to the model.
+    reasoning_mode: Mapped[str | None] = mapped_column(String(8))
+    ultra_equiv_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    fell_back: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    escalated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    reasoning_excerpt: Mapped[str | None] = mapped_column(Text)
     # Set on approval_requested / approval_decided steps, so the timeline can show the approval.
     approval_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("approvals.id", ondelete="SET NULL", use_alter=True)
@@ -346,3 +358,17 @@ class Job(TimestampMixin, Base):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     locked_by: Mapped[str | None] = mapped_column(String(200))
     last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class LlmUsage(Base):
+    """Token Factory spend per UTC day, across all runs. Backs the daily and total USD caps."""
+
+    __tablename__ = "llm_usage"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0, server_default="0")
+    tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

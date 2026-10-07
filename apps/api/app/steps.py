@@ -26,6 +26,11 @@ async def record_step(
     latency_ms: int | None = None,
     cost_usd: Decimal | None = None,
     approval_id: uuid.UUID | None = None,
+    reasoning_mode: str | None = None,
+    ultra_equiv_usd: Decimal | None = None,
+    fell_back: bool = False,
+    escalated: bool = False,
+    reasoning_excerpt: str | None = None,
 ) -> RunStep:
     """Add the next step for this run. One worker runs a run at a time, so max(seq)+1 is safe;
     the (run_id, seq) unique constraint catches it if that ever breaks."""
@@ -47,6 +52,12 @@ async def record_step(
         latency_ms=latency_ms,
         cost_usd=cost_usd,
         approval_id=approval_id,
+        reasoning_mode=reasoning_mode,
+        ultra_equiv_usd=ultra_equiv_usd,
+        fell_back=fell_back,
+        escalated=escalated,
+        # The trace is shown in the UI only: redacted and capped like every summary.
+        reasoning_excerpt=summarize(reasoning_excerpt),
     )
     session.add(step)
     await session.flush()

@@ -8,6 +8,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -29,6 +30,7 @@ from app.db.models import (
     Workspace,
 )
 from app.db.session import SessionFactory, get_session_factory
+from app.llm.budget import PgUsageStore
 from app.main import app
 from app.security.auth import WebIdentity
 from app.worker import Worker
@@ -413,6 +415,8 @@ async def test_me_and_summary(
             )
         )
         await session.commit()
+    # Spend across all workspaces comes from llm_usage (the client adds every call to it).
+    await PgUsageStore(session_factory).add(Decimal("0.012"), 100)
     app.dependency_overrides[get_settings] = lambda: _settings(daily_token_budget=1000)
     summary = (
         await client.get(f"/workspaces/{alice.workspace_id}/summary", headers=alice.headers)
@@ -423,6 +427,10 @@ async def test_me_and_summary(
         "workspace_tokens_today": 100,
         "budget_tokens_today": 100,
         "daily_token_budget": 1000,
+        "usd_today": 0.012,
+        "daily_usd_cap": 2.0,
+        "usd_total": 0.012,
+        "total_usd_cap": 25.0,
     }
 
 
@@ -516,9 +524,9 @@ async def test_stop_while_agent_is_working_is_kept(
     """The user stops the run while the model is thinking: the agent must not overwrite it."""
 
     class StopDuringCall(FakeLLM):
-        async def chat(self, **kwargs: Any) -> Any:
+        async def chat(self, task: Any, messages: Any, **kwargs: Any) -> Any:
             await _set_status(session_factory, run_id, RunStatus.stopped)
-            return await super().chat(**kwargs)
+            return await super().chat(task, messages, **kwargs)
 
     run_id = await _new_run(session_factory, alice.workspace_id, RunStatus.queued)
     llm = StopDuringCall(reply(None, tool_call("list_fake_services")), reply("done"))

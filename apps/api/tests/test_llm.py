@@ -1,21 +1,23 @@
-"""LLM layer tests. HTTP is mocked at the transport level: nothing reaches Token Factory."""
+"""TokenFactory over a mocked HTTP transport: what is sent on the wire and how replies parse.
+
+Nothing reaches Token Factory: httpx2.MockTransport answers every request.
+"""
 
 import json
-from decimal import Decimal
 from typing import Any
 
+import httpx
 import httpx2
 import pytest
 from pydantic import SecretStr
 
 from app.config import Settings
-from app.db.models import Run, RunStep, Workspace
-from app.db.session import SessionFactory
-from app.llm.budget import BudgetExceededError, check_budget
-from app.llm.client import LLMError, TokenFactoryClient, wire_messages
-from app.llm.costs import estimate_cost
-from app.llm.router import ModelNotConfiguredError, TaskType, Tier, route
+from app.llm.budget import MemoryUsageStore, RunBudget
+from app.llm.client import LLMError, TokenFactory, wire_messages
+from app.llm.router import Task
 from app.llm.tool_calls import parse_text_tool_calls
+
+pytestmark = pytest.mark.anyio
 
 TOOLS = [
     {
@@ -27,12 +29,14 @@ TOOLS = [
         },
     }
 ]
+SECRET = "sk-test-secret-key-1234567890"  # noqa: S105
+MESSAGES = [{"role": "user", "content": "List the services"}]
 
 
 def _settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "token_factory_base_url": "http://token-factory.invalid/v1",
-        "token_factory_api_key": SecretStr("sk-test-secret-key-1234567890"),
+        "token_factory_api_key": SecretStr(SECRET),
         "model_nano": "m/nano",
         "model_super": "m/super",
         "model_ultra": "m/ultra",
@@ -58,7 +62,9 @@ def _completion(message: dict[str, Any], finish_reason: str = "stop") -> dict[st
     }
 
 
-def _client(responses: list[httpx2.Response], seen: list[httpx2.Request]) -> TokenFactoryClient:
+def _client(
+    responses: list[httpx2.Response], seen: list[httpx2.Request], **overrides: Any
+) -> TokenFactory:
     queue = list(responses)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -66,41 +72,52 @@ def _client(responses: list[httpx2.Response], seen: list[httpx2.Request]) -> Tok
         return queue.pop(0)
 
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    return TokenFactoryClient(_settings(), http_client=http_client, retry_delay_seconds=0)
+    return TokenFactory(_settings(**overrides), http_client=http_client, retry_base_seconds=0)
 
 
-MESSAGES = [{"role": "user", "content": "List the services"}]
+def _budget(**overrides: Any) -> RunBudget:
+    return RunBudget(usage=MemoryUsageStore(), settings=_settings(**overrides))
 
 
-@pytest.mark.anyio
-async def test_native_tool_call() -> None:
+async def test_native_tool_call_and_wire_format() -> None:
     seen: list[httpx2.Request] = []
-    body = _completion(
-        {
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {"name": "restart_fake_service", "arguments": '{"name": "api"}'},
-                }
-            ],
-        },
-        "tool_calls",
-    )
+    call = {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "restart_fake_service", "arguments": '{"name": "api"}'},
+    }
+    body = _completion({"content": None, "tool_calls": [call]}, "tool_calls")
     client = _client([httpx2.Response(200, json=body)], seen)
-    resp = await client.chat(model_id="m/nano", messages=MESSAGES, tools=TOOLS)
+    resp = await client.chat(Task.tool_step, MESSAGES, budget=_budget(), tools=TOOLS)
 
     assert [(c.id, c.name, c.arguments) for c in resp.tool_calls] == [
         ("call_1", "restart_fake_service", {"name": "api"})
     ]
-    assert not resp.tool_calls_from_text
     assert (resp.prompt_tokens, resp.completion_tokens) == (50, 7)
     sent = json.loads(seen[0].content)
-    assert sent["model"] == "m/nano" and sent["tools"] and sent["max_tokens"] == 4096
+    assert sent["model"] == "m/super"  # tool_step routes to Super
+    assert sent["max_tokens"] == 1500  # the route's cap
+    assert (sent["temperature"], sent["top_p"]) == (1.0, 0.95)  # NVIDIA's Nemotron 3 sampling
+    assert sent["chat_template_kwargs"] == {"enable_thinking": False}
+    assert sent["tool_choice"] == "auto" and sent["tools"]
 
 
-@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        (Task.summarize_graph, {"enable_thinking": False}),
+        (Task.detect_app_spec, {"enable_thinking": True, "low_effort": True}),
+        (Task.fix_build, {"enable_thinking": True}),
+    ],
+)
+async def test_reasoning_mode_on_the_wire(task: Task, expected: dict[str, Any]) -> None:
+    seen: list[httpx2.Request] = []
+    client = _client([httpx2.Response(200, json=_completion({"content": "ok"}))], seen)
+    resp = await client.chat(task, MESSAGES, budget=_budget())
+    assert json.loads(seen[0].content)["chat_template_kwargs"] == expected
+    assert resp.reasoning_mode is not None
+
+
 async def test_text_tool_call_fallback() -> None:
     seen: list[httpx2.Request] = []
     content = (
@@ -108,13 +125,13 @@ async def test_text_tool_call_fallback() -> None:
         '<tool_call>{"name": "restart_fake_service", "arguments": {"name": "api"}}</tool_call>'
     )
     client = _client([httpx2.Response(200, json=_completion({"content": content}))], seen)
-    resp = await client.chat(model_id="m/nano", messages=MESSAGES, tools=TOOLS)
-
+    resp = await client.chat(Task.summarize, MESSAGES, budget=_budget(), tools=TOOLS)
     assert resp.tool_calls_from_text
     assert [(c.name, c.arguments) for c in resp.tool_calls] == [
         ("restart_fake_service", {"name": "api"})
     ]
     assert resp.content is None
+    assert resp.reasoning == "I should restart it."
 
 
 @pytest.mark.parametrize(
@@ -137,61 +154,66 @@ def test_text_fallback_ignores_unknown_tools_and_plain_json() -> None:
     assert parse_text_tool_calls('The config is {"replicas": 3}.', ["restart"]) == []
 
 
-@pytest.mark.anyio
-async def test_plain_answer_strips_reasoning() -> None:
+@pytest.mark.parametrize(
+    ("message", "trace"),
+    [
+        ({"content": "<think>hmm</think>All done."}, "hmm"),
+        ({"content": "All done.", "reasoning_content": "hmm"}, "hmm"),
+        ({"content": "All done.", "reasoning": "hmm"}, "hmm"),
+        ({"content": "hmm</think>All done."}, "hmm"),  # template opened the think block
+    ],
+)
+async def test_reasoning_trace_captured_from_any_field(message: dict[str, Any], trace: str) -> None:
     seen: list[httpx2.Request] = []
-    body = _completion({"content": "<think>hmm</think>All done."})
-    client = _client([httpx2.Response(200, json=body)], seen)
-    resp = await client.chat(model_id="m/nano", messages=MESSAGES, tools=TOOLS)
-    assert resp.content == "All done." and resp.tool_calls == []
+    client = _client([httpx2.Response(200, json=_completion(message))], seen)
+    resp = await client.chat(Task.summarize, MESSAGES, budget=_budget())
+    assert resp.content == "All done."
+    assert resp.reasoning == trace
 
 
-@pytest.mark.anyio
-async def test_retries_once_on_429_then_succeeds() -> None:
+async def test_retries_429_with_backoff_then_succeeds() -> None:
     seen: list[httpx2.Request] = []
     client = _client(
         [
             httpx2.Response(429, json={"error": {"message": "slow down"}}),
+            httpx2.Response(500, json={"error": {"message": "oops"}}),
             httpx2.Response(200, json=_completion({"content": "ok"})),
         ],
         seen,
     )
-    resp = await client.chat(model_id="m/nano", messages=MESSAGES)
-    assert resp.content == "ok" and len(seen) == 2
+    resp = await client.chat(Task.summarize, MESSAGES, budget=_budget())
+    assert resp.content == "ok" and resp.attempts == 3 and len(seen) == 3
 
 
-@pytest.mark.anyio
-async def test_gives_up_after_one_retry_and_redacts() -> None:
+async def test_gives_up_after_max_attempts_and_redacts() -> None:
     seen: list[httpx2.Request] = []
-    error = {"error": {"message": "bad key sk-test-secret-key-1234567890"}}
-    client = _client([httpx2.Response(503, json=error), httpx2.Response(503, json=error)], seen)
+    error = {"error": {"message": f"bad key {SECRET}"}}
+    client = _client([httpx2.Response(503, json=error) for _ in range(3)], seen)
     with pytest.raises(LLMError) as exc_info:
-        await client.chat(model_id="m/nano", messages=MESSAGES)
-    assert len(seen) == 2
-    assert "sk-test-secret-key-1234567890" not in str(exc_info.value)
+        await client.chat(Task.summarize, MESSAGES, budget=_budget())
+    assert len(seen) == 3  # LLM_MAX_ATTEMPTS, no fallback on this route
+    assert SECRET not in str(exc_info.value)
     assert "List the services" not in str(exc_info.value)
 
 
-@pytest.mark.anyio
-async def test_no_retry_on_400() -> None:
+async def test_no_retry_and_no_fallback_on_400() -> None:
     seen: list[httpx2.Request] = []
     client = _client([httpx2.Response(400, json={"error": {"message": "bad"}})], seen)
     with pytest.raises(LLMError):
-        await client.chat(model_id="m/nano", messages=MESSAGES)
+        # detect_app_spec has a fallback tier, but a 400 is not worth retrying anywhere.
+        await client.chat(Task.detect_app_spec, MESSAGES, budget=_budget())
     assert len(seen) == 1
 
 
-@pytest.mark.anyio
 async def test_length_is_returned_with_usage_not_raised() -> None:
-    # The agent loop records the tokens, then decides what a cut-off response means.
+    # The caller records the tokens, then decides what a cut-off response means.
     seen: list[httpx2.Request] = []
     body = _completion({"content": ""}, "length")
     client = _client([httpx2.Response(200, json=body)], seen)
-    resp = await client.chat(model_id="m/nano", messages=MESSAGES)
+    resp = await client.chat(Task.summarize, MESSAGES, budget=_budget())
     assert resp.truncated and resp.content is None and resp.completion_tokens > 0
 
 
-@pytest.mark.anyio
 async def test_invalid_native_arguments_are_kept_raw() -> None:
     seen: list[httpx2.Request] = []
     call = {
@@ -201,17 +223,18 @@ async def test_invalid_native_arguments_are_kept_raw() -> None:
     }
     body = _completion({"content": None, "tool_calls": [call]}, "length")
     client = _client([httpx2.Response(200, json=body)], seen)
-    resp = await client.chat(model_id="m/nano", messages=MESSAGES, tools=TOOLS)
+    resp = await client.chat(Task.summarize, MESSAGES, budget=_budget(), tools=TOOLS)
     [parsed] = resp.tool_calls
     assert parsed.arguments == {} and parsed.arguments_error
     assert parsed.raw_arguments == '{"name": "ap'
 
 
-def test_private_keys_are_not_sent_to_the_provider() -> None:
+def test_private_keys_and_reasoning_are_not_sent_to_the_provider() -> None:
     messages: list[dict[str, Any]] = [
         {
             "role": "assistant",
-            "content": None,
+            "content": "ok",
+            "reasoning_content": "secret thoughts",
             "tool_calls": [
                 {
                     "id": "c1",
@@ -224,97 +247,47 @@ def test_private_keys_are_not_sent_to_the_provider() -> None:
         }
     ]
     [wire] = wire_messages(messages)
+    assert "reasoning_content" not in wire
     assert wire["tool_calls"] == [
         {"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}
     ]
     assert "x_raw_arguments" in messages[0]["tool_calls"][0]  # the stored copy is unchanged
 
 
-@pytest.mark.anyio
-async def test_reasoning_off_sends_enable_thinking_false() -> None:
-    seen: list[httpx2.Request] = []
-    responses = [httpx2.Response(200, json=_completion({"content": "ok"})) for _ in range(2)]
-    client = _client(responses, seen)
-    await client.chat(model_id="m/nano", messages=MESSAGES, reasoning=False)
-    await client.chat(model_id="m/nano", messages=MESSAGES)
-    off, on = (json.loads(r.content) for r in seen)
-    assert off["chat_template_kwargs"] == {"enable_thinking": False}
-    assert "chat_template_kwargs" not in on
+async def test_missing_config_is_a_clear_error() -> None:
+    with pytest.raises(LLMError, match="TOKEN_FACTORY_API_KEY"):
+        TokenFactory(_settings(token_factory_api_key=None))
 
 
-def test_reasoning_tiers() -> None:
-    assert not route(TaskType.summarize, _settings()).reasoning
-    assert not route(TaskType.plan, _settings()).reasoning
-    assert route(TaskType.root_cause, _settings()).reasoning
-    assert route(TaskType.summarize, _settings(llm_reasoning_tiers="nano, ultra")).reasoning
-    assert not route(TaskType.root_cause, _settings(llm_reasoning_tiers="")).reasoning
-    with pytest.raises(ValueError, match="unknown tiers"):
-        route(TaskType.plan, _settings(llm_reasoning_tiers="mega"))
+async def test_rerank_posts_documented_body() -> None:
+    seen: list[httpx.Request] = []
 
-
-def test_router_defaults_and_no_ultra() -> None:
-    settings = _settings()
-    assert route(TaskType.classify, settings).tier == Tier.nano
-    assert route(TaskType.plan, settings).model_id == "m/super"
-    assert route(TaskType.root_cause, settings).tier == Tier.ultra
-    downgraded = route(TaskType.root_cause, _settings(dev_mode_no_ultra=True))
-    assert (downgraded.tier, downgraded.model_id) == (Tier.super, "m/super")
-    with pytest.raises(ModelNotConfiguredError, match="MODEL_NANO"):
-        route(TaskType.detect, _settings(model_nano=None))
-
-
-def test_cost_estimate() -> None:
-    priced = _settings(price_nano_input_per_m=0.06, price_nano_output_per_m=0.24)
-    assert estimate_cost(Tier.nano, 1_000_000, 500_000, priced) == Decimal("0.180000")
-    assert estimate_cost(Tier.super, 1000, 1000, priced) is None
-    assert estimate_cost(Tier.nano, 1000, 1000, _settings(price_nano_input_per_m=0.06)) is None
-
-
-async def _run_with_steps(
-    sf: SessionFactory, ws: Workspace, tokens: int, tier: Tier = Tier.nano
-) -> Run:
-    async with sf() as session:
-        run = Run(workspace_id=ws.id, agent="echo_ops", goal="g", prompt_tokens=tokens)
-        session.add(run)
-        await session.flush()
-        session.add(
-            RunStep(
-                run_id=run.id,
-                seq=1,
-                agent="echo_ops",
-                kind="llm",
-                model_tier=tier,
-                prompt_tokens=tokens,
-                completion_tokens=0,
-            )
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"index": 1, "relevance_score": 0.2, "document": {"text": "b"}},
+                    {"index": 0, "relevance_score": 0.9, "document": {"text": "a"}},
+                ],
+                "usage": {"total_tokens": 40},
+            },
         )
-        await session.commit()
-        return run
 
-
-@pytest.mark.anyio
-async def test_budget_checks(session_factory: SessionFactory, workspace: Workspace) -> None:
-    run = await _run_with_steps(session_factory, workspace, 900, Tier.ultra)
-    small = {"llm_min_completion_tokens": 50}
-    async with session_factory() as session:
-        cap = await check_budget(
-            session, run, Tier.nano, _settings(max_tokens_per_run=1000, **small)
-        )
-        assert cap == 100  # 1000 - 900 used
-        cap = await check_budget(
-            session, run, Tier.nano, _settings(max_tokens_per_run=1000, **small), prompt_tokens=30
-        )
-        assert cap == 70  # the prompt counts against what is left
-        cap = await check_budget(session, run, Tier.nano, _settings(llm_max_tokens=64, **small))
-        assert cap == 64  # never more than LLM_MAX_TOKENS
-        with pytest.raises(BudgetExceededError, match="not enough left"):
-            await check_budget(session, run, Tier.nano, _settings(max_tokens_per_run=1000))
-        with pytest.raises(BudgetExceededError, match="MAX_TOKENS_PER_RUN"):
-            await check_budget(session, run, Tier.nano, _settings(max_tokens_per_run=900))
-        with pytest.raises(BudgetExceededError, match="DAILY_TOKEN_BUDGET"):
-            await check_budget(session, run, Tier.nano, _settings(daily_token_budget=1200))
-        with pytest.raises(BudgetExceededError, match="DAILY_TOKEN_BUDGET"):
-            await check_budget(session, run, Tier.nano, _settings(daily_token_budget=500))
-        with pytest.raises(BudgetExceededError, match="MAX_ULTRA_CALLS"):
-            await check_budget(session, run, Tier.ultra, _settings(max_ultra_calls_per_incident=1))
-        await check_budget(session, run, Tier.nano, _settings(max_ultra_calls_per_incident=1))
+    client = TokenFactory(
+        _settings(model_rerank="r/model", price_rerank_per_m=0.05),
+        rerank_http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    usage = MemoryUsageStore()
+    ranked = await client.rerank("db cpu spike", ["a", "b"], usage=usage)
+    assert ranked == [(0, 0.9), (1, 0.2)]
+    [request] = seen
+    assert str(request.url) == "http://token-factory.invalid/v1/rerank"
+    assert json.loads(request.content) == {
+        "model": "r/model",
+        "query": "db cpu spike",
+        "documents": ["a", "b"],
+    }
+    assert request.headers["authorization"] == f"Bearer {SECRET}"
+    assert usage.tokens_today == 40

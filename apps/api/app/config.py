@@ -34,25 +34,40 @@ class Settings(BaseSettings):
     model_super: str | None = None
     model_ultra: str | None = None
     model_embed: str | None = None
+    # Reranker on Token Factory (POST /v1/rerank). Unset = rerank keeps the input order.
+    model_rerank: str | None = None
+    # Context window per tier, in tokens. Nano's 32k is the conservative listing; the probe
+    # (scripts/probe_token_factory.py) confirms the real sizes.
+    llm_context_nano: int = 32_000
+    llm_context_super: int = 256_000
+    llm_context_ultra: int = 256_000
 
     # LLM calls
-    llm_timeout_seconds: float = 60.0
+    llm_timeout_seconds: float = 120.0
+    # Tries per model for 429, 5xx, and connection errors (a timeout is retried once at most,
+    # because a timed-out request may still be billed). Backoff: base * 2**n plus jitter.
+    llm_max_attempts: int = 3
+    llm_retry_base_seconds: float = 1.0
+    # Max completion tokens for agent-loop steps on the generic task types (Echo Ops).
+    # Pipeline tasks (Scout, Builder, Deployer) set their own limit in app/llm/router.py.
     llm_max_tokens: int = 4096
     # A call is not made if budgets leave less than this for the completion (reasoning included)
     llm_min_completion_tokens: int = 512
-    # Tiers that reason before answering (comma separated). Others send enable_thinking=false,
-    # which cut a tiny test reply from 20+ tokens to 2 on all three Nemotron models.
-    llm_reasoning_tiers: str = "ultra"
     # Use Super wherever Ultra would be used (Ultra credits are limited)
     dev_mode_no_ultra: bool = False
 
-    # Optional prices in USD per million tokens. Unset means cost is not estimated.
-    price_nano_input_per_m: float | None = None
-    price_nano_output_per_m: float | None = None
-    price_super_input_per_m: float | None = None
-    price_super_output_per_m: float | None = None
-    price_ultra_input_per_m: float | None = None
-    price_ultra_output_per_m: float | None = None
+    # Prices in USD per million tokens. Defaults are from a third-party listing (Oct 2026),
+    # UNVERIFIED: set the real ones from the Token Factory pricing page. A model with no price
+    # is never called, so spend is always counted.
+    price_nano_input_per_m: float | None = 0.06
+    price_nano_output_per_m: float | None = 0.24
+    price_super_input_per_m: float | None = 0.30
+    price_super_output_per_m: float | None = 0.90
+    price_ultra_input_per_m: float | None = 1.00
+    price_ultra_output_per_m: float | None = 3.00
+    # Embedding and rerank prices per million input tokens. No default: unset means not called.
+    price_embed_per_m: float | None = None
+    price_rerank_per_m: float | None = None
 
     # External services
     tavily_api_key: SecretStr | None = None
@@ -69,11 +84,18 @@ class Settings(BaseSettings):
     github_app_private_key_path: Path | None = None
     github_webhook_secret: SecretStr | None = None
 
-    # Budgets and agent limits. Unset daily budget or Ultra limit means no limit.
+    # Spend caps in USD, counted in the llm_usage table. The total cap is the hard stop for the
+    # whole hackathon (credits are about $30). Hosted demo: set LLM_DAILY_USD_CAP=0.50.
+    llm_run_usd_cap: float = 0.40
+    llm_daily_usd_cap: float = 2.00
+    llm_total_usd_cap: float = 25.0
+
+    # Token and call limits. Unset daily token budget or per-incident Ultra limit = no limit.
     daily_token_budget: int | None = None
     max_ultra_calls_per_incident: int | None = None
+    max_ultra_calls_per_run: int = 3
     max_steps_per_run: int = 12
-    max_tokens_per_run: int = 60_000
+    max_tokens_per_run: int = 400_000
 
     # Worker and live updates
     worker_poll_interval_seconds: float = 1.0
