@@ -85,6 +85,16 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = None
     secrets_key: SecretStr | None = None
 
+    # Repositories (Phase 4 before the GitHub App lands): local paths or public git URLs.
+    # Optional token for private HTTPS clones; sent as an HTTP header through git's environment,
+    # never in the URL or on the command line.
+    git_clone_token: SecretStr | None = None
+    git_clone_timeout_seconds: float = 120.0
+    # A clone bigger than this (on disk) is refused and deleted.
+    repo_max_bytes: int = 300_000_000
+    # Where clones go (a temp dir per clone, always removed). Unset = the system temp dir.
+    repo_workdir: Path | None = None
+
     # Vector size of incidents.embedding. Changing it needs a new migration.
     embed_dim: int = 1024
 

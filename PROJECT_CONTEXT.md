@@ -165,6 +165,10 @@ MODEL_LIGHTNING=              # [nvidia/Nemotron-3_5-Lightning] routes switch on
 MODEL_EMBED=                  # [Qwen/Qwen3-Embedding-8B] returns 4096 dims; cut to EMBED_DIM and re-normalised
 EMBED_DIM=                    # [1024] incidents.embedding size; changing it needs a migration
 MODEL_RERANK=                 # e.g. Qwen/Qwen3-Reranker-8B; unset = rerank keeps input order
+GIT_CLONE_TOKEN=              # optional, for private HTTPS clones; sent via git's environment
+GIT_CLONE_TIMEOUT_SECONDS=    # [120]
+REPO_MAX_BYTES=               # [300000000] bigger clones are refused and deleted
+REPO_WORKDIR=                 # [system temp] parent dir for temporary clones
 LLM_CONTEXT_NANO=             # [8000] usable context: accepts 65k, answers wrong from ~20k
 LLM_CONTEXT_SUPER=            # [256000]
 LLM_CONTEXT_ULTRA=            # [256000]
@@ -391,6 +395,10 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] Follow-up config: usable context Nano 8,000 / Lightning 64,000 (oversize prompts go to the fallback tier),
         Lightning routes for tool_step / investigate_step / verify_recovery that switch on with its price, no
         `low` on Ultra or Lightning, every enum must allow `other`; `FEEDBACK.md` started
+  - [x] Step 2: Repo source. `RepoSource` protocol with `LocalPathSource` and `GitCloneSource` (https only,
+        shallow, token via git's environment, size cap, always cleaned up); read-tier `list_files` and
+        `read_file` tools: sorted output, caps on entries, lines, and bytes, truncation markers, .gitignore
+        respected, secret files and paths outside the repo refused, excerpts redacted
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission
@@ -426,6 +434,9 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-07 | Repo tools return capped, sorted text with explicit truncation markers; secret files (.env, keys) are listed by name only and never read | Model-facing output must be small and deterministic: predictable token costs and stable FakeLLM tests |
+| 2026-10-07 | `GitCloneSource` takes https URLs only and sends `GIT_CLONE_TOKEN` as a header through git's environment | No ssh/file/ext transports or option injection; the token never appears in a URL, argv, or error |
+| 2026-10-07 | `pathspec` for .gitignore rules | Exact git semantics (negation, anchors, nested files) without shelling out to git for local paths |
 | 2026-10-07 | `LLM_CONTEXT_*` is the *usable* context (Nano 8,000, Lightning 64,000); bigger prompts go to the route's fallback tier | Probe: Nano accepted 65k tokens but answered wrong from ~20k; Lightning was right at 60k |
 | 2026-10-07 | tool_step, investigate_step (fallback Super) and verify_recovery (fallback Nano) move to Lightning, reasoning off, automatically once `PRICE_LIGHTNING_*` is set | Lightning ran a tool loop exactly right at Nano-like latency; it is never called while its cost cannot be counted |
 | 2026-10-07 | Ultra and Lightning never use reasoning `low` | It saved little (Ultra) or cost more (Lightning 603 vs 460 tokens) |

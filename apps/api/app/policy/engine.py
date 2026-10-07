@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -116,8 +117,10 @@ async def handle_tool_call(
     spec: ToolSpec,
     args: BaseModel,
     tool_call_id: str,
+    *,
+    repo_root: Path | None = None,
 ) -> ToolOutcome:
-    ctx = ToolContext(run_id=run.id, workspace_id=run.workspace_id)
+    ctx = ToolContext(run_id=run.id, workspace_id=run.workspace_id, repo_root=repo_root)
     if spec.policy == ToolPolicy.read:
         return Executed(await execute_tool(session, ctx, spec, args))
 

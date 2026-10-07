@@ -17,6 +17,7 @@ dependencies = [
     "pgvector",
     "cryptography",
     "pyjwt>=2.15.1",
+    "pathspec",
 ]
 
 [dependency-groups]
