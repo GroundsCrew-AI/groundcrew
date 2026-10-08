@@ -24,6 +24,7 @@ from app.agents.scout.summary import ResourceSummary
 from app.db.models import Edge, Resource
 from app.discovery.types import DiscoveredResource
 from app.graph.edges import Confidence, EdgeKind, InferredEdge, key
+from app.graph.roles import role
 
 TOKEN_CAP = 6_000
 CHARS_PER_TOKEN = 4
@@ -42,6 +43,28 @@ _RELATION_KINDS = {
 }
 
 
+# Short type names for relation targets, so "pulls_from checkout-worker" cannot be read as
+# the checkout-worker service.
+_TYPE_NAMES = {
+    "ecs:service": "ECS service",
+    "ecs:cluster": "ECS cluster",
+    "ecr:repository": "ECR image repository",
+    "rds:db": "RDS database",
+    "secretsmanager:secret": "secret",
+    "logs:log-group": "log group",
+    "github:workflow": "GitHub workflow",
+    "github:repository": "GitHub repository",
+    "vercel:project": "Vercel project",
+    "vercel:deployment": "Vercel deployment",
+    "lambda:function": "Lambda function",
+    "s3:bucket": "S3 bucket",
+}
+
+
+def _type_name(rtype: str) -> str:
+    return _TYPE_NAMES.get(rtype, rtype)
+
+
 def _notes(r: DiscoveredResource) -> str | None:
     c = r.config
     parts: list[str] = []
@@ -57,9 +80,16 @@ def _notes(r: DiscoveredResource) -> str | None:
             parts.append("public task IP")
         if not c.get("has_load_balancer"):
             parts.append("no load balancer")
-        tags = {x.get("image_tag") for x in c.get("containers") or []} - {None}
-        if tags:
-            parts.append("image tag " + ", ".join(str(t)[:12] for t in sorted(tags)))
+        images = sorted(
+            {
+                f"{x.get('image_repository')}:{str(x.get('image_tag') or '')[:12]}"
+                for x in c.get("containers") or []
+                if x.get("image_repository")
+            }
+        )
+        if images:
+            # Explicit, so the model does not guess that services share an image.
+            parts.append("own image " + ", ".join(images))
     elif r.type == "rds:db":
         parts.append(f"{c.get('engine')} {c.get('engine_version')}")
         parts.append("public" if c.get("publicly_accessible") else "private")
@@ -175,9 +205,16 @@ def digest(
     folding can get it there (Scout drops whatever still does not fit, and says so)."""
     by_key = {key(r): r for r in resources}
     relations: dict[str, list[str]] = defaultdict(list)
+    linked: set[str] = set()
     for e in edges:
         if e.kind in _RELATION_KINDS and e.target in by_key and e.confidence != Confidence.low:
-            relations[e.source].append(f"{e.kind.value} {by_key[e.target].name}")
+            target = by_key[e.target]
+            relations[e.source].append(f"{e.kind.value} {target.name} ({_type_name(target.type)})")
+        if e.kind != EdgeKind.defined_in:
+            linked |= {e.source, e.target}
+    # Tooling (state buckets, template buckets, Groundcrew's role) is not part of the app:
+    # left out unless an edge says the app uses it.
+    resources = [r for r in resources if role(r) == "app" or key(r) in linked]
     risk_notes: dict[str, list[str]] = defaultdict(list)
     for risk in risks:
         risk_notes[risk.resource].append(risk.text)

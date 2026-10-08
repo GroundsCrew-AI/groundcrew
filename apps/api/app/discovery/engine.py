@@ -54,6 +54,7 @@ from app.graph.coverage import coverage
 from app.graph.digest import digest, find_risks
 from app.graph.edges import DECLARED_KEY, EdgeResult, infer_edges, key
 from app.graph.sink import SINK_RULE
+from app.graph.summary_check import check_summary
 from app.llm.budget import PgUsageStore, RunBudget
 from app.llm.client import ChatModel, TokenFactory
 from app.llm.recorder import StepRecorder
@@ -549,6 +550,13 @@ class DiscoveryEngine:
                     digest(resources, edges.edges, risks=found),
                     on_call=StepRecorder(session, run, "scout"),
                 )
+                checked = check_summary(text, resources, edges.edges)
+                text = checked.text
+                for bullet, why in checked.dropped:
+                    await steps(
+                        "check_summary",
+                        f"Dropped from the summary because {why}: {bullet}",
+                    )
             except Exception as exc:
                 error = summarize(f"{type(exc).__name__}: {exc}", 500)
                 await session.rollback()

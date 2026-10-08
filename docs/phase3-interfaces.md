@@ -235,6 +235,29 @@ and no risks become one line per provider and type, then everything does. No ARN
 or secrets reach the model. Discovery stores `workspaces.settings.system_summary = {text,
 risks, generated_at, run_id, error}`.
 
+### Summary safety (our side) and a proposed prompt tweak for Ahmed
+
+The live run showed Nano inventing links: the api and worker "store state in S3 buckets" (the
+Terraform state bucket and the CloudFormation template bucket, both unrelated to the app) and
+the worker "uses the same image" (it has its own `checkout-worker` image). Without editing
+`agents/`, Phase 3 now:
+
+- marks tooling with `app.graph.roles.role()` (Terraform state and lock stores, the template
+  bucket, Groundcrew's own role, Resource Explorer) and leaves it out of the digest unless an
+  edge connects it to the app;
+- states facts explicitly: `own image <repo>:<tag>` per service, and relations with the
+  target's type (`pulls_from checkout-worker (ECR image repository)`);
+- checks every summary bullet against the graph (`app.graph.summary_check.check_summary`)
+  and drops bullets that name unlinked tooling, claim a kind of resource the app does not
+  have, say services share an image when they do not, or relate a resource with no edges.
+  Each dropped bullet is a `check_summary` step in the discovery run.
+
+**Proposed tweak to `SYSTEM_PROMPT` in `agents/scout/summary.py` (Ahmed's call):** append
+"Only state a relationship that appears in a resource's `relations`. Do not say two
+resources share anything (an image, a bucket, a secret) unless both list it. Never describe
+what a resource stores or contains; the input has no such facts." This removes the need for
+most of the post-check; we would keep the check as a guard.
+
 ## Clients
 
 - AWS `app/connectors/aws.py`: `AwsReader(session).call/paginate` only in

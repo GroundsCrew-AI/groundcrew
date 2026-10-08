@@ -317,3 +317,24 @@ async def test_worker_runs_discovery_jobs(
     async with session_factory() as s:
         done = await s.get(Run, run.id)
         assert done is not None and done.status == RunStatus.succeeded and done.agent == "discovery"
+
+
+async def test_unsupported_summary_bullets_are_dropped_and_recorded(
+    session_factory: SessionFactory, workspace: Workspace, inventory: Inventory
+) -> None:
+    await _connections(session_factory, workspace)
+    text = SUMMARY + "\n- checkout-worker uses the same image as checkout-api"
+    run = await _discover(
+        session_factory, workspace, inventory, llm=FakeLLM(reply(text), settings=_settings())
+    )
+    async with session_factory() as s:
+        ws = await s.get(Workspace, workspace.id)
+        assert ws is not None and ws.settings["system_summary"]["text"] == SUMMARY
+        steps = list(
+            await s.scalars(
+                select(RunStep).where(
+                    RunStep.run_id == run.id, RunStep.tool_name == "check_summary"
+                )
+            )
+        )
+        assert len(steps) == 1 and "same image" in (steps[0].output_summary or "")

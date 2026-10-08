@@ -594,8 +594,8 @@ async def test_digest_is_compact_and_named() -> None:
     lines = digest(resources, infer_edges(resources, repos).edges)
     api = next(line for line in lines if line.name == "checkout-api" and line.type == "ecs:service")
     assert (
-        "reads checkout-orders-db" in api.relations
-        and "deployed_by deploy (deploy.yml)" in api.relations
+        "reads checkout-orders-db (RDS database)" in api.relations
+        and "deployed_by deploy (deploy.yml) (GitHub workflow)" in api.relations
     )
     assert api.notes and "no load balancer" in api.notes
     assert not any(line.type in ("ec2:security-group", "iam:role") for line in lines)
@@ -635,5 +635,45 @@ def test_digest_is_deterministic_and_folds_to_fit() -> None:
     assert items == digest(list(reversed([*many, api, db])), [edge], token_cap=1_000)
     folded = next(i for i in items if i.type == "lambda:function")
     assert folded.name == "400 x lambda:function" and folded.notes
-    assert any(i.name == "api" and "reads orders" in i.relations for i in items)
+    assert any(i.name == "api" and "reads orders (RDS database)" in i.relations for i in items)
     assert sum(len(i.model_dump_json()) for i in items) < 1_000 * 4
+
+
+# --- summary check ----------------------------------------------------------------------
+
+LIVE_SUMMARY = """\
+- The checkout-api has no load balancer; clients reach it directly on the task's public IP.
+- It is an ECS service in the `checkout` cluster, pulling `checkout-api` from ECR.
+- A worker service runs alongside the API in the same cluster, also using the same image and \
+reading the same database secret.
+- `checkout-api` and `checkout-worker` read `checkout-orders-db` via `checkout/database-url`.
+- Both the API and worker store state in S3 buckets (`groundcrew-checkout-tfstate-…` and \
+`groundcrew-templates-…`) for Terraform state and static assets.
+- The services pull images from ECR repositories checkout-api and checkout-worker."""
+
+
+async def test_summary_check_drops_the_live_false_claims() -> None:
+    from app.graph.summary_check import check_summary
+
+    resources, repos = await demo_inventory()
+    resources.append(res("s3:bucket", "groundcrew-templates-881050425883"))
+    edges = infer_edges(resources, repos).edges
+    checked = check_summary(LIVE_SUMMARY, resources, edges)
+    dropped = dict(checked.dropped)
+    assert len(checked.dropped) == 2, checked.dropped
+    assert any("same image" in b for b in dropped) and any("S3 buckets" in b for b in dropped)
+    assert any("different images" in why for why in dropped.values())
+    assert any("is tooling" in why for why in dropped.values())
+    assert "read `checkout-orders-db`" in checked.text and "pull images from ECR" in checked.text
+    assert "S3" not in checked.text and "same image" not in checked.text
+
+
+async def test_digest_leaves_tooling_out_and_states_each_image() -> None:
+    resources, repos = await demo_inventory()
+    resources.append(res("s3:bucket", "groundcrew-templates-881050425883"))
+    edges = infer_edges(resources, repos).edges
+    items = digest(resources, edges)
+    assert not any(i.type == "s3:bucket" for i in items)  # state and template buckets
+    worker = next(i for i in items if i.name == "checkout-worker" and i.type == "ecs:service")
+    assert worker.notes and "own image checkout-worker:cef79e7" in worker.notes
+    assert "pulls_from checkout-worker (ECR image repository)" in worker.relations
