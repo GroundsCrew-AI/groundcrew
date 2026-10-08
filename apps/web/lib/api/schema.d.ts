@@ -24,6 +24,225 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Connections */
+        get: operations["list_connections_connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/aws/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aws Complete
+         * @description Verify the role (refused without the ExternalId, works with it, right account) and
+         *     store its ARN. No credentials are stored.
+         */
+        post: operations["aws_complete_connections_aws_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/aws/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aws Start
+         * @description Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link.
+         */
+        post: operations["aws_start_connections_aws_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/aws/template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Aws Template
+         * @description The CloudFormation template customers deploy (infra/aws-connect.yaml).
+         */
+        get: operations["aws_template_connections_aws_template_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/azure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Azure Connect
+         * @description Preview: stores the service principal (secret encrypted). Live discovery is not built
+         *     yet (TODO(azure-live)); the connection shows as Preview.
+         */
+        post: operations["azure_connect_connections_azure_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Github Link
+         * @description Link repositories of one installation to the workspace (replaces that connection's
+         *     repo list). Only repositories the installation can see are accepted.
+         */
+        post: operations["github_link_connections_github_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/github/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Github Installations
+         * @description Installations of our GitHub App and their repositories, marking the linked ones.
+         */
+        get: operations["github_installations_connections_github_installations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/k8s": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * K8S Connect
+         * @description Preview: stores the kubeconfig encrypted, keeps cluster name and server as config.
+         *     Live discovery is not built yet (TODO(k8s-live)).
+         */
+        post: operations["k8s_connect_connections_k8s_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/vercel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Vercel Connect
+         * @description Check the token (team and projects are readable), then store it encrypted.
+         */
+        post: operations["vercel_connect_connections_vercel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Connection
+         * @description Remove the connection, its stored secret, and every resource it discovered (with their
+         *     edges). Access on the customer's side is removed by them: see `cleanup`.
+         */
+        delete: operations["delete_connection_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connection_id}/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover Connection */
+        post: operations["discover_connection_connections__connection_id__discover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -50,6 +269,23 @@ export interface paths {
         };
         /** Me */
         get: operations["me_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resources/{resource_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Resource */
+        get: operations["get_resource_resources__resource_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -183,6 +419,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspace_id}/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover Workspace
+         * @description Discover every connection, rebuild the graph, and write the system summary. Runs as a
+         *     normal run: open /runs/{id} to watch it live.
+         */
+        post: operations["discover_workspace_workspaces__workspace_id__discover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspace_id}/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Graph
+         * @description Resources and edges. Filters: provider and type (repeatable), include_stale.
+         */
+        get: operations["graph_workspaces__workspace_id__graph_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspace_id}/runs": {
         parameters: {
             query?: never;
@@ -284,6 +561,133 @@ export interface components {
             approval: components["schemas"]["ApprovalOut"] | null;
             step: components["schemas"]["StepOut"];
         };
+        /** AwsCompleteIn */
+        AwsCompleteIn: {
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /** Role Arn */
+            role_arn: string;
+        };
+        /** AwsStartIn */
+        AwsStartIn: {
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** AwsStartOut */
+        AwsStartOut: {
+            /** Cli Command */
+            cli_command: string;
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /** Console Url */
+            console_url: string | null;
+            /** External Id */
+            external_id: string;
+            /** Principal Arn */
+            principal_arn: string;
+            /** Region */
+            region: string;
+            /** Role Arn Command */
+            role_arn_command: string;
+            /** Stack Name */
+            stack_name: string;
+            /** Template Path */
+            template_path: string;
+        };
+        /** AzureConnectIn */
+        AzureConnectIn: {
+            /** Client Id */
+            client_id: string;
+            /** Client Secret */
+            client_secret: string;
+            /** Resource Group */
+            resource_group: string;
+            /** Subscription Id */
+            subscription_id: string;
+            /** Tenant Id */
+            tenant_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** ConnectionDeleted */
+        ConnectionDeleted: {
+            /** Cleanup */
+            cleanup: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Removed Resources */
+            removed_resources: number;
+        };
+        /**
+         * ConnectionKind
+         * @enum {string}
+         */
+        ConnectionKind: "aws" | "github" | "vercel" | "azure" | "k8s";
+        /** ConnectionOut */
+        ConnectionOut: {
+            /** Account */
+            account?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error */
+            error?: string | null;
+            /** External Id */
+            external_id?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["ConnectionKind"];
+            last_discovery?: components["schemas"]["LastDiscovery"] | null;
+            /** Name */
+            name: string;
+            /** Preview */
+            preview: boolean;
+            /** Repos */
+            repos?: string[];
+            /**
+             * Resource Count
+             * @default 0
+             */
+            resource_count: number;
+            /** Resource Group */
+            resource_group?: string | null;
+            /** Role Arn */
+            role_arn?: string | null;
+            /** Server */
+            server?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "connected" | "error";
+            /** Team Id */
+            team_id?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
         /** DecideIn */
         DecideIn: {
             decision: components["schemas"]["Decision"];
@@ -293,6 +697,109 @@ export interface components {
          * @enum {string}
          */
         Decision: "approve" | "reject";
+        /** DeployOut */
+        DeployOut: {
+            /** At */
+            at: string | null;
+            /** Ref */
+            ref: string | null;
+            /** Source */
+            source: string;
+            /** Status */
+            status: string | null;
+            /** Title */
+            title: string | null;
+            /** Url */
+            url: string | null;
+        };
+        /** EdgeOut */
+        EdgeOut: {
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence: "high" | "medium" | "low";
+            /** Evidence */
+            evidence: string;
+            /**
+             * From Id
+             * Format: uuid
+             */
+            from_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Rule */
+            rule: string | null;
+            /**
+             * To Id
+             * Format: uuid
+             */
+            to_id: string;
+        };
+        /** GitHubInstallationOut */
+        GitHubInstallationOut: {
+            /** Account */
+            account: string;
+            /** Id */
+            id: number;
+            /** Repos */
+            repos: components["schemas"]["GitHubRepoOut"][];
+        };
+        /** GitHubInstallationsOut */
+        GitHubInstallationsOut: {
+            /** Configured */
+            configured: boolean;
+            /** Error */
+            error?: string | null;
+            /** Install Url */
+            install_url: string | null;
+            /** Installations */
+            installations: components["schemas"]["GitHubInstallationOut"][];
+        };
+        /** GitHubLinkIn */
+        GitHubLinkIn: {
+            /** Installation Id */
+            installation_id: number;
+            /** Repos */
+            repos: string[];
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** GitHubRepoOut */
+        GitHubRepoOut: {
+            /** Default Branch */
+            default_branch: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Linked */
+            linked: boolean;
+            /** Private */
+            private: boolean;
+        };
+        /** GraphOut */
+        GraphOut: {
+            /** Edges */
+            edges: components["schemas"]["EdgeOut"][];
+            /** Last Run At */
+            last_run_at: string | null;
+            /** Last Run Id */
+            last_run_id: string | null;
+            /** Last Run Status */
+            last_run_status: string | null;
+            /** Nodes */
+            nodes: components["schemas"]["ResourceOut"][];
+            /** Stale Count */
+            stale_count: number;
+            summary: components["schemas"]["SystemSummaryOut"] | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -305,11 +812,188 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** KubernetesConnectIn */
+        KubernetesConnectIn: {
+            /** Kubeconfig */
+            kubeconfig: string;
+            /** Name */
+            name?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** LastDiscovery */
+        LastDiscovery: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Notes */
+            notes?: string[];
+            /** Resources */
+            resources?: number | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Stale */
+            stale?: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "failed";
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
         /** MeOut */
         MeOut: {
             user: components["schemas"]["UserOut"];
             /** Workspaces */
             workspaces: components["schemas"]["WorkspaceOut"][];
+        };
+        /** Neighbor */
+        Neighbor: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /** Type */
+            type: string;
+        };
+        /** ResourceDetail */
+        ResourceDetail: {
+            /** Account */
+            account: string | null;
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /** Connection Id */
+            connection_id: string | null;
+            /**
+             * Coverage
+             * @enum {string}
+             */
+            coverage: "observed" | "diagnosable" | "actionable";
+            /** Edges */
+            edges: components["schemas"]["ResourceEdgeOut"][];
+            /** Facts */
+            facts: string[];
+            /** Iac Path */
+            iac_path: string | null;
+            /** Iac Url */
+            iac_url: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /** Recent Deploys */
+            recent_deploys: components["schemas"]["DeployOut"][];
+            /** Region */
+            region: string | null;
+            /** Repo */
+            repo: string | null;
+            /** Stale */
+            stale: boolean;
+            /** Tags */
+            tags: {
+                [key: string]: string;
+            };
+            /** Type */
+            type: string;
+        };
+        /** ResourceEdgeOut */
+        ResourceEdgeOut: {
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence: "high" | "medium" | "low";
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "out" | "in";
+            /** Evidence */
+            evidence: string;
+            /**
+             * From Id
+             * Format: uuid
+             */
+            from_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            other: components["schemas"]["Neighbor"];
+            /** Rule */
+            rule: string | null;
+            /**
+             * To Id
+             * Format: uuid
+             */
+            to_id: string;
+        };
+        /** ResourceOut */
+        ResourceOut: {
+            /** Account */
+            account: string | null;
+            /** Connection Id */
+            connection_id: string | null;
+            /**
+             * Coverage
+             * @enum {string}
+             */
+            coverage: "observed" | "diagnosable" | "actionable";
+            /** Facts */
+            facts: string[];
+            /** Iac Path */
+            iac_path: string | null;
+            /** Iac Url */
+            iac_url: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /** Region */
+            region: string | null;
+            /** Repo */
+            repo: string | null;
+            /** Stale */
+            stale: boolean;
+            /** Type */
+            type: string;
         };
         /** RunCreate */
         RunCreate: {
@@ -541,6 +1225,19 @@ export interface components {
             /** Token */
             token: string;
         };
+        /** SystemSummaryOut */
+        SystemSummaryOut: {
+            /** Error */
+            error?: string | null;
+            /** Generated At */
+            generated_at: string | null;
+            /** Risks */
+            risks: string[];
+            /** Run Id */
+            run_id: string | null;
+            /** Text */
+            text: string | null;
+        };
         /**
          * ToolPolicy
          * @enum {string}
@@ -574,6 +1271,18 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** VercelConnectIn */
+        VercelConnectIn: {
+            /** Team Id */
+            team_id?: string | null;
+            /** Token */
+            token: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /** WorkspaceOut */
         WorkspaceOut: {
@@ -658,6 +1367,379 @@ export interface operations {
             };
         };
     };
+    list_connections_connections_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_complete_connections_aws_complete_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AwsCompleteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_start_connections_aws_start_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AwsStartIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AwsStartOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_template_connections_aws_template_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    azure_connect_connections_azure_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AzureConnectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_link_connections_github_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubLinkIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_installations_connections_github_installations_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubInstallationsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    k8s_connect_connections_k8s_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesConnectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vercel_connect_connections_vercel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VercelConnectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_connection_connections__connection_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_connection_connections__connection_id__discover_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_health_get: {
         parameters: {
             query?: never;
@@ -696,6 +1778,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_resource_resources__resource_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                resource_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceDetail"];
                 };
             };
             /** @description Validation Error */
@@ -906,6 +2021,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_workspace_workspaces__workspace_id__discover_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_workspaces__workspace_id__graph_get: {
+        parameters: {
+            query?: {
+                provider?: string[] | null;
+                type?: string[] | null;
+                include_stale?: boolean;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphOut"];
                 };
             };
             /** @description Validation Error */
