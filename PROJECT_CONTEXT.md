@@ -400,7 +400,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] API: connections, graph, resources; web types regenerated
   - [x] Web: Connections (AWS flow, GitHub picker, Vercel token, Azure / K8s Preview) and Map (React Flow +
         ELK grouped layout, evidence panel, filters, summary)
-  - [x] Tests: 450+ API (allowlist, secret values never requested, ExternalId, regions, upsert / stale,
+  - [x] Tests: 406 API (allowlist, secret values never requested, ExternalId, regions, upsert / stale,
         every edge rule, coverage, summary with FakeLLM, API), 34 web
   - Env vars: `AWS_BASE_PROFILE`, `GROUNDCREW_PRINCIPAL_ARN`, `AWS_CONNECT_TEMPLATE_URL`,
     `DISCOVERY_REGIONS` [us-east-2], `MAX_RESOURCES_PER_CONNECTION` [2000], `DISCOVERY_TIMEOUT_SECONDS` [100]
