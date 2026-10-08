@@ -1,50 +1,140 @@
-import type { Metadata } from "next";
+"use client";
 
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { toast } from "sonner";
+
+import { AwsConnectDialog } from "@/components/connections/aws-connect-dialog";
+import { ConnectionRow } from "@/components/connections/connection-row";
+import { GitHubConnectDialog } from "@/components/connections/github-connect-dialog";
+import { RunDiscoveryButton } from "@/components/connections/run-discovery-button";
+import {
+  AzureConnectDialog,
+  KubernetesConnectDialog,
+  VercelConnectDialog,
+} from "@/components/connections/token-connect-dialogs";
+import { ProviderMark } from "@/components/map/resource-meta";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { ErrorState, RowsSkeleton } from "@/components/states/states";
+import { Button } from "@/components/ui/button";
+import { type Connection, type ConnectionKind, useConnections, useRefreshConnection } from "@/lib/discovery";
+import { useWorkspace } from "@/lib/workspace";
 
-export const metadata: Metadata = { title: "Connections" };
+type Provider = {
+  kind: ConnectionKind | "vm";
+  name: string;
+  access: string;
+  action: string;
+  preview?: boolean;
+  later?: boolean;
+};
 
-const PROVIDERS = [
-  { name: "AWS", mark: "AWS", access: "Cross-account role with an external ID. No stored keys." },
-  { name: "Azure", mark: "Az", access: "Federated identity. No client secrets." },
-  { name: "GitHub", mark: "GH", access: "GitHub App on the repositories you choose." },
-  { name: "Kubernetes", mark: "K8s", access: "A service account scoped to the namespaces you pick." },
-  { name: "VM", mark: "VM", access: "SSH key, encrypted at rest. Read commands only." },
-  { name: "Vercel", mark: "Vc", access: "Project token with read access." },
+const PROVIDERS: Provider[] = [
+  { kind: "aws", name: "AWS", access: "A read-only role with your ExternalId. No stored keys.", action: "Connect" },
+  { kind: "github", name: "GitHub", access: "The Groundcrew GitHub App on the repositories you pick.", action: "Pick repositories" },
+  { kind: "vercel", name: "Vercel", access: "A team token, stored encrypted. Env var names, not values.", action: "Add token" },
+  { kind: "azure", name: "Azure", access: "Reader on one resource group, through a service principal.", action: "Connect", preview: true },
+  { kind: "k8s", name: "Kubernetes", access: "A read-only service account. No access to Secrets.", action: "Upload kubeconfig", preview: true },
+  { kind: "vm", name: "VM", access: "SSH key, encrypted at rest. Read commands only.", action: "Connect", later: true },
 ];
 
 export default function ConnectionsPage() {
+  const router = useRouter();
+  const { workspace, error: workspaceError, refetch } = useWorkspace();
+  const connections = useConnections(workspace?.id);
+  const refresh = useRefreshConnection();
+  const [open, setOpen] = useState<ConnectionKind | null>(null);
+  const error = workspaceError ?? connections.error;
+  const items = connections.data ?? [];
+
+  function onRefresh(connection: Connection) {
+    refresh.mutate(connection, {
+      onSuccess: (run) => router.push(`/runs/${run.id}`),
+      onError: (e) => toast.error(e.message),
+    });
+  }
+
+  const dialog = (kind: ConnectionKind) => ({
+    open: open === kind,
+    onOpenChange: (next: boolean) => setOpen(next ? kind : null),
+  });
+
   return (
     <>
-      <PageHeader title="Connections" />
-      <PageBody className="max-w-4xl">
+      <PageHeader title="Connections" actions={items.some((c) => c.status === "connected") && <RunDiscoveryButton />} />
+      <PageBody className="max-w-4xl space-y-8">
         <div className="max-w-[62ch]">
           <h2 className="text-[17px] font-semibold tracking-tight">Connect the infrastructure you already have</h2>
           <p className="mt-2 text-[13.5px] leading-relaxed text-muted-foreground">
-            Groundcrew reads with scoped access. Anything that changes a resource goes through an
-            approval or a pull request.
+            Groundcrew reads with scoped, read-only access and never reads secret values or your data. Anything
+            that changes a resource goes through an approval or a pull request.
           </p>
         </div>
-        <ul className="mt-6 grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2">
-          {PROVIDERS.map((provider) => (
-            <li key={provider.name} className="flex gap-3 bg-background px-4 py-4">
-              <span
-                aria-hidden="true"
-                className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-card font-mono text-[11px] text-muted-foreground"
-              >
-                {provider.mark}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-medium">{provider.name}</h3>
-                  <span className="text-[11.5px] text-subtle">Coming in Phase 3</span>
+
+        {error ? (
+          <ErrorState error={error} onRetry={() => (workspaceError ? refetch() : void connections.refetch())} />
+        ) : connections.isLoading || !workspace ? (
+          <div className="overflow-hidden rounded-lg border">
+            <RowsSkeleton rows={3} />
+          </div>
+        ) : (
+          items.length > 0 && (
+            <section aria-labelledby="connected-title" className="space-y-2">
+              <h2 id="connected-title" className="text-[12px] font-medium text-muted-foreground">
+                Connected
+              </h2>
+              <ul className="divide-y overflow-hidden rounded-lg border">
+                {items.map((connection) => (
+                  <ConnectionRow
+                    key={connection.id}
+                    connection={connection}
+                    onRefresh={onRefresh}
+                    refreshing={refresh.isPending && refresh.variables?.id === connection.id}
+                    onResume={() => setOpen("aws")}
+                  />
+                ))}
+              </ul>
+            </section>
+          )
+        )}
+
+        <section aria-labelledby="add-title" className="space-y-2">
+          <h2 id="add-title" className="text-[12px] font-medium text-muted-foreground">
+            Add a connection
+          </h2>
+          <ul className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2">
+            {PROVIDERS.map((provider) => (
+              <li key={provider.kind} className="flex gap-3 bg-background px-4 py-4">
+                <ProviderMark provider={provider.kind} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-medium">{provider.name}</h3>
+                    {provider.preview && <span className="text-[11.5px] text-subtle">Preview</span>}
+                    {provider.later && <span className="text-[11.5px] text-subtle">Later</span>}
+                  </div>
+                  <p className="mt-0.5 text-[12.5px] text-muted-foreground">{provider.access}</p>
+                  {!provider.later && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-3"
+                      disabled={!workspace}
+                      onClick={() => setOpen(provider.kind as ConnectionKind)}
+                    >
+                      {provider.action}
+                    </Button>
+                  )}
                 </div>
-                <p className="mt-0.5 text-[12.5px] text-muted-foreground">{provider.access}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </section>
       </PageBody>
+      <AwsConnectDialog {...dialog("aws")} />
+      <GitHubConnectDialog {...dialog("github")} />
+      <VercelConnectDialog {...dialog("vercel")} />
+      <AzureConnectDialog {...dialog("azure")} />
+      <KubernetesConnectDialog {...dialog("k8s")} />
     </>
   );
 }
