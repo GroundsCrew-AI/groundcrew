@@ -66,45 +66,41 @@ export function edgeLabel(kind: string): string {
   return EDGE_LABELS[kind] ?? kind.replaceAll("_", " ");
 }
 
-/** Network and identity plumbing: hidden unless asked for, to keep the map readable. */
-export const INFRA_TYPES = new Set(["ec2:vpc", "ec2:security-group", "iam:role", "k8s:namespace"]);
 /** Edges that point at where something is defined: shown in the side panel, not as lines. */
 export const IAC_EDGE_KINDS = new Set(["defined_in"]);
 
 export type MapFilters = {
   /** Providers to show; empty means all. */
   providers: string[];
-  showInfra: boolean;
+  /** Draw "defined in" lines to repositories (there is one per Terraform resource). */
   showIac: boolean;
 };
 
-export const DEFAULT_FILTERS: MapFilters = { providers: [], showInfra: false, showIac: false };
+export const DEFAULT_FILTERS: MapFilters = { providers: [], showIac: false };
 
+/** Every resource of the chosen providers; IaC lines only when asked for. */
 export function visibleGraph(
   nodes: GraphNode[],
   edges: GraphEdge[],
   filters: MapFilters,
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  const shown = nodes.filter(
-    (n) =>
-      (filters.providers.length === 0 || filters.providers.includes(n.provider)) &&
-      (filters.showInfra || !INFRA_TYPES.has(n.type)),
-  );
+  const shown = nodes.filter((n) => filters.providers.length === 0 || filters.providers.includes(n.provider));
   const ids = new Set(shown.map((n) => n.id));
   const keptEdges = edges.filter(
-    (e) =>
-      ids.has(e.from_id) && ids.has(e.to_id) && (filters.showIac || !IAC_EDGE_KINDS.has(e.kind)),
+    (e) => ids.has(e.from_id) && ids.has(e.to_id) && (filters.showIac || !IAC_EDGE_KINDS.has(e.kind)),
   );
-  // With IaC links hidden, a repository only stays if something else points at it.
-  const linked = new Set(keptEdges.flatMap((e) => [e.from_id, e.to_id]));
-  const finalNodes = shown.filter((n) => n.type !== "github:repository" || filters.showIac || linked.has(n.id));
-  return { nodes: finalNodes, edges: keptEdges };
+  return { nodes: shown, edges: keptEdges };
 }
 
 export type Group = { id: string; label: string; provider: string };
 
-/** Provider, then account, then region: "AWS 881050425883, us-east-2". */
+export const TOOLING_GROUP = "group|tooling";
+/** Stands in for the tooling resources while their group is collapsed. */
+export const TOOLING_STUB = "tooling-stub";
+
+/** Provider, then account, then region: "AWS 881050425883, us-east-2". Tooling has its own group. */
 export function groupOf(node: GraphNode): Group {
+  if (node.role === "tooling") return { id: TOOLING_GROUP, label: "Tooling", provider: "tooling" };
   const provider = PROVIDER_LABELS[node.provider] ?? node.provider;
   const parts = [node.account].filter(Boolean) as string[];
   if (node.provider === "aws" || node.provider === "azure") parts.push(node.region ?? "global");
@@ -113,37 +109,69 @@ export function groupOf(node: GraphNode): Group {
   return { id, label: [provider, ...parts].join(", ").replace(", ", " "), provider: node.provider };
 }
 
-export const NODE_WIDTH = 232;
-export const NODE_HEIGHT = 66;
+export const NODE_WIDTH = 288;
+export const NODE_HEIGHT = 84;
+export const STUB_HEIGHT = 64;
+const LABEL_HEIGHT = 18;
+
+/** Width of an edge label at the 12px label font (about 6.6px a character, plus padding). */
+export function labelWidth(text: string): number {
+  return Math.ceil(text.length * 6.6) + 14;
+}
 
 const ROOT_OPTIONS: Record<string, string> = {
   "elk.algorithm": "layered",
   "elk.direction": "RIGHT",
   "elk.hierarchyHandling": "INCLUDE_CHILDREN",
-  "elk.layered.spacing.nodeNodeBetweenLayers": "90",
+  // Edge routes and label positions in root coordinates, the same frame as React Flow.
+  "elk.json.edgeCoords": "ROOT",
+  "elk.edgeLabels.placement": "CENTER",
+  "elk.edgeRouting": "ORTHOGONAL",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+  "elk.layered.spacing.edgeNodeBetweenLayers": "28",
+  "elk.layered.spacing.edgeEdgeBetweenLayers": "14",
   "elk.spacing.nodeNode": "28",
-  "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
-  "elk.spacing.componentComponent": "60",
+  "elk.spacing.edgeLabel": "6",
+  "elk.spacing.edgeEdge": "14",
+  "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+  "elk.spacing.componentComponent": "80",
 };
 
 const GROUP_OPTIONS: Record<string, string> = {
-  "elk.padding": "[top=40,left=20,bottom=20,right=20]",
+  "elk.padding": "[top=48,left=24,bottom=24,right=24]",
 };
 
-/** The ELK input: one compound node per group, resources inside, edges at the root. */
-export function toElk(nodes: GraphNode[], edges: GraphEdge[]): ElkNode {
+/**
+ * The ELK input: one compound node per group, resources inside, edges at the root with sized
+ * labels so ELK keeps them apart. A collapsed Tooling group has one stub node instead of its
+ * resources, and their edges end at the stub.
+ */
+export function toElk(nodes: GraphNode[], edges: GraphEdge[], toolingOpen = false): ElkNode {
   const groups = new Map<string, { group: Group; children: ElkNode[] }>();
+  const stubbed = new Set<string>();
   for (const node of nodes) {
     const group = groupOf(node);
     const entry = groups.get(group.id) ?? { group, children: [] };
-    entry.children.push({ id: node.id, width: NODE_WIDTH, height: NODE_HEIGHT });
+    if (group.id === TOOLING_GROUP && !toolingOpen) {
+      stubbed.add(node.id);
+      if (entry.children.length === 0) entry.children.push({ id: TOOLING_STUB, width: NODE_WIDTH, height: STUB_HEIGHT });
+    } else {
+      entry.children.push({ id: node.id, width: NODE_WIDTH, height: NODE_HEIGHT });
+    }
     groups.set(group.id, entry);
   }
-  const elkEdges: ElkExtendedEdge[] = edges.map((e) => ({
-    id: e.id,
-    sources: [e.from_id],
-    targets: [e.to_id],
-  }));
+  const end = (id: string) => (stubbed.has(id) ? TOOLING_STUB : id);
+  const elkEdges: ElkExtendedEdge[] = edges
+    .filter((e) => end(e.from_id) !== end(e.to_id))
+    .map((e) => {
+      const text = edgeLabel(e.kind);
+      return {
+        id: e.id,
+        sources: [end(e.from_id)],
+        targets: [end(e.to_id)],
+        labels: [{ id: `${e.id}:label`, text, width: labelWidth(text), height: LABEL_HEIGHT }],
+      };
+    });
   return {
     id: "root",
     layoutOptions: ROOT_OPTIONS,
@@ -156,15 +184,20 @@ export function toElk(nodes: GraphNode[], edges: GraphEdge[]): ElkNode {
   };
 }
 
+export type Point = { x: number; y: number };
+export type EdgeRoute = { points: Point[]; label: Point | null };
+
 export type Positioned = {
   groups: { group: Group; x: number; y: number; width: number; height: number }[];
   /** Resource positions relative to their group. */
   nodes: Map<string, { x: number; y: number; groupId: string }>;
+  /** Edge routes and label centers in root coordinates. */
+  edges: Map<string, EdgeRoute>;
 };
 
 export function fromElk(layout: ElkNode, nodes: GraphNode[]): Positioned {
   const groupById = new Map(nodes.map((n) => [groupOf(n).id, groupOf(n)]));
-  const out: Positioned = { groups: [], nodes: new Map() };
+  const out: Positioned = { groups: [], nodes: new Map(), edges: new Map() };
   for (const g of layout.children ?? []) {
     const group = groupById.get(g.id);
     if (!group) continue;
@@ -172,6 +205,18 @@ export function fromElk(layout: ElkNode, nodes: GraphNode[]): Positioned {
     for (const child of g.children ?? []) {
       out.nodes.set(child.id, { x: child.x ?? 0, y: child.y ?? 0, groupId: g.id });
     }
+  }
+  for (const e of (layout.edges ?? []) as ElkExtendedEdge[]) {
+    const section = e.sections?.[0];
+    if (!section) continue;
+    const label = e.labels?.[0];
+    out.edges.set(e.id, {
+      points: [section.startPoint, ...(section.bendPoints ?? []), section.endPoint],
+      label:
+        label && label.x !== undefined && label.y !== undefined
+          ? { x: label.x + (label.width ?? 0) / 2, y: label.y + (label.height ?? 0) / 2 }
+          : null,
+    });
   }
   return out;
 }

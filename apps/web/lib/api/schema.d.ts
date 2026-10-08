@@ -914,6 +914,11 @@ export interface components {
             region: string | null;
             /** Repo */
             repo: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "app" | "tooling";
             /** Stale */
             stale: boolean;
             /** Tags */
@@ -990,6 +995,11 @@ export interface components {
             region: string | null;
             /** Repo */
             repo: string | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "app" | "tooling";
             /** Stale */
             stale: boolean;
             /** Type */

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.db.models import Connection, Edge, Resource
 from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
+from app.graph.roles import role_of
 from app.security.redact import redact_json
 
 
@@ -234,6 +235,8 @@ class ResourceOut(BaseModel):
     account: str | None
     region: str | None
     coverage: Coverage
+    # app: part of the system; tooling: manages it (state buckets, Groundcrew's role, ...)
+    role: Literal["app", "tooling"]
     stale: bool
     iac_path: str | None
     iac_url: str | None
@@ -254,6 +257,7 @@ class ResourceOut(BaseModel):
             coverage=r.coverage
             if r.coverage in ("observed", "diagnosable", "actionable")
             else "observed",
+            role=role_of(r.type, r.name),
             stale=r.stale,
             iac_path=r.iac_path,
             iac_url=_iac_url(r),

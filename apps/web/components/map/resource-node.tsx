@@ -18,34 +18,34 @@ function ResourceNodeView({ data }: NodeProps<ResourceFlowNode>) {
   return (
     <div
       className={cn(
-        "flex h-[66px] w-[232px] items-center gap-2.5 rounded-lg border bg-card px-2.5 text-left shadow-[0_1px_0_rgb(0_0_0/0.03)] transition-[opacity,box-shadow,border-color] duration-150",
+        "flex h-[84px] w-[288px] items-center gap-3 rounded-lg border bg-card px-3 text-left shadow-[0_1px_0_rgb(0_0_0/0.03)] transition-[opacity,box-shadow,border-color] duration-150",
         selected && "border-primary ring-2 ring-primary/25",
         dimmed && "opacity-35",
         resource.stale && "border-dashed opacity-60",
       )}
     >
       <Handle type="target" position={Position.Left} className="!size-1.5 !border-0 !bg-transparent" />
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
-        <ResourceIcon type={resource.type} className="size-4" />
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground">
+        <ResourceIcon type={resource.type} className="size-5" />
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          <span className="truncate text-[12.5px] font-medium" title={resource.name}>
+          <span className="truncate text-[14px] font-medium" title={resource.name}>
             {resource.name}
           </span>
           <span
             aria-label={`${coverage.label} coverage`}
             title={`${coverage.label}: ${coverage.hint}`}
-            className="size-1.5 shrink-0 rounded-full"
+            className="size-2 shrink-0 rounded-full"
             style={{ background: coverage.color }}
           />
         </span>
-        <span className="block truncate text-[11px] text-muted-foreground">
+        <span className="block truncate text-[12.5px] text-muted-foreground">
           {typeLabel(resource.type)}
           {resource.stale && " (not seen in the last discovery)"}
         </span>
         {resource.facts.length > 0 && (
-          <span className="block truncate font-mono text-[10.5px] text-subtle">{resource.facts.join("  ")}</span>
+          <span className="block truncate font-mono text-[11.5px] text-subtle">{resource.facts.join("  ")}</span>
         )}
       </span>
       <Handle type="source" position={Position.Right} className="!size-1.5 !border-0 !bg-transparent" />

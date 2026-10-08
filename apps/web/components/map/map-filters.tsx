@@ -27,7 +27,7 @@ export function MapFilters({
   onIncludeStale: (value: boolean) => void;
 }) {
   const active =
-    filters.providers.length + Number(filters.showInfra) + Number(filters.showIac) + Number(includeStale);
+    filters.providers.length + Number(filters.showIac) + Number(includeStale);
   function toggleProvider(provider: string, on: boolean) {
     const current = filters.providers.length ? filters.providers : providers;
     const next = on ? [...new Set([...current, provider])] : current.filter((p) => p !== provider);
@@ -57,18 +57,11 @@ export function MapFilters({
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Show</DropdownMenuLabel>
         <DropdownMenuCheckboxItem
-          checked={filters.showInfra}
-          onCheckedChange={(on) => onChange({ ...filters, showInfra: on === true })}
-          onSelect={(e) => e.preventDefault()}
-        >
-          Network and IAM
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem
           checked={filters.showIac}
           onCheckedChange={(on) => onChange({ ...filters, showIac: on === true })}
           onSelect={(e) => e.preventDefault()}
         >
-          Where it is defined (IaC)
+          Lines to where it is defined (IaC)
         </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem
           checked={includeStale}

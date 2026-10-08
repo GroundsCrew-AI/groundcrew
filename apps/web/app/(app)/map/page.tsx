@@ -105,7 +105,7 @@ export default function MapPage() {
               </span>
             </p>
           </div>
-          <div className="relative mt-3 min-h-[520px] flex-1 border-t">
+          <div className="relative mt-3 min-h-[640px] flex-1 border-t">
             <MapCanvas nodes={shown.nodes} edges={shown.edges} selectedId={selected} onSelect={setSelected} />
             {selected && (
               <ResourcePanel resourceId={selected} onClose={() => setSelected(null)} onSelect={setSelected} />

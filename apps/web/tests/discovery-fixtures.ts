@@ -10,6 +10,7 @@ export function node(id: string, overrides: Partial<GraphNode> = {}): GraphNode 
     account: "881050425883",
     region: "us-east-2",
     coverage: "observed",
+    role: "app",
     stale: false,
     iac_path: null,
     iac_url: null,

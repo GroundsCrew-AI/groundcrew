@@ -65,6 +65,7 @@ export const PROVIDER_MARKS: Record<string, string> = {
   vm: "VM",
   gcp: "GCP",
   groundcrew: "GC",
+  tooling: "Tools",
 };
 
 export function ProviderMark({ provider, className }: { provider: string; className?: string }) {

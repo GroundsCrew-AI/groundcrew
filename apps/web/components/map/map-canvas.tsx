@@ -5,7 +5,7 @@ import "@xyflow/react/dist/style.css";
 import {
   Background,
   Controls,
-  type Edge,
+  type EdgeTypes,
   MarkerType,
   type Node,
   type NodeTypes,
@@ -16,10 +16,11 @@ import { useTheme } from "next-themes";
 import { useEffect, useMemo, useState } from "react";
 
 import type { GraphEdge, GraphNode } from "@/lib/discovery";
-import { edgeLabel, fromElk, type Positioned, toElk } from "@/lib/graph";
+import { edgeLabel, fromElk, groupOf, type Positioned, TOOLING_GROUP, TOOLING_STUB, toElk } from "@/lib/graph";
 
-import { type GroupFlowNode, GroupNode } from "./group-node";
+import { type GroupFlowNode, GroupNode, type ToolingStubFlowNode, ToolingStubNode } from "./group-node";
 import { ResourceNode, type ResourceFlowNode } from "./resource-node";
+import { RoutedEdge, type RoutedFlowEdge } from "./routed-edge";
 
 // elkjs is large (about 1.4 MB): load it only when the map has something to lay out.
 let elkPromise: Promise<ElkApi> | null = null;
@@ -27,12 +28,13 @@ function loadElk(): Promise<ElkApi> {
   elkPromise ??= import("elkjs/lib/elk.bundled.js").then((m) => new m.default());
   return elkPromise;
 }
-const nodeTypes: NodeTypes = { resource: ResourceNode, "group-box": GroupNode };
+const nodeTypes: NodeTypes = { resource: ResourceNode, "group-box": GroupNode, "tooling-stub": ToolingStubNode };
+const edgeTypes: EdgeTypes = { routed: RoutedEdge };
 
-function useLayout(nodes: GraphNode[], edges: GraphEdge[]) {
+function useLayout(nodes: GraphNode[], edges: GraphEdge[], toolingOpen: boolean) {
   const signature = useMemo(
-    () => `${nodes.map((n) => n.id).join(",")}|${edges.map((e) => e.id).join(",")}`,
-    [nodes, edges],
+    () => `${nodes.map((n) => n.id).join(",")}|${edges.map((e) => e.id).join(",")}|${toolingOpen}`,
+    [nodes, edges, toolingOpen],
   );
   const [state, setState] = useState<{ signature: string; layout: Positioned | null; error: string | null }>({
     signature: "",
@@ -42,7 +44,7 @@ function useLayout(nodes: GraphNode[], edges: GraphEdge[]) {
   useEffect(() => {
     let cancelled = false;
     loadElk()
-      .then((elk) => elk.layout(toElk(nodes, edges)))
+      .then((elk) => elk.layout(toElk(nodes, edges, toolingOpen)))
       .then((result) => {
         if (!cancelled) setState({ signature, layout: fromElk(result, nodes), error: null });
       })
@@ -73,7 +75,10 @@ export function MapCanvas({
   onSelect: (id: string | null) => void;
 }) {
   const { resolvedTheme } = useTheme();
-  const { layout, error, ready, signature } = useLayout(nodes, edges);
+  const [toolingOpen, setToolingOpen] = useState(false);
+  const { layout, error, ready, signature } = useLayout(nodes, edges, toolingOpen);
+  const tooling = useMemo(() => nodes.filter((n) => groupOf(n).id === TOOLING_GROUP), [nodes]);
+  const stubbed = useMemo(() => new Set(toolingOpen ? [] : tooling.map((n) => n.id)), [tooling, toolingOpen]);
 
   const neighbors = useMemo(() => {
     if (!selectedId) return null;
@@ -93,7 +98,12 @@ export function MapCanvas({
       id: group.id,
       type: "group-box",
       position: { x, y },
-      data: { label: group.label, provider: group.provider, count: counts.get(group.id) ?? 0 },
+      data: {
+        label: group.label,
+        provider: group.provider,
+        count: group.id === TOOLING_GROUP ? tooling.length : (counts.get(group.id) ?? 0),
+        onCollapse: group.id === TOOLING_GROUP && toolingOpen ? () => setToolingOpen(false) : undefined,
+      },
       style: { width, height },
       selectable: false,
       draggable: false,
@@ -117,37 +127,48 @@ export function MapCanvas({
         },
       ];
     });
-    return [...groups, ...resources];
-  }, [layout, nodes, selectedId, neighbors]);
+    const stub = layout.nodes.get(TOOLING_STUB);
+    const stubs: ToolingStubFlowNode[] = stub
+      ? [
+          {
+            id: TOOLING_STUB,
+            type: "tooling-stub",
+            parentId: stub.groupId,
+            position: { x: stub.x, y: stub.y },
+            data: { count: tooling.length, names: tooling.map((n) => n.name), onExpand: () => setToolingOpen(true) },
+            draggable: false,
+            selectable: false,
+          },
+        ]
+      : [];
+    return [...groups, ...resources, ...stubs];
+  }, [layout, nodes, selectedId, neighbors, tooling, toolingOpen]);
 
-  const flowEdges = useMemo<Edge[]>(
-    () =>
-      edges.map((e) => {
+  const flowEdges = useMemo<RoutedFlowEdge[]>(() => {
+    const end = (id: string) => (stubbed.has(id) ? TOOLING_STUB : id);
+    return edges
+      .filter((e) => end(e.from_id) !== end(e.to_id))
+      .map((e) => {
         const active = selectedId !== null && (e.from_id === selectedId || e.to_id === selectedId);
-        const faded = selectedId !== null && !active;
         const color = active ? "var(--primary)" : "var(--subtle)";
         return {
           id: e.id,
-          source: e.from_id,
-          target: e.to_id,
-          label: edgeLabel(e.kind),
+          type: "routed",
+          source: end(e.from_id),
+          target: end(e.to_id),
           zIndex: active ? 2 : 1,
-          style: {
-            stroke: color,
-            strokeWidth: active ? 1.75 : 1.25,
-            strokeDasharray: e.confidence === "low" ? "4 4" : undefined,
-            opacity: faded ? 0.18 : 1,
+          data: {
+            route: layout?.edges.get(e.id) ?? null,
+            label: edgeLabel(e.kind),
+            active,
+            faded: selectedId !== null && !active,
+            dashed: e.confidence === "low",
           },
-          labelStyle: { fontSize: 10.5, fill: active ? "var(--foreground)" : "var(--muted-foreground)" },
-          labelBgStyle: { fill: "var(--background)", fillOpacity: faded ? 0.4 : 0.92 },
-          labelBgPadding: [4, 2] as [number, number],
-          labelBgBorderRadius: 4,
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color },
+          markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color },
           ariaLabel: `${edgeLabel(e.kind)}, ${e.confidence} confidence`,
         };
-      }),
-    [edges, selectedId],
-  );
+      });
+  }, [edges, selectedId, layout, stubbed]);
 
   if (error) {
     return (
@@ -165,9 +186,10 @@ export function MapCanvas({
       nodes={flowNodes}
       edges={flowEdges}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
       colorMode={resolvedTheme === "light" ? "light" : "dark"}
       fitView
-      fitViewOptions={{ padding: 0.12 }}
+      fitViewOptions={{ padding: 0.06, maxZoom: 1 }}
       minZoom={0.15}
       maxZoom={1.75}
       nodesConnectable={false}
