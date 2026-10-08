@@ -13,13 +13,14 @@ const state = vi.hoisted(() => ({
   start: { data: undefined as unknown, error: null as Error | null, isPending: false },
   complete: { data: undefined as unknown, error: null as Error | null, isPending: false },
   mutateComplete: vi.fn(),
+  mutateStart: vi.fn(),
 }));
 
 vi.mock("@/lib/workspace", () => ({ useWorkspace: () => ({ workspace: { id: "ws-1" } }) }));
 vi.mock("./run-discovery-button", () => ({ RunDiscoveryButton: () => null }));
 vi.mock("@/lib/discovery", () => ({
   downloadAwsTemplate: vi.fn(),
-  useAwsStart: () => ({ ...state.start, mutate: vi.fn(), reset: vi.fn() }),
+  useAwsStart: () => ({ ...state.start, mutate: state.mutateStart, reset: vi.fn() }),
   useAwsComplete: () => ({ ...state.complete, mutate: state.mutateComplete, reset: vi.fn() }),
 }));
 
@@ -39,7 +40,7 @@ function start(overrides: Partial<AwsStart> = {}): AwsStart {
 }
 
 function fakeTab() {
-  return { location: { href: "" }, close: vi.fn() } as unknown as Window;
+  return { location: { href: "" }, close: vi.fn(), document: { body: { textContent: "" } } } as unknown as Window;
 }
 
 describe("AwsConnectDialog", () => {
@@ -47,9 +48,28 @@ describe("AwsConnectDialog", () => {
     state.start = { data: undefined, error: null, isPending: false };
     state.complete = { data: undefined, error: null, isPending: false };
     state.mutateComplete.mockReset();
+    state.mutateStart.mockReset();
   });
 
-  it("points the waiting tab at Quick-create and shows three steps", () => {
+  it("sends a new tab to CloudFormation once the link arrives, and closes it on an error", () => {
+    const ok = { current: fakeTab() };
+    const okTab = ok.current;
+    render(<AwsConnectDialog open onOpenChange={vi.fn()} tab={ok} />);
+    const [workspaceId, callbacks] = state.mutateStart.mock.calls[0];
+    expect(workspaceId).toBe("ws-1");
+    callbacks.onSuccess(start());
+    expect(okTab.location.href).toBe(CONSOLE_URL);
+
+    const failed = { current: fakeTab() };
+    const failedTab = failed.current;
+    state.mutateStart.mockReset();
+    render(<AwsConnectDialog open onOpenChange={vi.fn()} tab={failed} />);
+    state.mutateStart.mock.calls[0][1].onError(new Error("Workspace not found."));
+    expect(failedTab.close).toHaveBeenCalled();
+    expect(failedTab.document.body.textContent).toContain("Workspace not found.");
+  });
+
+  it("on reopen, points the new tab at the link it already has, and shows three steps", () => {
     state.start.data = start();
     const tab = { current: fakeTab() };
     const waiting = tab.current;

@@ -117,26 +117,42 @@ export function AwsConnectDialog({
   const [roleArn, setRoleArn] = useState("");
   const startRequested = open && workspace !== undefined;
 
+  // Hand the waiting tab its destination exactly once: CloudFormation when there is a link,
+  // otherwise say why in the tab and close it.
+  function sendTab(info: AwsStart | undefined, error?: Error) {
+    const waiting = tab?.current;
+    if (!waiting || !tab) return;
+    tab.current = null;
+    if (info?.console_url) {
+      waiting.location.href = info.console_url;
+      return;
+    }
+    const reason = error ? `Could not open CloudFormation: ${error.message}` : "One-click setup is not available.";
+    waiting.document.body.textContent = `${reason} Close this tab and go back to Groundcrew.`;
+    waiting.close();
+  }
+
   useEffect(() => {
-    if (startRequested && workspace && !start.data && !start.isPending && !start.error) start.mutate(workspace.id);
-    // Start once per open; the mutation object changes identity on every state change.
+    if (!startRequested || !workspace) return;
+    if (start.data) {
+      sendTab(start.data); // reopened: the link is already known
+      return;
+    }
+    if (start.isPending) return;
+    start.mutate(workspace.id, {
+      onSuccess: (info) => sendTab(info),
+      onError: (error) => sendTab(undefined, error),
+    });
+    // Once per open; the mutation object changes identity on every state change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startRequested, workspace]);
-
-  // Point the waiting tab at CloudFormation, or close it when there is no link to show.
-  useEffect(() => {
-    const waiting = tab?.current;
-    if (!waiting || (!start.data && !start.error)) return;
-    if (start.data?.console_url) waiting.location.href = start.data.console_url;
-    else waiting.close();
-    if (tab) tab.current = null;
-  }, [start.data, start.error, tab]);
 
   function close(next: boolean) {
     onOpenChange(next);
     if (!next) {
-      // After a success the next account needs its own pending connection and ExternalId.
-      if (complete.data) start.reset();
+      // After a success the next account needs its own pending connection and ExternalId;
+      // after a failure, the next open asks again.
+      if (complete.data || start.error) start.reset();
       complete.reset();
       setRoleArn("");
       tab?.current?.close();
