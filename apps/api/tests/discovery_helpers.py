@@ -49,6 +49,8 @@ def mock_transport(routes: dict[str, Any], recorded: Recorded | None = None) -> 
         body = routes.get(f"{request.method} {request.url.path}")
         if body is None:
             return httpx.Response(404, json={"message": "Not Found"})
+        if isinstance(body, str):  # a raw file
+            return httpx.Response(200, text=body)
         return httpx.Response(200, json=body)
 
     return httpx.MockTransport(handler)
@@ -83,7 +85,9 @@ async def open_fixture_repo(_installation: int, _name: str, _ref: str | None) ->
     return LocalCheckout()
 
 
-def github_app(recorded: Recorded | None = None) -> GitHubApp:
+def github_app(
+    recorded: Recorded | None = None, extra_routes: dict[str, Any] | None = None
+) -> GitHubApp:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -94,7 +98,9 @@ def github_app(recorded: Recorded | None = None) -> GitHubApp:
         serialization.NoEncryption(),
     ).decode()
     return GitHubApp(
-        settings(), transport=mock_transport(load("github.json"), recorded), private_key=pem
+        settings(),
+        transport=mock_transport({**load("github.json"), **(extra_routes or {})}, recorded),
+        private_key=pem,
     )
 
 

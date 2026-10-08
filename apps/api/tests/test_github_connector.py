@@ -120,3 +120,48 @@ async def test_discovers_repo_and_workflows_with_runs_and_commits() -> None:
     assert [r["path"] for r in workflow.config["recent_runs"]] == [".github/workflows/deploy.yml"]
     (facts,) = result.repos
     assert facts.commit == "cef79e7a1b2c3d4e5f60718293a4b5c6d7e8f901" and len(facts.terraform) > 20
+
+
+async def test_clone_failure_still_reads_workflows_through_the_api() -> None:
+    """Live failure: no git in the image. Deploy edges must survive through the contents API."""
+    from app.discovery.github import discover_github
+    from app.repos.source import RepoSourceError
+    from tests.discovery_helpers import DEMO_REPO
+
+    deploy = (DEMO_REPO / ".github/workflows/deploy.yml").read_text()
+    base = "/repos/GroundsCrew-AI/checkout-demo/contents/.github/workflows"
+    routes = {
+        f"GET {base}": [
+            {"path": ".github/workflows/deploy.yml", "type": "file", "size": len(deploy)},
+            {"path": ".github/workflows/README.md", "type": "file", "size": 10},
+        ],
+        f"GET {base}/deploy.yml": deploy,
+    }
+
+    async def no_git(_i: int, _n: str, _r: str | None) -> object:
+        raise RepoSourceError("git is not installed")
+
+    result = await discover_github(
+        github_app(extra_routes=routes),
+        INSTALLATION,
+        ["GroundsCrew-AI/checkout-demo"],
+        open_source=no_git,  # type: ignore[arg-type]
+    )
+    (facts,) = result.repos
+    assert [w.path for w in facts.workflows] == [".github/workflows/deploy.yml"]
+    assert facts.terraform == [] and "Clone failed" in facts.notes[0]
+    assert any(r.type == "github:workflow" for r in result.resources)
+
+
+async def test_real_deploy_yml_deploys_api_worker_and_web() -> None:
+    from app.graph.edges import infer_edges, key
+    from tests.discovery_helpers import demo_inventory
+
+    resources, repos = await demo_inventory()
+    names = {key(r): r.name for r in resources}
+    deployed = sorted(
+        names[e.source]
+        for e in infer_edges(resources, repos).edges
+        if e.kind == "deployed_by" and names[e.target] == "deploy (deploy.yml)"
+    )
+    assert deployed == ["checkout-api", "checkout-demo", "checkout-worker"]

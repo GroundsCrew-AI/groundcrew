@@ -220,6 +220,39 @@ class GitHubApp:
             page += 1
         return repos
 
+    async def workflow_files(
+        self, installation_id: int, full_name: str, ref: str | None = None
+    ) -> list[tuple[str, str]]:
+        """(path, text) of .github/workflows/*.yml through the contents API (GET only), for
+        when a clone is not possible. Files over 512 KB are skipped."""
+        name = check_repo_name(full_name)
+        params = {"ref": ref} if ref else None
+        try:
+            listing = await self.get(
+                installation_id, f"/repos/{name}/contents/.github/workflows", params
+            )
+        except GitHubError as exc:
+            if "404" in str(exc):
+                return []
+            raise
+        out: list[tuple[str, str]] = []
+        for item in listing if isinstance(listing, list) else []:
+            path = str(item.get("path") or "")
+            if item.get("type") != "file" or not path.endswith((".yml", ".yaml")):
+                continue
+            if int(item.get("size") or 0) > 512_000:
+                continue
+            token = await self.installation_token(installation_id)
+            text = await self._request(
+                "GET",
+                f"/repos/{name}/contents/{path}",
+                bearer=token,
+                params=params,
+                accept="application/vnd.github.raw",
+            )
+            out.append((path, str(text)))
+        return out
+
     async def repo(self, installation_id: int, full_name: str) -> dict[str, Any]:
         data: dict[str, Any] = await self.get(
             installation_id, f"/repos/{check_repo_name(full_name)}"

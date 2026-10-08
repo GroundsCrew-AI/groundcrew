@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 from app.connectors.github import GitHubApp
 from app.connectors.github_source import GitHubAppSource
-from app.discovery.iac import read_repo
+from app.discovery.iac import parse_workflow, read_repo
 from app.discovery.types import (
     ConnectorResult,
     DiscoveredResource,
@@ -119,6 +119,28 @@ def repo_resource(facts: RepoFacts, info: dict[str, Any], owner: str) -> Discove
     )
 
 
+async def _without_clone(
+    app: GitHubApp,
+    installation_id: int,
+    full_name: str,
+    branch: str | None,
+    error: BaseException,
+    progress: Progress,
+) -> RepoFacts:
+    """The clone failed: still read the workflows through the contents API, so deploy edges
+    survive. Terraform, Dockerfiles, and code are not read."""
+    facts = RepoFacts(repo=full_name)
+    facts.notes.append(f"Clone failed, Terraform and code not read: {error}")
+    await progress(f"GitHub {full_name}: clone failed ({error}); reading workflows through the API")
+    try:
+        files = await app.workflow_files(installation_id, full_name, branch)
+    except Exception as exc:
+        facts.notes.append(f"Workflows not read either: {exc}")
+        return facts
+    facts.workflows = [w for w in (parse_workflow(p, t) for p, t in files) if w is not None]
+    return facts
+
+
 async def discover_github(
     app: GitHubApp,
     installation_id: int,
@@ -150,8 +172,7 @@ async def discover_github(
             source = await opener(installation_id, full_name, branch)
             facts = await asyncio.to_thread(_read_clone, source, full_name)
         except (RepoSourceError, OSError) as exc:
-            facts = RepoFacts(repo=full_name)
-            facts.notes.append(f"Clone failed, IaC not read: {exc}")
+            facts = await _without_clone(app, installation_id, full_name, branch, exc, progress)
         facts.html_url = info.get("html_url")
         facts.default_branch = branch
         facts.commits = commits
