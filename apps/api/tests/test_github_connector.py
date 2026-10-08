@@ -6,7 +6,7 @@ import jwt
 import pytest
 
 from app.connectors.github import GitHubError, GitHubWriteRefusedError, check_repo_name
-from app.repos.github_source import GitHubAppSource
+from app.connectors.github_source import GitHubAppSource
 from tests.discovery_helpers import INSTALLATION, Recorded, github_app, github_result, settings
 
 pytestmark = pytest.mark.anyio
@@ -69,8 +69,8 @@ def test_repo_names_are_checked(name: str) -> None:
 
 
 def test_clone_token_goes_through_git_config_env_not_url_or_argv() -> None:
-    source = GitHubAppSource("GroundsCrew-AI/checkout-demo", TOKEN, ref="main", settings=settings())
-    clone = source._clone
+    source = GitHubAppSource(INSTALLATION, "GroundsCrew-AI/checkout-demo", "main", app=github_app())
+    clone = source.clone_source(TOKEN)
     assert clone.url == "https://github.com/GroundsCrew-AI/checkout-demo.git"
     assert TOKEN not in clone.url
     env = clone._env()
@@ -79,7 +79,30 @@ def test_clone_token_goes_through_git_config_env_not_url_or_argv() -> None:
     assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {basic}"
     assert TOKEN not in source.describe()
     # The shared settings are untouched: the token lives on a copy.
-    assert settings().git_clone_token is None
+    assert source.app.settings.git_clone_token is None and settings().git_clone_token is None
+
+
+def test_materialize_mints_the_installation_token_then_clones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path
+
+    from app.repos.source import GitCloneSource
+
+    recorded = Recorded()
+    seen: list[str | None] = []
+
+    def fake_materialize(self: GitCloneSource) -> Path:
+        token = self.settings.git_clone_token
+        seen.append(token.get_secret_value() if token else None)
+        return Path("/tmp/x")  # noqa: S108 - not created
+
+    monkeypatch.setattr(GitCloneSource, "materialize", fake_materialize)
+    source = GitHubAppSource(INSTALLATION, "GroundsCrew-AI/checkout-demo", app=github_app(recorded))
+    with source as root:
+        assert root == Path("/tmp/x")  # noqa: S108
+    assert seen == [TOKEN]
+    assert recorded.paths() == [f"POST /app/installations/{INSTALLATION}/access_tokens"]
 
 
 async def test_discovers_repo_and_workflows_with_runs_and_commits() -> None:

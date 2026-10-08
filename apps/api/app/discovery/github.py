@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from app.connectors.github import GitHubApp
+from app.connectors.github_source import GitHubAppSource
 from app.discovery.iac import read_repo
 from app.discovery.types import (
     ConnectorResult,
@@ -21,7 +22,6 @@ from app.discovery.types import (
     Workflow,
     no_progress,
 )
-from app.repos.github_source import GitHubAppSource
 from app.repos.source import RepoSourceError
 
 logger = logging.getLogger("groundcrew.discovery.github")
@@ -128,7 +128,7 @@ async def discover_github(
     open_source: SourceFactory | None = None,
 ) -> ConnectorResult:
     async def clone(installation: int, name: str, ref: str | None) -> CheckoutSource:
-        return await GitHubAppSource.create(app, installation, name, ref=ref)
+        return GitHubAppSource(installation, name, ref, app=app)
 
     opener = open_source or clone
     result = ConnectorResult()

@@ -16,10 +16,10 @@ from app.discovery.types import (
 )
 from app.graph import coverage as coverage_module
 from app.graph.coverage import coverage, register_actionable
-from app.graph.digest import digest, risks
+from app.graph.digest import digest, find_risks, risks
 from app.graph.edges import Confidence, EdgeKind, InferredEdge, infer_edges, key
 from app.llm.budget import MemoryUsageStore, RunBudget
-from app.llm.router import Task
+from app.llm.router import ROUTES, Task
 from tests.discovery_helpers import demo_inventory, plain_api_url_routes
 from tests.fakes import FakeLLM, reply
 
@@ -539,18 +539,39 @@ async def test_digest_is_compact_and_named() -> None:
     assert not any(line.type in ("ec2:security-group", "iam:role") for line in lines)
 
 
-async def test_summary_uses_summarize_system_route_with_digest_and_risks() -> None:
+async def test_summary_uses_scouts_summarize_graph_with_risks_in_notes() -> None:
     resources, repos = await demo_inventory()
     edges = infer_edges(resources, repos).edges
     settings = Settings(_env_file=None, model_nano="m/nano", model_super="m/super")
     llm = FakeLLM(reply("- checkout-api on ECS\n- Risk: no stable endpoint"), settings=settings)
     budget = RunBudget(usage=MemoryUsageStore(), settings=settings)
-    text = await summarize_system(
-        llm, budget, digest(resources, edges), risks=risks(resources, edges)
-    )
+    items = digest(resources, edges, risks=find_risks(resources, edges))
+    text = await summarize_system(llm, budget, items)
     assert text.endswith("Risk: no stable endpoint")
     assert llm.models == ["m/nano"] and llm.reasoning_kwargs == [{"enable_thinking": False}]
     prompt = llm.calls[0]["messages"][1]["content"]
-    assert "Risks found by rules" in prompt and "stable endpoint" in prompt
+    api = next(i for i in items if i.name == "checkout-api" and i.type == "ecs:service")
+    assert api.notes and "Risk: checkout-api has no load balancer or stable endpoint" in api.notes
+    assert "stable endpoint" in prompt
     assert "postgresql://" not in prompt and "arn:aws" not in prompt
-    assert Task.summarize_system.value == "summarize_system"
+    assert Task.summarize_graph in ROUTES
+
+
+def test_digest_is_deterministic_and_folds_to_fit() -> None:
+    many = [res("lambda:function", f"fn-{i:03}") for i in range(400)]
+    api = svc("api")
+    db = res("rds:db", "orders")
+    edge = InferredEdge(
+        source=key(api),
+        target=key(db),
+        kind=EdgeKind.reads,
+        confidence=Confidence.high,
+        rule="sg_db_ingress",
+        evidence="x",
+    )
+    items = digest([*many, api, db], [edge], token_cap=1_000)
+    assert items == digest(list(reversed([*many, api, db])), [edge], token_cap=1_000)
+    folded = next(i for i in items if i.type == "lambda:function")
+    assert folded.name == "400 x lambda:function" and folded.notes
+    assert any(i.name == "api" and "reads orders" in i.relations for i in items)
+    assert sum(len(i.model_dump_json()) for i in items) < 1_000 * 4

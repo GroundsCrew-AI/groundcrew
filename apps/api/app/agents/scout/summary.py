@@ -1,13 +1,10 @@
-"""Scout's system summary (task summarize_system: Nano, reasoning off).
+"""Scout's system summary (task summarize_graph: Nano, reasoning off).
 
-Takes a compact digest of the graph, not raw JSON: one line per resource with its relations
-(app.graph.digest builds it from the resources and edges tables), plus risks the graph
-module found with rules (public database, security group open to the world, api without a
-load balancer or stable endpoint). See docs/phase3-interfaces.md.
+Takes a plain list of resources for now. Phase 3's graph module will pass its resources and
+edges in this shape (see docs/phase3-interfaces.md).
 """
 
 import json
-from collections.abc import Sequence
 
 from pydantic import BaseModel
 
@@ -20,10 +17,9 @@ CHARS_PER_TOKEN = 4
 PROMPT_TOKEN_CAP = 6_000
 
 SYSTEM_PROMPT = """You are Scout, part of Groundcrew. Summarize a customer's system for an \
-engineer who has never seen it: the main services and where they run, the data stores, the \
-deploy pipelines, links across clouds and platforms, and anything risky or unusual. Plain \
-English, at most 8 short bullet points; put risks last, starting with "Risk:". Use only the \
-resources and risks given; do not invent any."""
+engineer who has never seen it: what runs where, what talks to what, and anything that looks \
+risky or unusual. Plain English, at most 8 short bullet points. Use only the resources given; \
+do not invent any."""
 
 
 class ResourceSummary(BaseModel):
@@ -41,7 +37,6 @@ async def summarize_system(
     budget: RunBudget,
     resources: list[ResourceSummary],
     *,
-    risks: Sequence[str] = (),
     on_call: OnCall | None = None,
 ) -> str:
     if not resources:
@@ -49,9 +44,7 @@ async def summarize_system(
     ordered = sorted(resources, key=lambda r: (r.provider, r.type, r.name))
     lines: list[str] = []
     used = 0
-    budget_chars = (
-        PROMPT_TOKEN_CAP * CHARS_PER_TOKEN - len(SYSTEM_PROMPT) - sum(len(r) + 1 for r in risks)
-    )
+    budget_chars = PROMPT_TOKEN_CAP * CHARS_PER_TOKEN - len(SYSTEM_PROMPT)
     for resource in ordered[:MAX_RESOURCES]:
         line = json.dumps(resource.model_dump(exclude_none=True, exclude_defaults=True))
         if used + len(line) + 1 > budget_chars:
@@ -61,12 +54,9 @@ async def summarize_system(
     shown = len(lines)
     if shown < len(ordered):
         lines.append(f"[{len(ordered) - shown} more resources not shown]")
-    content = "Resources (one JSON object per line):\n" + "\n".join(lines)
-    if risks:
-        content += "\n\nRisks found by rules (one per line):\n" + "\n".join(risks)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": content},
+        {"role": "user", "content": "Resources (one JSON object per line):\n" + "\n".join(lines)},
     ]
-    result = await llm.chat(Task.summarize_system, messages, budget=budget, on_call=on_call)
+    result = await llm.chat(Task.summarize_graph, messages, budget=budget, on_call=on_call)
     return (result.content or "").strip()

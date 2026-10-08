@@ -32,7 +32,6 @@ __all__ = [
 class Task(enum.StrEnum):
     # Scout (Nano)
     summarize_graph = "summarize_graph"
-    summarize_system = "summarize_system"  # the system summary on the Map (graph digest in)
     detect_app_spec = "detect_app_spec"
     compress_evidence = "compress_evidence"  # map step over log/metric chunks
     classify_signal = "classify_signal"
@@ -79,7 +78,6 @@ _OFF, _LOW, _ON = Reasoning.off, Reasoning.low, Reasoning.on
 
 ROUTES: dict[Task, Route] = {
     Task.summarize_graph: Route(Task.summarize_graph, _N, _OFF, 1_500),
-    Task.summarize_system: Route(Task.summarize_system, _N, _OFF, 1_500),
     Task.detect_app_spec: Route(Task.detect_app_spec, _N, _LOW, 2_000, fallback=_S),
     Task.compress_evidence: Route(Task.compress_evidence, _N, _OFF, 1_200),
     Task.classify_signal: Route(Task.classify_signal, _N, _OFF, 300),

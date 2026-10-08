@@ -51,7 +51,7 @@ from app.discovery.types import (
     RepoFacts,
 )
 from app.graph.coverage import coverage
-from app.graph.digest import digest, risks
+from app.graph.digest import digest, find_risks
 from app.graph.edges import EdgeResult, infer_edges, key
 from app.llm.budget import PgUsageStore, RunBudget
 from app.llm.client import ChatModel, TokenFactory
@@ -511,7 +511,7 @@ class DiscoveryEngine:
         resources: list[DiscoveredResource],
         edges: EdgeResult,
     ) -> None:
-        found = risks(resources, edges.edges)
+        found = find_risks(resources, edges.edges)
         text: str | None = None
         error: str | None = None
         if resources:
@@ -523,14 +523,13 @@ class DiscoveryEngine:
                 text = await summarize_system(
                     self.llm(),
                     budget,
-                    digest(resources, edges.edges),
-                    risks=found,
+                    digest(resources, edges.edges, risks=found),
                     on_call=StepRecorder(session, run, "scout"),
                 )
             except Exception as exc:
                 error = summarize(f"{type(exc).__name__}: {exc}", 500)
                 await session.rollback()
-                await steps("summarize_system", f"Summary not written: {error}", kind="error")
+                await steps("summarize_graph", f"Summary not written: {error}", kind="error")
         workspace = await session.get(Workspace, run.workspace_id, with_for_update=True)
         if workspace is not None:
             previous = (workspace.settings or {}).get("system_summary") or {}
@@ -538,7 +537,7 @@ class DiscoveryEngine:
                 **(workspace.settings or {}),
                 "system_summary": {
                     "text": text if text is not None else previous.get("text"),
-                    "risks": found,
+                    "risks": [r.text for r in found],
                     "generated_at": _now().isoformat()
                     if text is not None
                     else previous.get("generated_at"),

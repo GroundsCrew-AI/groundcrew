@@ -9,6 +9,7 @@ refused before it is sent (GITHUB_ALLOWED_WRITES).
 import asyncio
 import contextlib
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -61,7 +62,7 @@ class GitHubApp:
         self._transport = transport
         self._private_key = private_key
         self._tokens: dict[int, _Token] = {}
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ auth
 
@@ -76,8 +77,11 @@ class GitHubApp:
         if not self.settings.github_app_id or path is None:
             raise GitHubError("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH must be set.")
         if not path.is_absolute():
-            # Relative to the repo root, where .env lives.
-            path = Path(__file__).resolve().parents[4] / path
+            # Relative to the working directory (/app in the containers, where ./secrets is
+            # mounted), else to the repo root, where .env lives.
+            here = Path(__file__).resolve()
+            roots = [Path.cwd(), *([here.parents[4]] if len(here.parents) > 4 else [])]
+            path = next((r / path for r in roots if (r / path).is_file()), roots[-1] / path)
         try:
             self._private_key = path.read_text()
         except OSError:
@@ -89,12 +93,13 @@ class GitHubApp:
         payload = {"iat": now - 60, "exp": now + 540, "iss": str(self.settings.github_app_id)}
         return jwt.encode(payload, self._key(), algorithm="RS256")
 
-    async def installation_token(self, installation_id: int) -> str:
-        async with self._lock:
+    def installation_token_sync(self, installation_id: int) -> str:
+        """Blocking: for code already in a worker thread (GitHubAppSource.materialize)."""
+        with self._lock:
             cached = self._tokens.get(installation_id)
             if cached and cached.expires_at - REFRESH_MARGIN_SECONDS > time.time():
                 return cached.value
-            data = await self._request(
+            data = self._request_sync(
                 "POST",
                 f"/app/installations/{installation_id}/access_tokens",
                 bearer=self.app_jwt(),
@@ -109,32 +114,22 @@ class GitHubApp:
             self._tokens[installation_id] = _Token(token, expires_at)
             return token
 
+    async def installation_token(self, installation_id: int) -> str:
+        return await asyncio.to_thread(self.installation_token_sync, installation_id)
+
     # ---------------------------------------------------------------- transport
 
-    async def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        bearer: str,
-        params: dict[str, Any] | None = None,
-        accept: str = "application/vnd.github+json",
-    ) -> Any:
+    def _headers(self, method: str, path: str, bearer: str, accept: str) -> dict[str, str]:
         if method != "GET" and not any(p.match(path) for p in GITHUB_ALLOWED_WRITES):
             raise GitHubWriteRefusedError(f"Groundcrew does not call {method} {path} on GitHub.")
-        headers = {
+        return {
             "Authorization": f"Bearer {bearer}",
             "Accept": accept,
             "X-GitHub-Api-Version": API_VERSION,
             "User-Agent": "groundcrew",
         }
-        async with httpx.AsyncClient(
-            base_url=self.settings.github_api_url, transport=self._transport, timeout=20
-        ) as client:
-            try:
-                response = await client.request(method, path, params=params, headers=headers)
-            except httpx.HTTPError as exc:
-                raise GitHubError(f"GitHub {path}: {type(exc).__name__}") from None
+
+    def _parse(self, method: str, path: str, response: httpx.Response, accept: str) -> Any:
         if response.status_code >= 400:
             message = ""
             with contextlib.suppress(ValueError):
@@ -145,6 +140,38 @@ class GitHubApp:
         if accept.endswith("json"):
             return response.json()
         return response.text
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        bearer: str,
+        params: dict[str, Any] | None = None,
+        accept: str = "application/vnd.github+json",
+    ) -> Any:
+        headers = self._headers(method, path, bearer, accept)
+        async with httpx.AsyncClient(
+            base_url=self.settings.github_api_url, transport=self._transport, timeout=20
+        ) as client:
+            try:
+                response = await client.request(method, path, params=params, headers=headers)
+            except httpx.HTTPError as exc:
+                raise GitHubError(f"GitHub {path}: {type(exc).__name__}") from None
+        return self._parse(method, path, response, accept)
+
+    def _request_sync(self, method: str, path: str, *, bearer: str) -> Any:
+        accept = "application/vnd.github+json"
+        headers = self._headers(method, path, bearer, accept)
+        sync = self._transport if isinstance(self._transport, httpx.BaseTransport) else None
+        with httpx.Client(
+            base_url=self.settings.github_api_url, transport=sync, timeout=20
+        ) as client:
+            try:
+                response = client.request(method, path, headers=headers)
+            except httpx.HTTPError as exc:
+                raise GitHubError(f"GitHub {path}: {type(exc).__name__}") from None
+        return self._parse(method, path, response, accept)
 
     async def app_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return await self._request("GET", path, bearer=self.app_jwt(), params=params)
