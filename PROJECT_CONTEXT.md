@@ -382,7 +382,40 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         the step is recorded as `tool_rejected` and shown as "Not run: rejected"; runs carry
         `rejected_actions`, shown as "N actions rejected" beside the status (verified live on Nano)
   - [x] Real GitHub sign-in works (approvals recorded as the signed-in GitHub user)
-- [ ] Phase 3 — Discovery + graph
+- [ ] Phase 3 — Discovery + graph (3B code done on `phase3-discovery`; live connect pending, see blockers)
+  - [x] AWS: `infra/aws-connect.yaml` (role trusted by `GroundcrewPrincipalArn` with `sts:ExternalId`, 1 h,
+        read-only policy, explicit deny on secret values / SSM / KMS decrypt / S3 objects, Resource Explorer
+        LOCAL index + default view, no AWS Config); start / complete endpoints; verify refuses a role that
+        works without the ExternalId; sessions in memory only; runtime allowlist guard on every boto3 call
+  - [x] GitHub App: installation tokens, GET-only client, repo picker, `GitHubAppSource` (authenticated clone)
+  - [x] Vercel: token encrypted, names and types only, values only for plain *_URL / *_HOST
+  - [x] Azure (Resource Graph, `infra/azure-connect.bicep`) and Kubernetes (`infra/k8s-readonly-rbac.yaml`)
+        on fixtures, marked Preview: `TODO(azure-live)`, `TODO(k8s-live)`
+  - [x] Discovery engine (`app/discovery/`): jobs `discover` / `discover_workspace` as normal runs with SSE;
+        AWS Resource Explorer search with tagging API fallback plus core describes; IaC facts (python-hcl2,
+        workflows, Dockerfiles, compose); upsert on stable external_id; stale marking; limits and timeouts.
+        Live read-only check on 881050425883: 17 resources in 8.7 s
+  - [x] Edges (`app/graph/edges.py`, 9 rules + structural, confidence and evidence), coverage, Scout
+        `summarize_system` with a graph digest and rule risks
+  - [x] API: connections, graph, resources; web types regenerated
+  - [x] Web: Connections (AWS flow, GitHub picker, Vercel token, Azure / K8s Preview) and Map (React Flow +
+        ELK grouped layout, evidence panel, filters, summary)
+  - [x] Tests: 450+ API (allowlist, secret values never requested, ExternalId, regions, upsert / stale,
+        every edge rule, coverage, summary with FakeLLM, API), 34 web
+  - Env vars: `AWS_BASE_PROFILE`, `GROUNDCREW_PRINCIPAL_ARN`, `AWS_CONNECT_TEMPLATE_URL`,
+    `DISCOVERY_REGIONS` [us-east-2], `MAX_RESOURCES_PER_CONNECTION` [2000], `DISCOVERY_TIMEOUT_SECONDS` [100]
+  - Endpoints: `POST /connections/aws/start`, `POST /connections/aws/complete`, `GET /connections/aws/template`,
+    `GET /connections/github/installations`, `POST /connections/github`, `POST /connections/vercel`,
+    `POST /connections/azure`, `POST /connections/k8s`, `GET /connections`, `DELETE /connections/{id}`,
+    `POST /connections/{id}/discover`, `POST /workspaces/{id}/discover`, `GET /workspaces/{id}/graph`,
+    `GET /resources/{id}`. Contract for Phase 4/5: `docs/phase3-interfaces.md`
+  - Decisions (2026-10-08): demo AWS workloads only in us-east-2 (org policy), so regional calls use
+    `DISCOVERY_REGIONS` only and IAM / STS are global; read-only enforced twice (IAM policy with explicit deny,
+    and a botocore hook that refuses any operation outside the allowlist); the AWS connect link needs the
+    template in S3 (CloudFormation only accepts S3 URLs), otherwise the UI shows the CLI command; an
+    encrypted Vercel `API_URL` gives a medium `calls` edge (name + shared repo + workflow evidence), a plain
+    one compared with the task IP gives high; edges are recomputed per workspace on every discovery;
+    secret-to-database links come from Terraform (secret version built from the db) before names
 - [ ] Phase 4 — Build + deploy agents (in progress)
   - [x] Step 1: LLM layer. Task routing (tier + reasoning mode, fallback, escalation), `TokenFactory.chat` with
         retries, JSON-schema output and one repair, reasoning capture, `embed` / `rerank`; USD caps per run, per day,
