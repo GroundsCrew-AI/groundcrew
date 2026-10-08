@@ -162,7 +162,7 @@ async def test_full_discovery_stores_graph_and_summary(
         names = {r.id: r.name for r in resources.values()}
         found = {(names[e.from_id], e.kind, names[e.to_id]): e for e in edges}
         calls = found[("checkout-demo", "calls", "checkout-api")]
-        assert calls.confidence == "medium" and calls.evidence["rule"] == "env_url"
+        assert calls.confidence == "high" and calls.evidence["rule"] == "env_url"
         assert found[("checkout-api", "reads", "checkout-orders-db")].confidence == "high"
         assert (
             "Security group checkout-db"

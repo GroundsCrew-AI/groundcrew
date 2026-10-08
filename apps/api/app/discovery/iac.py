@@ -252,6 +252,25 @@ def _str_map(value: Any) -> dict[str, str]:
     return {str(k): str(v) for k, v in value.items() if v is not None}
 
 
+# A shell variable filled from a command that finds a task's IP: ip=$(scripts/api-ip.sh),
+# IP=$(aws ecs describe-tasks ...), ...
+_IP_ASSIGN = re.compile(
+    r"\b(\w+)=\$\(([^)]*(?:\bip\b|-ip\b|_ip\b|ip\.sh|describe-tasks|publicIp|"
+    r"describe-network-interfaces)[^)]*)\)",
+    re.IGNORECASE,
+)
+
+
+def _env_sources(run: str) -> dict[str, str]:
+    """{"API_URL": "task_ip"} for KEY="...$ip..." when $ip came from a task-IP command."""
+    ip_vars = {m.group(1) for m in _IP_ASSIGN.finditer(run)}
+    out: dict[str, str] = {}
+    for key, value in re.findall(r"\b([A-Z][A-Z0-9_]*)=(\"[^\"]*\"|\S+)", run):
+        if any(re.search(rf"\$\{{?{re.escape(v)}\b", value) for v in ip_vars):
+            out[key] = "task_ip"
+    return out
+
+
 def _job_facts(job: WorkflowJob, workflow_env: dict[str, str]) -> WorkflowJob:
     env = {**workflow_env, **job.env}
     for step in job.steps:
@@ -283,6 +302,7 @@ def _job_facts(job: WorkflowJob, workflow_env: dict[str, str]) -> WorkflowJob:
             job.vercel_env_keys += re.findall(r"vercel\s+env\s+add\s+([A-Z][A-Z0-9_]*)", run)
             # The ECS services whose details feed this Vercel step (e.g. the api's IP).
             job.ecs_services += [v for k, v in step_env.items() if k.upper() == "SERVICE"]
+            job.vercel_env_sources.update(_env_sources(run))
     job.role_to_assume = sorted(set(job.role_to_assume))
     job.pushes_images = sorted(set(job.pushes_images))
     job.ecs_services = sorted(set(job.ecs_services))

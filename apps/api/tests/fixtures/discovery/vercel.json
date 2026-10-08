@@ -1,26 +1,112 @@
 {
-  "GET /v2/teams/team_groundcrew": {"id": "team_groundcrew", "slug": "ground-crew1", "name": "GroundCrew"},
+  "GET /v2/teams/team_groundcrew": {
+    "id": "team_groundcrew",
+    "slug": "ground-crew1",
+    "name": "GroundCrew"
+  },
   "GET /v9/projects": {
     "projects": [
-      {"id": "prj_checkout", "name": "checkout-demo", "framework": "nextjs", "nodeVersion": "22.x", "rootDirectory": null, "link": null,
-       "updatedAt": 1791448800000, "targets": {"production": {"alias": ["checkout-demo-nu.vercel.app"]}}}
+      {
+        "id": "prj_checkout",
+        "name": "checkout-demo",
+        "framework": "nextjs",
+        "nodeVersion": "22.x",
+        "rootDirectory": null,
+        "link": null,
+        "updatedAt": 1791448800000,
+        "targets": {
+          "production": {
+            "alias": [
+              "checkout-demo-nu.vercel.app"
+            ]
+          }
+        }
+      }
     ],
-    "pagination": {"count": 1, "next": null, "prev": null}
+    "pagination": {
+      "count": 1,
+      "next": null,
+      "prev": null
+    }
   },
-  "GET /v9/projects/prj_checkout/domains": {"domains": [{"name": "checkout-demo-nu.vercel.app", "verified": true, "redirect": null}]},
+  "GET /v9/projects/prj_checkout/domains": {
+    "domains": [
+      {
+        "name": "checkout-demo-nu.vercel.app",
+        "verified": true,
+        "redirect": null
+      }
+    ]
+  },
   "GET /v10/projects/prj_checkout/env": {
     "envs": [
-      {"id": "env_api", "key": "API_URL", "type": "encrypted", "value": "ZW5jcnlwdGVkLWJsb2I=", "target": ["production", "preview"], "updatedAt": 1791448000000},
-      {"id": "env_site", "key": "SITE_URL", "type": "plain", "value": "https://checkout-demo-nu.vercel.app", "target": ["production"], "updatedAt": 1791440000000},
-      {"id": "env_plainsecret", "key": "STRIPE_KEY", "type": "plain", "value": "sk_live_shouldNeverBeKept123", "target": ["production"], "updatedAt": 1791440000000},
-      {"id": "env_sensitive", "key": "DB_HOST", "type": "sensitive", "target": ["production"], "updatedAt": 1791440000000},
-      {"id": "env_secret_url", "key": "WEBHOOK_URL", "type": "secret", "value": "c2VjcmV0", "target": ["production"], "updatedAt": 1791440000000}
+      {
+        "id": "env_api",
+        "key": "API_URL",
+        "type": "encrypted",
+        "value": "ZW5jcnlwdGVkLWJsb2I=",
+        "target": [
+          "production",
+          "preview"
+        ],
+        "updatedAt": 1791448000000
+      },
+      {
+        "id": "env_site",
+        "key": "SITE_URL",
+        "type": "plain",
+        "value": "https://checkout-demo-nu.vercel.app",
+        "target": [
+          "production"
+        ],
+        "updatedAt": 1791440000000
+      },
+      {
+        "id": "env_plainsecret",
+        "key": "STRIPE_KEY",
+        "type": "plain",
+        "value": "sk_live_shouldNeverBeKept123",
+        "target": [
+          "production"
+        ],
+        "updatedAt": 1791440000000
+      },
+      {
+        "id": "env_sensitive",
+        "key": "DB_HOST",
+        "type": "sensitive",
+        "target": [
+          "production"
+        ],
+        "updatedAt": 1791440000000
+      },
+      {
+        "id": "env_secret_url",
+        "key": "WEBHOOK_URL",
+        "type": "secret",
+        "value": "c2VjcmV0",
+        "target": [
+          "production"
+        ],
+        "updatedAt": 1791440000000
+      }
     ]
   },
   "GET /v6/deployments": {
     "deployments": [
-      {"uid": "dpl_123", "url": "checkout-demo-abc123-ground-crew1.vercel.app", "state": "READY", "created": 1791448900000, "ready": 1791448950000,
-       "source": "redeploy", "meta": {}}
+      {
+        "uid": "dpl_123",
+        "url": "checkout-demo-abc123-ground-crew1.vercel.app",
+        "state": "READY",
+        "created": 1791448900000,
+        "ready": 1791448950000,
+        "source": "redeploy",
+        "meta": {
+          "githubCommitSha": "150c2e0aa9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4",
+          "githubCommitRef": "main",
+          "githubCommitMessage": "Add scenario inject/restore helpers"
+        }
+      }
     ]
   }
 }

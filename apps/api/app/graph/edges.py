@@ -647,6 +647,47 @@ def _env_readers(repo: RepoFacts, env_name: str) -> list[str]:
     return list(repo.code_env_refs.get(env_name) or [])
 
 
+def _job_names(exprs: Sequence[str], service: DiscoveredResource) -> bool:
+    """A job's service expressions name this service (literally or by a name hint)."""
+    for expr in exprs:
+        hint = _name_hint(expr)
+        if expr == service.name or (hint and hint in service.name.lower().split("-")):
+            return True
+    return False
+
+
+def rule_deploy_commits(g: _Graph) -> None:
+    """A Vercel project whose production deployment is a commit of a linked repository is
+    defined in that repository (works without the clone: commits come from the REST API)."""
+    github = {r.name.lower(): r for r in g.of("github:repository")}
+    for project in g.of("vercel:project"):
+        latest = project.config.get("latest_production") or {}
+        sha = str(latest.get("commit_sha") or "")
+        if not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+            continue
+        found = _commit_for(sha, g.repos)
+        if found is None:
+            continue
+        repo, commit = found
+        target = github.get(repo.repo.lower())
+        if target is None:
+            continue
+        url = f"{repo.html_url}/commit/{commit.get('sha')}" if repo.html_url else None
+        g.add(
+            project,
+            target,
+            EdgeKind.defined_in,
+            Confidence.high,
+            "deploy_commit",
+            f"Production deployment {latest.get('uid') or ''} of {project.name} is commit "
+            f"{sha[:7]} of {repo.repo}"
+            + (f" ({commit.get('message')})" if commit.get("message") else "")
+            + ".",
+            commit=commit.get("sha"),
+            commit_url=url,
+        )
+
+
 def rule_env_urls(g: _Graph) -> None:
     """7. A Vercel project's *_URL env var points at a service: by value (high), or by name
     plus a shared repository (medium)."""
@@ -674,6 +715,10 @@ def rule_env_urls(g: _Graph) -> None:
 def _project_repo(g: _Graph, project: DiscoveredResource) -> str | None:
     if project.repo:
         return project.repo
+    for e in g.edges.values():
+        if e.source == key(project) and e.kind == EdgeKind.defined_in and g._repo_name(e.target):
+            repo = next((r for r in g.of("github:repository") if key(r) == e.target), None)
+            return repo.name if repo is not None else g._repo_name(e.target)
     for e in g.edges.values():
         if e.source == key(project) and e.kind == EdgeKind.deployed_by:
             wf = next((r for r in g.of("github:workflow") if key(r) == e.target), None)
@@ -721,22 +766,32 @@ def _env_by_name(g: _Graph, project: DiscoveredResource, valued: set[str]) -> No
                 f"Vercel env {name} ({item.get('type')}, value not read)",
                 f"{target.name} is deployed from the same repository {repo_name}",
             ]
+            confidence = Confidence.medium
             if repo is not None:
                 readers = _env_readers(repo, name)
                 if readers:
                     parts.append(f"{', '.join(readers)} reads {name}")
                 for wf in repo.workflows:
                     for job in wf.jobs:
-                        if name in job.vercel_env_keys:
+                        if name not in job.vercel_env_keys and name not in job.vercel_env_sources:
+                            continue
+                        services = ", ".join(job.ecs_services) or "an ECS service"
+                        if job.vercel_env_sources.get(name) == "task_ip" and _job_names(
+                            job.ecs_services, target
+                        ):
+                            # The pipeline itself writes this service's task IP into the var.
+                            confidence = Confidence.high
                             parts.append(
-                                f"{wf.path} job {job.id} sets {name} from "
-                                f"{', '.join(job.ecs_services) or 'an ECS service'}"
+                                f"{wf.path} job {job.id} writes {name} to Vercel from the public "
+                                f"IP of a running {target.name} task (service {services})"
                             )
+                        else:
+                            parts.append(f"{wf.path} job {job.id} sets {name} from {services}")
             g.add(
                 project,
                 target,
                 EdgeKind.calls,
-                Confidence.medium,
+                confidence,
                 "env_url",
                 "; ".join(parts) + ".",
                 env_name=name,
@@ -815,6 +870,7 @@ def infer_edges(resources: Sequence[DiscoveredResource], repos: Sequence[RepoFac
     rule_task_secrets(g)
     rule_secret_db(g, matched)
     rule_images(g)
+    rule_deploy_commits(g)
     rule_logs(g)
     rule_deploys(g)
     rule_env_urls(g)

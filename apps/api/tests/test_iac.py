@@ -121,3 +121,16 @@ def test_compose_and_env_files(tmp_path: Path) -> None:
     assert set(facts.code_env_refs) == {"REDIS_URL", "PORT"}
     assert "never-read" not in facts.model_dump_json()
     assert parse_compose("c.yml", "services: [1, 2]") == []
+
+
+def test_web_job_sets_api_url_from_the_api_task_ip() -> None:
+    from app.discovery.iac import read_repo
+    from tests.discovery_helpers import DEMO_REPO
+
+    facts = read_repo(DEMO_REPO, "GroundsCrew-AI/checkout-demo")
+    deploy = next(w for w in facts.workflows if w.path.endswith("deploy.yml"))
+    web = next(j for j in deploy.jobs if j.id == "web")
+    assert web.vercel and web.vercel_env_sources == {"API_URL": "task_ip"}
+    assert web.ecs_services == ["${{ vars.ECS_API_SERVICE }}"]
+    services = {j.id: j.ecs_services for j in deploy.jobs if j.ecs_deploy}
+    assert services, "the deploy job updates the ECS services"

@@ -476,6 +476,8 @@ def test_no_low_value_kinds_and_tags_make_no_edges() -> None:
 # --- the whole demo ------------------------------------------------------------------
 
 
+REPO_DEMO = "GroundsCrew-AI/checkout-demo"
+
 EXPECTED = {
     ("checkout-demo", "calls", "checkout-api"),
     ("checkout-api", "reads", "checkout-orders-db"),
@@ -498,15 +500,38 @@ async def test_demo_graph_has_every_expected_edge_with_evidence() -> None:
     edges = edges_of(resources, repos)
     assert set(edges) >= EXPECTED
     assert all(e.evidence for e in edges.values())
-    # API_URL is encrypted on Vercel, so the web -> api link is medium (name + shared repo).
+    # API_URL is encrypted on Vercel (as live), so its value is never read. The edge is still
+    # high: deploy.yml's web job writes API_URL from the public IP of a running api task.
     calls = edges[("checkout-demo", "calls", "checkout-api")]
-    assert calls.confidence == Confidence.medium
-    assert "deploy.yml job web sets API_URL" in calls.evidence
+    assert calls.confidence == Confidence.high and calls.rule == "env_url"
+    assert "API_URL (encrypted, value not read)" in calls.evidence
+    assert "same repository GroundsCrew-AI/checkout-demo" in calls.evidence
+    assert (
+        "deploy.yml job web writes API_URL to Vercel from the public IP of a running "
+        "checkout-api task" in calls.evidence
+    )
+    assert ("checkout-demo", "calls", "checkout-worker") not in edges
+    # The production deployment's commit ties the project to the repository too.
+    assert edges[("checkout-demo", "defined_in", REPO_DEMO)].rule in ("deploy_commit", "terraform")
     # The running image's commit is evidence on the defined_in edge, with the Terraform file.
     defined = edges[("checkout-api", "defined_in", "GroundsCrew-AI/checkout-demo")]
     assert defined.rule == "terraform" and defined.details["commit"].startswith("cef79e7")
-    for k in EXPECTED - {("checkout-demo", "calls", "checkout-api")}:
+    for k in EXPECTED:
         assert edges[k].confidence == Confidence.high, k
+
+
+async def test_without_the_clone_web_still_calls_api_at_medium() -> None:
+    """Live failure mode: the clone failed, so no workflows or Terraform. Commits come from
+    the REST API: the image tag and the Vercel deployment are both commits of checkout-demo."""
+    resources, repos = await demo_inventory()
+    (facts,) = repos
+    bare = RepoFacts(repo=facts.repo, html_url=facts.html_url, commits=facts.commits)
+    kept = [r for r in resources if r.type != "github:workflow"]
+    edges = edges_of(kept, [bare])
+    assert edges[("checkout-demo", "defined_in", REPO_DEMO)].rule == "deploy_commit"
+    calls = edges[("checkout-demo", "calls", "checkout-api")]
+    assert calls.confidence == Confidence.medium
+    assert "same repository GroundsCrew-AI/checkout-demo" in calls.evidence
 
 
 async def test_demo_graph_with_plain_api_url_is_high() -> None:
