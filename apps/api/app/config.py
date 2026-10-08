@@ -107,14 +107,17 @@ class Settings(BaseSettings):
     github_webhook_secret: SecretStr | None = None
 
     # Connections and discovery (Phase 3)
-    # Base AWS identity that assumes customer roles: the default credential chain, or this
-    # profile. Never stored; sessions are cached in memory only.
-    aws_base_profile: str | None = None
-    # The principal customers trust in infra/aws-connect.yaml. Unset = the base identity's ARN
-    # (GetCallerIdentity), which is right for local dev.
-    groundcrew_principal_arn: str | None = None
-    # S3 URL of infra/aws-connect.yaml for the one-click CloudFormation link. CloudFormation
-    # only accepts S3 template URLs; unset = the start response gives the CLI command instead.
+    # Groundcrew's own AWS identity, the platform identity that assumes customer roles: an IAM
+    # user whose only permission is sts:AssumeRole on arn:aws:iam::*:role/groundcrew-*. Unset =
+    # the default credential chain without profiles or ~/.aws (a hosted deployment's task or
+    # instance role). Customer sessions are cached in memory only, never stored.
+    groundcrew_aws_access_key_id: SecretStr | None = None
+    groundcrew_aws_secret_access_key: SecretStr | None = None
+    # Its ARN: the principal customers trust in infra/aws-connect.yaml (prefilled in the
+    # Quick-create link). Unset = whatever GetCallerIdentity says the platform identity is.
+    groundcrew_platform_principal_arn: str | None = None
+    # S3 URL of infra/aws-connect.yaml for the one-click CloudFormation Quick-create link
+    # (CloudFormation only accepts S3 template URLs). `make publish-connect-template` uploads it.
     aws_connect_template_url: str | None = None
     # Regions discovery may call (comma separated). The demo account's org policy allows
     # workloads only in us-east-2; global services (IAM, STS) are fine.

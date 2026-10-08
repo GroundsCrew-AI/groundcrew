@@ -33,7 +33,7 @@ export function connection(overrides: Partial<Connection> = {}): Connection {
     status: "connected",
     preview: false,
     account: "881050425883",
-    role_arn: "arn:aws:iam::881050425883:role/GroundcrewReadOnly",
+    role_arn: "arn:aws:iam::881050425883:role/groundcrew-read-only",
     external_id: "gc-abc",
     repos: [],
     team_id: null,

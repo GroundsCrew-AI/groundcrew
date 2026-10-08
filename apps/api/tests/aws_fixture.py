@@ -444,7 +444,7 @@ FIXTURE: dict[str, Any] = {
             _role("checkout-worker-task-execution", ECS_TRUST),
             _role("checkout-github-deploy", GITHUB_TRUST),
             _role(
-                "GroundcrewReadOnly",
+                "groundcrew-read-only",
                 {
                     "Statement": [
                         {

@@ -1,6 +1,7 @@
 """AWS connection: the read-only allowlist, the runtime guard, regions, ExternalId, and the
 CloudFormation template. botocore's Stubber drives the ordered STS flows."""
 
+import os
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,11 +26,12 @@ from app.connectors.aws import (
     is_read_operation,
     new_external_id,
     parse_role_arn,
+    platform_session,
 )
 from tests.aws_fixture import fixture_session
 
 ROOT = Path(__file__).resolve().parents[3]
-ROLE = "arn:aws:iam::881050425883:role/GroundcrewReadOnly"
+ROLE = "arn:aws:iam::881050425883:role/groundcrew-read-only"
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -204,7 +206,7 @@ def test_verify_sends_external_id_and_checks_account() -> None:
         ],
         identity={
             "Account": "881050425883",
-            "Arn": "arn:aws:sts::881050425883:assumed-role/GroundcrewReadOnly/x",
+            "Arn": "arn:aws:sts::881050425883:assumed-role/groundcrew-read-only/x",
             "UserId": "x",
         },
     )
@@ -218,6 +220,17 @@ def test_verify_refuses_role_that_works_without_external_id() -> None:
     sessions = _StubbedSessions([("assume_role", _creds(), None)])
     with pytest.raises(AwsError, match="without the ExternalId"):
         sessions.verify(ROLE, "gc-abc")
+
+
+def test_verify_explains_a_wrong_external_id() -> None:
+    sessions = _StubbedSessions(
+        [("assume_role", "AccessDenied", None), ("assume_role", "AccessDenied", None)]
+    )
+    with pytest.raises(AwsError) as exc:
+        sessions.verify(ROLE, "gc-abc")
+    message = str(exc.value)
+    assert "different ExternalId; this workspace's is gc-abc" in message
+    assert "Connect AWS link again" in message
 
 
 def test_verify_refuses_account_mismatch() -> None:
@@ -248,11 +261,57 @@ def test_customer_session_is_guarded_and_cached() -> None:
         "not-an-arn",
         "arn:aws:iam::12:role/x",
         "arn:aws:iam::881050425883:role/",
+        "arn:aws:iam::881050425883:role/GroundcrewReadOnly",  # not groundcrew-*
+        "arn:aws:iam::881050425883:role/admin",
     ],
 )
 def test_parse_role_arn_rejects(arn: str) -> None:
     with pytest.raises(AwsError):
         parse_role_arn(arn)
+
+
+def test_parse_role_arn_accepts_groundcrew_roles_with_paths() -> None:
+    assert parse_role_arn(ROLE) == "881050425883"
+    assert parse_role_arn("arn:aws:iam::881050425883:role/team/groundcrew-x") == "881050425883"
+
+
+# --- platform identity --------------------------------------------------------------------
+
+
+def test_platform_session_uses_only_the_groundcrew_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A profile in the environment (or ~/.aws) is never used.
+    monkeypatch.setenv("AWS_PROFILE", "someone-elses-admin")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", "/nonexistent/credentials")
+    settings = _settings(
+        groundcrew_aws_access_key_id="AKIAPLATFORMEXAMPLE1",
+        groundcrew_aws_secret_access_key="platform-secret",  # noqa: S106 - fake
+    )
+    session = platform_session(settings, "us-east-2")
+    creds = session.get_credentials()
+    assert creds is not None and creds.access_key == "AKIAPLATFORMEXAMPLE1"
+    assert session.profile_name == "default" and session.region_name == "us-east-2"
+    assert session._session.get_config_variable("credentials_file") == os.devnull
+
+
+def test_platform_session_without_keys_uses_the_chain_but_no_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AWS_PROFILE", "someone-elses-admin")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATASKROLEEXAMPLE1")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "x")
+    creds = platform_session(_settings(), "us-east-2").get_credentials()
+    assert creds is not None and creds.access_key == "AKIATASKROLEEXAMPLE1"
+
+
+def test_platform_session_needs_both_keys() -> None:
+    with pytest.raises(AwsError, match="or neither"):
+        platform_session(_settings(groundcrew_aws_access_key_id="AKIAONLYONE"), "us-east-2")
+
+
+def test_principal_is_the_configured_platform_arn() -> None:
+    arn = "arn:aws:iam::881050425883:user/groundcrew-platform"
+    sessions = AwsSessions(_settings(groundcrew_platform_principal_arn=arn))
+    assert sessions.principal_arn() == arn
 
 
 # --- CloudFormation template -------------------------------------------------------------

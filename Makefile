@@ -7,7 +7,12 @@ DB_URL ?= postgresql+asyncpg://groundcrew:groundcrew@localhost:5433/groundcrew
 TEST_DATABASE_URL ?= postgresql+asyncpg://groundcrew:groundcrew@localhost:5433/groundcrew_test
 export TEST_DATABASE_URL
 
-.PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types
+# The CloudFormation template behind the Connect AWS link (make publish-connect-template).
+CONNECT_TEMPLATE_ACCOUNT ?= 881050425883
+CONNECT_TEMPLATE_REGION ?= us-east-2
+CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
+
+.PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template
 
 help:
 	@echo "make install  Install API (uv) and web (npm) dependencies"
@@ -23,6 +28,7 @@ help:
 	@echo "make format   Auto-format Python code"
 	@echo "make models   Smoke test Nemotron models on Token Factory (uses credits)"
 	@echo "make api-types  Regenerate the web app's typed API client from FastAPI's OpenAPI schema"
+	@echo "make publish-connect-template  Upload infra/aws-connect.yaml to S3 (your AWS CLI credentials)"
 
 install:
 	cd $(API) && $(UV) sync
@@ -74,3 +80,16 @@ format:
 
 models:
 	$(UV) run --project $(API) python scripts/test_models.py
+
+# Uses your own AWS CLI credentials (not the platform identity), only after checking the account.
+publish-connect-template:
+	@account=$$(aws sts get-caller-identity --query Account --output text) || exit 1; \
+	if [ "$$account" != "$(CONNECT_TEMPLATE_ACCOUNT)" ]; then \
+	  echo "These AWS credentials are for account $$account, not $(CONNECT_TEMPLATE_ACCOUNT). Stopping."; \
+	  exit 1; \
+	fi
+	cmp -s infra/aws-connect.yaml $(API)/app/connectors/templates/aws-connect.yaml || \
+	  { echo "infra/aws-connect.yaml and the API's copy differ; copy it over first."; exit 1; }
+	aws s3 cp infra/aws-connect.yaml s3://$(CONNECT_TEMPLATE_BUCKET)/aws-connect.yaml \
+	  --region $(CONNECT_TEMPLATE_REGION) --content-type text/yaml
+	@echo "AWS_CONNECT_TEMPLATE_URL=https://$(CONNECT_TEMPLATE_BUCKET).s3.$(CONNECT_TEMPLATE_REGION).amazonaws.com/aws-connect.yaml"

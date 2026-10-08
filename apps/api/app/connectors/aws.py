@@ -1,9 +1,12 @@
 """AWS access: short-lived sessions from a customer's role, and a read-only guard on every call.
 
-Groundcrew never stores AWS keys. A connection stores the role ARN, the ExternalId, and the
-account ID. The base identity (default credential chain, or AWS_BASE_PROFILE) assumes the
-role with the ExternalId; the temporary session is cached in memory until shortly before it
-expires and is never written anywhere.
+Groundcrew never stores a customer's AWS keys. A connection stores the role ARN, the
+ExternalId, and the account ID. Groundcrew's platform identity (the IAM user
+groundcrew-platform, whose only permission is sts:AssumeRole on role/groundcrew-*) assumes
+the role with the ExternalId; the temporary session is cached in memory until shortly before
+it expires and is never written anywhere. The platform identity comes only from
+GROUNDCREW_AWS_ACCESS_KEY_ID / GROUNDCREW_AWS_SECRET_ACCESS_KEY, else the default credential
+chain without profiles or ~/.aws (a hosted deployment's task or instance role).
 
 Every client made from a customer session carries a `before-parameter-build` hook that refuses any
 operation not in AWS_READ_OPERATIONS, so a coding mistake cannot write, read a secret value,
@@ -11,6 +14,7 @@ or read customer data, even if the role would allow it. Regional clients are onl
 DISCOVERY_REGIONS; IAM and STS are global.
 """
 
+import os
 import re
 import secrets
 import threading
@@ -20,6 +24,7 @@ from datetime import datetime
 from typing import Any
 
 import boto3
+import botocore.session
 from botocore import xform_name
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
@@ -99,7 +104,15 @@ SESSION_SECONDS = 3600
 # Refresh a cached session this long before it expires.
 REFRESH_MARGIN_SECONDS = 300
 
-ROLE_ARN = re.compile(r"^arn:aws:iam::(\d{12}):role/[\w+=,.@/-]{1,512}$")
+ROLE_ARN = re.compile(r"^arn:aws:iam::(\d{12}):role/(?:[\w+=,.@-]+/)*([\w+=,.@-]{1,64})$")
+# The platform identity may only assume roles with this prefix (infra/aws-connect.yaml).
+ROLE_PREFIX = "groundcrew-"
+# botocore config without profiles or shared files: AWS_PROFILE and ~/.aws are ignored.
+_NO_PROFILES = {
+    "profile": (None, None, None, None),
+    "config_file": (None, None, os.devnull, None),
+    "credentials_file": (None, None, os.devnull, None),
+}
 
 # Adaptive retries back off on throttling (botocore's ThrottlingException handling).
 CLIENT_CONFIG = Config(
@@ -134,11 +147,42 @@ def new_external_id() -> str:
 
 
 def parse_role_arn(role_arn: str) -> str:
-    """The account ID of a role ARN, or AwsError if it is not one."""
+    """The account ID of a Groundcrew role ARN, or AwsError saying what is wrong with it."""
     match = ROLE_ARN.match(role_arn.strip())
     if not match:
-        raise AwsError("That is not an IAM role ARN (arn:aws:iam::<account>:role/<name>).")
+        raise AwsError(
+            "That is not an IAM role ARN. Copy RoleArn from the stack's Outputs tab; it looks "
+            "like arn:aws:iam::123456789012:role/groundcrew-read-only."
+        )
+    if not match.group(2).startswith(ROLE_PREFIX):
+        raise AwsError(
+            f"The role name must start with {ROLE_PREFIX}, so Groundcrew is allowed to assume "
+            "it. Use the RoleArn output of the groundcrew-read-only stack."
+        )
     return match.group(1)
+
+
+def platform_session(settings: Settings, region: str) -> boto3.Session:
+    """Groundcrew's own identity: the two GROUNDCREW_AWS_* keys, else the default chain
+    (environment, container or instance role). Never a profile or ~/.aws."""
+    core = botocore.session.Session(session_vars=_NO_PROFILES)
+    key_id, secret = (
+        settings.groundcrew_aws_access_key_id,
+        settings.groundcrew_aws_secret_access_key,
+    )
+    if bool(key_id) != bool(secret):
+        raise AwsError(
+            "Set both GROUNDCREW_AWS_ACCESS_KEY_ID and GROUNDCREW_AWS_SECRET_ACCESS_KEY, "
+            "or neither."
+        )
+    if key_id and secret:
+        return boto3.Session(
+            botocore_session=core,
+            aws_access_key_id=key_id.get_secret_value(),
+            aws_secret_access_key=secret.get_secret_value(),
+            region_name=region,
+        )
+    return boto3.Session(botocore_session=core, region_name=region)
 
 
 def _operation_guard(allowed: frozenset[str]) -> Any:
@@ -203,10 +247,7 @@ class AwsSessions:
     def base(self) -> boto3.Session:
         if self._base is None:
             self._base = guard_session(
-                boto3.Session(
-                    profile_name=self.settings.aws_base_profile, region_name=self.home_region
-                ),
-                BASE_OPERATIONS,
+                platform_session(self.settings, self.home_region), BASE_OPERATIONS
             )
         return self._base
 
@@ -215,14 +256,18 @@ class AwsSessions:
         return session.client("sts", region_name=self.home_region, config=CLIENT_CONFIG)
 
     def principal_arn(self) -> str:
-        """The principal customers must trust: GROUNDCREW_PRINCIPAL_ARN, else whoever the base
-        credentials are (an assumed-role ARN becomes its role ARN)."""
-        if self.settings.groundcrew_principal_arn:
-            return self.settings.groundcrew_principal_arn
+        """The principal customers must trust: GROUNDCREW_PLATFORM_PRINCIPAL_ARN, else whoever
+        the platform credentials are (an assumed-role ARN becomes its role ARN)."""
+        if self.settings.groundcrew_platform_principal_arn:
+            return self.settings.groundcrew_platform_principal_arn
         try:
             arn = str(self._sts(self.base()).get_caller_identity()["Arn"])
         except (ClientError, BotoCoreError) as exc:
-            raise AwsError(f"No base AWS identity: {error_text(exc)}") from None
+            raise AwsError(
+                "Groundcrew has no AWS platform identity. Set GROUNDCREW_AWS_ACCESS_KEY_ID, "
+                "GROUNDCREW_AWS_SECRET_ACCESS_KEY, and GROUNDCREW_PLATFORM_PRINCIPAL_ARN "
+                f"(docs/self-hosting.md). {error_text(exc)}"
+            ) from None
         assumed = re.match(r"^arn:aws:sts::(\d{12}):assumed-role/([^/]+)/", arn)
         if assumed:
             return f"arn:aws:iam::{assumed.group(1)}:role/{assumed.group(2)}"
@@ -281,6 +326,7 @@ class AwsSessions:
         1. AssumeRole without the ExternalId must be refused (the trust policy has the
            sts:ExternalId condition). If it succeeds, the role is refused.
         2. AssumeRole with it, then GetCallerIdentity from the new session.
+        Every failure becomes one sentence a non-expert can act on.
         """
         account = parse_role_arn(role_arn)
         try:
@@ -289,14 +335,24 @@ class AwsSessions:
             if error_code(exc) not in ("AccessDenied", "AccessDeniedException"):
                 raise AwsError(f"Could not check {role_arn}: {error_text(exc)}") from None
         except BotoCoreError as exc:
-            raise AwsError(f"Could not check {role_arn}: {error_text(exc)}") from None
+            raise AwsError(self._no_platform_identity(exc)) from None
         else:
             raise AwsError(
-                "This role can be assumed without the ExternalId. Create it with the Groundcrew "
-                "template, which requires the ExternalId, and try again."
+                "This role can be assumed without the ExternalId, which is unsafe. Delete it and "
+                "create it with the Connect AWS link, which requires the ExternalId."
             )
         self.forget(role_arn, external_id)
-        session = self.assume(role_arn, external_id)
+        try:
+            session = self.assume(role_arn, external_id)
+        except AwsError as exc:
+            if "AccessDenied" not in str(exc):
+                raise
+            raise AwsError(
+                f"Groundcrew could not assume {role_arn}. Usually the stack was created with a "
+                f"different ExternalId; this workspace's is {external_id}. Delete the "
+                "groundcrew-read-only stack, then use the Connect AWS link again so the "
+                "ExternalId is filled in for you. If the stack is new, wait a minute and retry."
+            ) from None
         try:
             ident = self._sts(session).get_caller_identity()
         except (ClientError, BotoCoreError) as exc:
@@ -304,6 +360,14 @@ class AwsSessions:
         if ident["Account"] != account:
             raise AwsError(f"The role's session is in account {ident['Account']}, not {account}.")
         return CallerIdentity(account=str(ident["Account"]), arn=str(ident["Arn"]))
+
+    @staticmethod
+    def _no_platform_identity(exc: BaseException) -> str:
+        return (
+            "Groundcrew's AWS platform identity is not set up: set "
+            "GROUNDCREW_AWS_ACCESS_KEY_ID and GROUNDCREW_AWS_SECRET_ACCESS_KEY "
+            f"(docs/self-hosting.md). {error_text(exc)}"
+        )
 
 
 class AwsReader:

@@ -154,7 +154,7 @@ export function AwsConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
                     id="role-arn"
                     value={roleArn}
                     onChange={(e) => setRoleArn(e.target.value)}
-                    placeholder="arn:aws:iam::123456789012:role/GroundcrewReadOnly"
+                    placeholder="arn:aws:iam::123456789012:role/groundcrew-read-only"
                     className="font-mono text-[12px]"
                     autoComplete="off"
                     spellCheck={false}

@@ -8,18 +8,24 @@ Description: >-
 Parameters:
   GroundcrewPrincipalArn:
     Type: String
-    Description: The Groundcrew principal allowed to assume the role (shown on the Connections page).
+    Description: >-
+      Groundcrew's platform identity, the only principal allowed to assume the role (prefilled
+      by the Connect AWS link).
     AllowedPattern: "^arn:aws:iam::[0-9]{12}:(root|user/.+|role/.+)$"
   ExternalId:
     Type: String
-    Description: This workspace's ExternalId (shown on the Connections page). Do not reuse it elsewhere.
+    Description: >-
+      This workspace's ExternalId (prefilled by the Connect AWS link). Do not reuse it elsewhere.
     MinLength: 16
     MaxLength: 128
     AllowedPattern: "^[A-Za-z0-9_+=,.@:/-]+$"
   RoleName:
     Type: String
-    Default: GroundcrewReadOnly
-    Description: Name of the role to create.
+    Default: groundcrew-read-only
+    Description: >-
+      Name of the role to create. Must start with groundcrew- (Groundcrew's platform identity
+      may only assume roles named groundcrew-*).
+    AllowedPattern: "^groundcrew-[A-Za-z0-9+=,.@_-]{1,53}$"
   CreateResourceExplorerIndex:
     Type: String
     Default: "true"

@@ -80,7 +80,7 @@ async def _connections(sf: SessionFactory, ws: Workspace) -> dict[str, uuid.UUID
                 name="AWS 881050425883",
                 status="connected",
                 config={
-                    "role_arn": "arn:aws:iam::881050425883:role/GroundcrewReadOnly",
+                    "role_arn": "arn:aws:iam::881050425883:role/groundcrew-read-only",
                     "external_id": "gc-x",
                     "account_id": "881050425883",
                 },

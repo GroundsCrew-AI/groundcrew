@@ -56,7 +56,7 @@ async def test_discovers_the_demo_account() -> None:
     assert not any(t == "ec2:network-interface" for t, _ in types)
     assert ("ec2:security-group", "default") not in types
     assert ("iam:role", "AWSServiceRoleForECS") not in types
-    assert ("iam:role", "GroundcrewReadOnly") not in types
+    assert ("iam:role", "groundcrew-read-only") not in types
     assert all(r.account == ACCOUNT for r in result.resources)
     assert result.notes == []
 

@@ -47,6 +47,7 @@ from app.security.crypto import SecretsKeyError, encrypt
 router = APIRouter(prefix="/connections", tags=["connections"])
 
 STACK_NAME = "groundcrew-read-only"
+ROLE_NAME = "groundcrew-read-only"
 TEMPLATE = Path(__file__).resolve().parents[1] / "connectors" / "templates" / "aws-connect.yaml"
 
 
@@ -130,6 +131,7 @@ def _console_url(settings: Settings, external_id: str, principal: str) -> str | 
             "stackName": STACK_NAME,
             "param_GroundcrewPrincipalArn": principal,
             "param_ExternalId": external_id,
+            "param_RoleName": ROLE_NAME,
         },
         quote_via=quote,
     )
@@ -449,7 +451,7 @@ def _cleanup_steps(conn: Connection) -> list[str]:
         return [
             f"Delete the CloudFormation stack {STACK_NAME} in {region} (account "
             f"{c.get('account_id') or 'you connected'}): CloudFormation console, select the "
-            "stack, Delete. This removes the GroundcrewReadOnly role and the Resource Explorer "
+            "stack, Delete. This removes the groundcrew-read-only role and the Resource Explorer "
             "index and view it created.",
             f"Or run: aws cloudformation delete-stack --region {region} --stack-name {STACK_NAME}",
         ]

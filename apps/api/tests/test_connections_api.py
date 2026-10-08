@@ -31,7 +31,7 @@ from tests.test_discovery_engine import SUMMARY, Inventory
 pytestmark = pytest.mark.anyio
 
 PRINCIPAL = "arn:aws:iam::881050425883:user/groundcrew-demo"
-ROLE = "arn:aws:iam::881050425883:role/GroundcrewReadOnly"
+ROLE = "arn:aws:iam::881050425883:role/groundcrew-read-only"
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -59,7 +59,7 @@ class FakeSessions:
             raise AwsError(self.fail)
         return CallerIdentity(
             account="881050425883",
-            arn="arn:aws:sts::881050425883:assumed-role/GroundcrewReadOnly/x",
+            arn="arn:aws:sts::881050425883:assumed-role/groundcrew-read-only/x",
         )
 
     def forget(self, role_arn: str, _external_id: str) -> None:
@@ -179,6 +179,7 @@ async def test_aws_start_console_link_is_prefilled_in_us_east_2(
         in url
     )
     assert "templateURL=https%3A%2F%2Fs3.us-east-2.amazonaws.com" in url
+    assert "stackName=groundcrew-read-only" in url and "param_RoleName=groundcrew-read-only" in url
 
 
 async def test_aws_complete_verifies_and_stores_no_credentials(
