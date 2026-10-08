@@ -395,14 +395,18 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         AWS Resource Explorer search with tagging API fallback plus core describes; IaC facts (python-hcl2,
         workflows, Dockerfiles, compose); upsert on stable external_id; stale marking; limits and timeouts.
         Live read-only check on 881050425883: 17 resources in 8.7 s
-  - [x] Edges (`app/graph/edges.py`, 9 rules + structural, confidence and evidence), coverage, Scout
-        `summarize_system` with a graph digest and rule risks
+  - [x] Edges (`app/graph/edges.py`: core kinds calls / reads / deployed_by / defined_in plus uses,
+        pulls_from, logs_to; confidence and evidence), coverage, a deterministic graph digest under ~6k
+        tokens for Scout's unchanged `summarize_system` (rule risks in resource notes)
+  - [x] Contracts: `CredentialsProvider` (`app/connectors/credentials.py`), `GitHubAppSource`
+        (`app/connectors/github_source.py`), `ResourceSink` (`app/graph/sink.py`), `DiscoveredEdge`
   - [x] API: connections, graph, resources; web types regenerated
   - [x] Web: Connections (AWS flow, GitHub picker, Vercel token, Azure / K8s Preview) and Map (React Flow +
         ELK grouped layout, evidence panel, filters, summary)
-  - [x] Tests: 406 API (allowlist, secret values never requested, ExternalId, regions, upsert / stale,
-        every edge rule, coverage, summary with FakeLLM, API), 34 web
-  - Env vars: `AWS_BASE_PROFILE`, `GROUNDCREW_PRINCIPAL_ARN`, `AWS_CONNECT_TEMPLATE_URL`,
+  - [x] Tests: 426 API (allowlist, secret values never requested, ExternalId, platform identity, regions,
+        upsert / stale, every edge rule, contracts, coverage, summary with FakeLLM, API), 37 web
+  - Env vars: `GROUNDCREW_AWS_ACCESS_KEY_ID`, `GROUNDCREW_AWS_SECRET_ACCESS_KEY`,
+    `GROUNDCREW_PLATFORM_PRINCIPAL_ARN`, `AWS_CONNECT_TEMPLATE_URL`,
     `DISCOVERY_REGIONS` [us-east-2], `MAX_RESOURCES_PER_CONNECTION` [2000], `DISCOVERY_TIMEOUT_SECONDS` [100]
   - Endpoints: `POST /connections/aws/start`, `POST /connections/aws/complete`, `GET /connections/aws/template`,
     `GET /connections/github/installations`, `POST /connections/github`, `POST /connections/vercel`,
@@ -412,7 +416,10 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - Decisions (2026-10-08): demo AWS workloads only in us-east-2 (org policy), so regional calls use
     `DISCOVERY_REGIONS` only and IAM / STS are global; read-only enforced twice (IAM policy with explicit deny,
     and a botocore hook that refuses any operation outside the allowlist); the AWS connect link needs the
-    template in S3 (CloudFormation only accepts S3 URLs), otherwise the UI shows the CLI command; an
+    template in S3 (CloudFormation only accepts S3 URLs): private bucket `groundcrew-templates-881050425883`
+    (us-east-2, versioned), `make publish-connect-template`; a private bucket only serves stacks in the same
+    account. Groundcrew's AWS identity is the IAM user `groundcrew-platform` (only `sts:AssumeRole` on
+    `role/groundcrew-*`), from two env vars, never profiles or `~/.aws` (docs/self-hosting.md); an
     encrypted Vercel `API_URL` gives a medium `calls` edge (name + shared repo + workflow evidence), a plain
     one compared with the task IP gives high; edges are recomputed per workspace on every discovery;
     secret-to-database links come from Terraform (secret version built from the db) before names

@@ -50,10 +50,7 @@ about 6k tokens (Nano's reliable range), and says how many were left out.
 
 ## Coming with later steps
 
-- `CredentialsProvider` (Step 6): `kubeconfig(connection_id) -> Path`, `aws_session(connection_id) -> boto3.Session`.
-  Temporary: `EnvCredentialsProvider` reading env.
-- `ResourceSink` (Step 6/7): `register_deployment(workspace_id, deployment)`. Temporary: a no-op logger; the
-  graph module implements it so new deployments appear on the map.
+- `CredentialsProvider` and `ResourceSink`: landed in Phase 3, signatures below.
 - The shape of a finished deployment in `runs.state` (Step 8), which Medic reads for "recent deploys" and rollback.
 
 ---
@@ -61,62 +58,190 @@ about 6k tokens (Nano's reliable range), and says how many were left out.
 # Phase 3: what landed (connections, discovery, graph)
 
 For Phase 4 (Deployer) and Phase 5 (Medic). Everything below is in `main` once
-`phase3-discovery` merges.
+`phase3-discovery` merges. Phase 3 changed no file under `llm/`, `repos/`, `agents/`,
+`sandbox/`, `targets/`, or `tools/repo_read.py`.
 
-## Resource and Edge (tables `resources`, `edges`)
+## The five contracts (final signatures)
+
+### 1. CredentialsProvider (`app/connectors/credentials.py`)
+
+```python
+class CredentialsProvider(Protocol):
+    def kubeconfig(self, connection_id: uuid.UUID) -> Path: ...
+    def aws_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
+    def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential: ...
+
+class AzureCredential(Protocol):          # azure-identity's TokenCredential shape
+    def get_token(self, *scopes: str, **kwargs: Any) -> Any: ...
+```
+
+All three block: call them with `asyncio.to_thread`. Errors are `CredentialsError` (never
+with a secret in the message).
+
+- `ConnectionCredentialsProvider(connections, *, sessions=None)`, or
+  `await ConnectionCredentialsProvider.for_workspace(session, workspace_id)`. Use it as a
+  context manager (or call `close()`) so kubeconfig files are deleted.
+  - `aws_session`: STS AssumeRole into the connection's `role_arn` with its `external_id`,
+    from Groundcrew's platform identity (`GROUNDCREW_AWS_ACCESS_KEY_ID` /
+    `GROUNDCREW_AWS_SECRET_ACCESS_KEY`, else the default chain without profiles or
+    `~/.aws`). The session lasts at most an hour, is cached in memory only, and refuses any
+    operation outside `AWS_READ_OPERATIONS`.
+  - `kubeconfig`: decrypts the stored kubeconfig into a 0600 file in a 0700 temp dir.
+  - `azure_credential`: a `ClientSecretAzureCredential` (tenant, client, decrypted secret);
+    `get_token` raises until live Azure lands (`TODO(azure-live)`, swap for
+    `azure.identity.ClientSecretCredential`).
+  - Secrets stay Fernet-encrypted in `connections.secret_encrypted` and are decrypted only
+    inside these calls.
+- `EnvCredentialsProvider(env=None)`: the temporary version. Same credentials for every
+  connection id: `KUBECONFIG`; `GROUNDCREW_DEV_AWS_ROLE_ARN` + `GROUNDCREW_DEV_AWS_EXTERNAL_ID`
+  (assumed from the platform identity, like a real connection); `AZURE_TENANT_ID`,
+  `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`.
+
+### 2. GitHubAppSource (`app/connectors/github_source.py`), a RepoSource
+
+```python
+class GitHubAppSource:
+    def __init__(self, installation_id: int, repo: str, ref: str | None = None, *,
+                 subpath: str | None = None, app: GitHubApp | None = None) -> None: ...
+    def materialize(self) -> Path: ...     # mints the installation token, then clones
+    def describe(self) -> str: ...
+    def cleanup(self) -> None: ...
+    commit: str | None                     # HEAD of the clone, after materialize()
+```
+
+`materialize()` blocks; call it with `asyncio.to_thread`. It mints an installation token
+(cached in memory until 5 minutes before expiry) and runs `GitCloneSource` unchanged with the
+token on a settings copy, so every GitCloneSource rule holds: https only, shallow, working
+tree only, `REPO_MAX_BYTES`, `GIT_CLONE_TIMEOUT_SECONDS`, temp dir always deleted. The token
+reaches git only through git's environment (`GIT_CONFIG_KEY_0=http.<host>/.extraheader`),
+the same setting as `git -c http.extraHeader` but never in argv, the URL, an error, or a log.
+Also a context manager: `with GitHubAppSource(installation_id, "owner/name") as root: ...`.
+
+### 3. ResourceSink (`app/graph/sink.py`)
+
+```python
+class ResourceSink(Protocol):
+    async def register_deployment(self, workspace_id: uuid.UUID,
+                                  deployment: Deployment) -> uuid.UUID: ...   # the resource id
+
+class Deployment(BaseModel):
+    resource: DiscoveredResource           # stable external_id (ARN, "k8s:<ns>/<kind>/<name>")
+    connection_id: uuid.UUID | None = None # keeps it fresh on that connection's discovery
+    run_id: uuid.UUID | None = None
+    repo: str | None = None
+    commit: str | None = None
+    image: str | None = None
+    deployed_by: str | None = None         # external_id of a resource already in the graph
+    summary: str | None = None             # evidence line
+    at: datetime = now
+```
+
+`GraphResourceSink(session_factory)` upserts the resource (same key as discovery, so ids
+survive; `config.last_deployment` records run, repo, commit, image) and one `deployed_by`
+edge to `deployed_by` or, by default, the workspace's "Groundcrew" node
+(`groundcrew:deployer`). Discovery recomputes inferred edges on every run but keeps these
+(evidence rule `groundcrew_deploy`). `NoopResourceSink` only logs.
+
+### 4. Resource and Edge (`app/db/models.py`, `app/discovery/types.py`)
 
 ```
-Resource: id, workspace_id, connection_id, provider (aws|azure|gcp|k8s|vercel|vm|github),
-          type ("<service>:<kind>", e.g. ecs:service, rds:db, vercel:project, github:workflow),
+Resource: id, workspace_id, connection_id, provider (aws|azure|gcp|k8s|vercel|vm|github|groundcrew),
+          type ("<service>:<kind>": ecs:service, rds:db, vercel:project, github:workflow, ...),
           external_id (stable: ARN, Azure ID, "vercel:project:<id>", "github:repo:<owner/name>"),
-          account, region, name, tags, config (non-secret JSON), coverage
-          (observed|diagnosable|actionable), iac_path ("infra/aws/ecs.tf#L94"), repo,
-          stale (not seen by the last complete discovery of its connection), last_seen_at
+          account, region, name, tags, config (non-secret JSON), iac_path ("infra/aws/ecs.tf#L94"),
+          repo, coverage (observed|diagnosable|actionable), stale, last_seen_at
 Edge:     id, workspace_id, from_id, to_id, kind, confidence (high|medium|low),
           evidence {text, rule, ...details}
 ```
 
-Unique key: `(workspace_id, provider, external_id)`, so ids survive rediscovery. Edges are
-recomputed for the whole workspace on every discovery from non-stale resources.
+`Coverage`, `EdgeKind`, and `Confidence` are enums in `app/discovery/types.py`. Unique keys:
+`(workspace_id, provider, external_id)` for resources, `(from_id, to_id, kind)` for edges.
 
-Edge kinds: `calls, reads, uses, for, pulls_from, logs_to, built_from, deployed_by, assumes,
-defined_in, same_repo, related, runs_in, runs_as, routes_to, deployment_of`.
+A connector or a target's `discover()` returns a `ConnectorResult`:
+
+```python
+class ConnectorResult(BaseModel):
+    resources: list[DiscoveredResource]
+    edges: list[DiscoveredEdge]            # relationships it knows for certain
+    repos: list[RepoFacts]                 # Terraform, workflows, Dockerfiles, commits, runs
+    notes: list[str]
+    truncated: bool
+
+class DiscoveredEdge(BaseModel):
+    from_external_id: str
+    to_external_id: str
+    kind: EdgeKind
+    confidence: Confidence = Confidence.high
+    evidence: str
+    rule: str = "declared"
+```
+
+Declared edges are kept with the from-resource and survive rediscovery; the engine adds the
+inferred ones below.
+
+**Edge kinds.** Core: `calls`, `reads`, `deployed_by`, `defined_in`. **Extensions, flagged for
+Ahmed** (each needed by a Done-when edge, and none maps onto a core kind without losing what
+Medic needs):
+
+| Kind | Meaning | Why not a core kind |
+|---|---|---|
+| `uses` | service gets a secret or config from (service -> Secrets Manager secret) | Medic compares the secret's `last_changed_at` with an incident; `reads` means data |
+| `pulls_from` | service pulls its image from (service -> ECR repository) | a registry is neither data nor where the service is defined |
+| `logs_to` | service sends logs to (service -> log group) | tells Medic which log group to query; it also makes a resource `diagnosable` |
+
+Mapped onto core kinds: `built_from` (image tag is a commit) -> `defined_in` (one edge with the
+Terraform evidence and `details.commit`, `commit_url`); Vercel `deployment_of` -> project
+`deployed_by` its latest production deployment; Kubernetes `routes_to` -> `calls`. Removed
+(their facts are evidence on other edges): `for` (secret -> db is `details.secret_db` on the
+service -> db `reads` edge), `assumes` (the OIDC role is named in the `deployed_by` evidence),
+`runs_in`, `runs_as`, `same_repo`, `related`.
 
 | Rule (`evidence.rule`) | Edge | Confidence |
 |---|---|---|
 | `sg_db_ingress` | service/function -> db `reads` (db SG allows the db port from the service's SG) | high |
 | `task_secret` | service -> secret `uses` (task definition `secrets` block, by ARN) | high |
-| `secret_db` | secret -> db `for` (Terraform secret version built from the db) / by name | high / medium |
-| `secret_db` | service -> db `reads` via a secret for the db, no SG rule seen | medium |
+| `secret_db` | service -> db `reads` via a secret for the db, no SG rule seen (`details.secret_db` says why: Terraform or names) | medium |
 | `image_ecr` | service -> ECR repo `pulls_from` (image URI) | high |
-| `image_commit` | service -> GitHub repo `built_from` (SHA tag is a recent commit; `details.commit_url`) | high |
-| `awslogs` | service/function -> log group `logs_to` | high |
 | `terraform` | resource -> GitHub repo `defined_in` (resolved Terraform name matches) | high |
-| `oidc_deploy` | service -> workflow `deployed_by` (role trusted only by the repo may UpdateService on it); workflow -> role `assumes` | high |
+| `image_commit` | service -> GitHub repo `defined_in` (image tag is a recent commit; `details.commit_url`), merged into the `terraform` edge when there is one | high |
+| `awslogs` | service/function -> log group `logs_to` | high |
+| `oidc_deploy` | service -> workflow `deployed_by` (role trusted only by the repo may UpdateService on it) | high |
 | `workflow_ecs` | service -> workflow `deployed_by` (service named in the job, or `vars.ECS_API_SERVICE` name hint) | high / medium |
 | `vercel_job` | vercel project -> workflow `deployed_by` (linked repo, project id in the workflow, same name) / only project | high / medium |
 | `env_url` | vercel project -> service/db `calls` (plain *_URL value host = task IP or endpoint) / env name + shared repo | high / medium |
-| `same_repo` | vercel project -> service `same_repo` | low |
-| `shared_tags` | resource -> resource `related` (specific tag shared by 2 to 5 resources) | low |
-| structural | `runs_in` cluster, `runs_as` role, `deployment_of`, k8s `routes_to` | high |
+| `vercel_deployment` | vercel project -> its latest production deployment `deployed_by` | high |
+| `k8s_selector`, `k8s_ingress` | k8s service -> workload, ingress -> service `calls` | high |
+| `workflow_file` | workflow -> GitHub repo `defined_in` | high |
+| `declared` (or the connector's rule) | whatever a `DiscoveredEdge` says | as declared |
+| `groundcrew_deploy` | resource -> deployer `deployed_by` (ResourceSink) | high |
 
-## Connector interface (`app/discovery/types.py`)
+### 5. Graph digest for Scout (`app/graph/digest.py`)
 
-Each provider is an async function `(Connection, Settings, Progress) -> ConnectorResult`
-registered in `app/discovery/engine.py` (`DEFAULT_CONNECTORS`). `ConnectorResult` carries
-`resources: list[DiscoveredResource]`, `repos: list[RepoFacts]` (Terraform, workflows,
-Dockerfiles, compose, env names, commits, runs), `notes`, and `truncated`. `Progress(message)`
-writes a run step. Clients:
+```python
+def digest(resources: Sequence[DiscoveredResource], edges: Sequence[InferredEdge], *,
+           risks: Sequence[Risk] = (), token_cap: int = 6_000) -> list[ResourceSummary]: ...
+async def workspace_digest(session: AsyncSession, workspace_id: uuid.UUID, *,
+                           token_cap: int = 6_000) -> list[ResourceSummary]: ...
+def find_risks(resources, edges) -> list[Risk]       # Risk(resource: key, text: "Risk: ...")
+```
 
-- AWS `app/connectors/aws.py`: `AwsSessions.assume(role_arn, external_id)` returns a boto3
-  session (cached in memory, never stored) whose clients refuse any operation outside
-  `AWS_READ_OPERATIONS`; `AwsReader(session).call/paginate` only in `DISCOVERY_REGIONS`. Medic
-  should add the reads it needs (e.g. `logs:FilterLogEvents`, `cloudwatch:GetMetricData`, both
-  already allowed) through `AwsReader`, never a raw client. This is the `CredentialsProvider.
-  aws_session(connection_id)` from "Coming with later steps": `get_sessions().assume(...)` with
-  the connection's `role_arn` and `external_id`.
-- GitHub `app/connectors/github.py`: `GitHubApp.get(installation_id, path)` (GET only) and
-  `GitHubAppSource.create(app, installation_id, "owner/name", ref=...)`, the RepoSource above.
+The input to Scout's existing `summarize_system(llm, budget, resources)` (task
+`summarize_graph`, Nano, unchanged): one `ResourceSummary` per resource, sorted by provider,
+type, and name, with relations by name (high and medium edges) and facts in `notes`. Risks
+found by rules (public database, security group open to the world, a service with no load
+balancer or stable endpoint, a failed rollout, missing tasks) go into the `notes` of the
+resource they are about. Under `token_cap` tokens by folding: resources with no relations
+and no risks become one line per provider and type, then everything does. No ARNs, raw JSON,
+or secrets reach the model. Discovery stores `workspaces.settings.system_summary = {text,
+risks, generated_at, run_id, error}`.
+
+## Clients
+
+- AWS `app/connectors/aws.py`: `AwsReader(session).call/paginate` only in
+  `DISCOVERY_REGIONS`. Medic should add the reads it needs (e.g. `logs:FilterLogEvents`,
+  `cloudwatch:GetMetricData`, both already allowed) through `AwsReader` on a session from
+  `CredentialsProvider.aws_session`, never a raw client.
+- GitHub `app/connectors/github.py`: `GitHubApp.get(installation_id, path)` (GET only).
 - Vercel `app/connectors/vercel.py`: `VercelClient(token, team_id)`; values only for plain
   *_URL / *_HOST.
 - Azure and Kubernetes: fixture readers only (`TODO(azure-live)`, `TODO(k8s-live)`).
@@ -128,25 +253,22 @@ writes a run step. Clients:
   Job kinds `discover_workspace` / `discover`, `max_attempts = 1`.
 - Read: `GET /workspaces/{id}/graph?provider=&type=&include_stale=` and `GET /resources/{id}`
   (config, edges with evidence, recent deploys).
-- `workspaces.settings.system_summary = {text, risks, generated_at, run_id, error}`.
 - Coverage: `app.graph.coverage.register_actionable("ecs:service")` from a target adapter makes
   that type `actionable` on the next discovery. Nothing registers yet.
 
 ## For Medic: where to look
 
-Start from the resource the incident names, then follow edges by kind: `reads`/`uses`/`for`
-(data path and its secret: compare the secret's `last_changed_at` with the incident start),
-`logs_to` (log group to query), `deployed_by` + `built_from` (recent runs and the commit of the
-running image), `calls` (upstream callers that break too). `config.running_tasks`,
+Start from the resource the incident names, then follow edges by kind: `reads` (data path;
+`details.secret_name` and `details.secret_db` name the secret behind it) and `uses` (compare
+the secret's `last_changed_at` with the incident start), `logs_to` (log group to query),
+`deployed_by` + `defined_in` with `details.commit` (recent runs and the commit of the running
+image), `calls` (upstream callers that break too). `config.running_tasks`,
 `config.deployments`, and `config.events` on ECS services hold stopped reasons and rollout
 state from the last discovery; call AWS again for anything newer.
 
-## Added minimally to existing code (noted as asked)
+## Shared files Phase 3 changed
 
-- `app/agents/scout/summary.py`: optional `risks`, own route `Task.summarize_system` (Nano,
-  reasoning off, 1,500 tokens); the input is the digest from `app/graph/digest.py`.
-- `app/worker.py`: handlers for `discover` and `discover_workspace`.
-- No change to `GitCloneSource`: `GitHubAppSource` passes the installation token through a
-  settings copy (`git_clone_token`), as suggested above. The token reaches git as
-  `http.extraHeader` through git's environment, which is `git -c http.extraHeader` without
-  putting the token in argv.
+`app/config.py` (Phase 3 settings), `app/db/models.py` and migration
+`20261008_3c1d9e4a7b20` (resource account, stale, last_seen_at; edge confidence; connection
+last_discovery), `app/main.py` (routers), `app/worker.py` (handlers `discover` and
+`discover_workspace`).
