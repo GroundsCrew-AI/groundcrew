@@ -6,9 +6,10 @@ Code that needs a secret must check for it and fail with a clear error at call t
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Repo root .env (apps/api/app/config.py -> ../../../.env), then a local .env if present.
 # In the Docker image the file is /app/app/config.py (no repo root); compose passes env vars.
@@ -104,6 +105,33 @@ class Settings(BaseSettings):
     github_app_client_secret: SecretStr | None = None
     github_app_private_key_path: Path | None = None
     github_webhook_secret: SecretStr | None = None
+
+    # Connections and discovery (Phase 3)
+    # Base AWS identity that assumes customer roles: the default credential chain, or this
+    # profile. Never stored; sessions are cached in memory only.
+    aws_base_profile: str | None = None
+    # The principal customers trust in infra/aws-connect.yaml. Unset = the base identity's ARN
+    # (GetCallerIdentity), which is right for local dev.
+    groundcrew_principal_arn: str | None = None
+    # S3 URL of infra/aws-connect.yaml for the one-click CloudFormation link. CloudFormation
+    # only accepts S3 template URLs; unset = the start response gives the CLI command instead.
+    aws_connect_template_url: str | None = None
+    # Regions discovery may call (comma separated). The demo account's org policy allows
+    # workloads only in us-east-2; global services (IAM, STS) are fine.
+    discovery_regions: Annotated[list[str], NoDecode] = ["us-east-2"]
+    # Discovery stops adding resources for one connection after this many (and says so).
+    max_resources_per_connection: int = 2000
+    # Wall clock limit for one connection's discovery.
+    discovery_timeout_seconds: float = 100.0
+    github_api_url: str = "https://api.github.com"
+    vercel_api_url: str = "https://api.vercel.com"
+
+    @field_validator("discovery_regions", mode="before")
+    @classmethod
+    def _split_regions(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [r.strip() for r in value.split(",") if r.strip()]
+        return value
 
     # Spend caps in USD, counted in the llm_usage table. The total cap is the hard stop for the
     # whole hackathon (credits are about $30). Hosted demo: set LLM_DAILY_USD_CAP=0.50.
