@@ -358,7 +358,7 @@ async def vercel_connect(
         who = await client.whoami()
         projects = await client.projects(limit=100)
     except VercelError as exc:
-        raise _unprocessable(str(exc)) from None
+        raise _unprocessable(_vercel_problem(exc, team_id)) from None
     conn = Connection(
         workspace_id=body.workspace_id,
         kind="vercel",
@@ -375,6 +375,26 @@ async def vercel_connect(
     session.add(conn)
     await session.commit()
     return await _out(session, conn)
+
+
+def _vercel_problem(exc: VercelError, team_id: str | None) -> str:
+    """What to do about a token Vercel refused, in one sentence."""
+    if exc.status == 401:
+        return (
+            "Vercel did not accept this token. Create a new one at vercel.com/account/tokens "
+            "and paste it again."
+        )
+    if exc.status in (403, 404) and team_id:
+        return (
+            f"This token cannot read team {team_id}. Check the Team ID (Vercel, Settings, "
+            "General; it starts with team_) and create the token with that team as its scope."
+        )
+    if exc.status == 403:
+        return (
+            "This token cannot read your projects. Create a token with your team as its scope "
+            "and add the Team ID."
+        )
+    return f"Could not reach Vercel with this token: {exc}"
 
 
 # ------------------------------------------------------------------- Azure / Kubernetes

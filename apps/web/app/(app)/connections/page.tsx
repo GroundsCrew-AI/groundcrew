@@ -1,10 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { AwsConnectDialog } from "@/components/connections/aws-connect-dialog";
+import { AwsConnectDialog, openPendingTab } from "@/components/connections/aws-connect-dialog";
 import { ConnectionRow } from "@/components/connections/connection-row";
 import { GitHubConnectDialog } from "@/components/connections/github-connect-dialog";
 import { RunDiscoveryButton } from "@/components/connections/run-discovery-button";
@@ -30,7 +30,7 @@ type Provider = {
 };
 
 const PROVIDERS: Provider[] = [
-  { kind: "aws", name: "AWS", access: "A read-only role with your ExternalId. No stored keys.", action: "Connect" },
+  { kind: "aws", name: "AWS", access: "A read-only role with your ExternalId. No stored keys.", action: "Connect AWS" },
   { kind: "github", name: "GitHub", access: "The Groundcrew GitHub App on the repositories you pick.", action: "Pick repositories" },
   { kind: "vercel", name: "Vercel", access: "A team token, stored encrypted. Env var names, not values.", action: "Add token" },
   { kind: "azure", name: "Azure", access: "Reader on one resource group, through a service principal.", action: "Connect", preview: true },
@@ -44,6 +44,7 @@ export default function ConnectionsPage() {
   const connections = useConnections(workspace?.id);
   const refresh = useRefreshConnection();
   const [open, setOpen] = useState<ConnectionKind | null>(null);
+  const awsTab = useRef<Window | null>(null);
   const error = workspaceError ?? connections.error;
   const items = connections.data ?? [];
 
@@ -52,6 +53,12 @@ export default function ConnectionsPage() {
       onSuccess: (run) => router.push(`/runs/${run.id}`),
       onError: (e) => toast.error(e.message),
     });
+  }
+
+  function openDialog(kind: ConnectionKind) {
+    // AWS opens CloudFormation in a new tab; the tab must open in the click itself.
+    if (kind === "aws") awsTab.current = openPendingTab();
+    setOpen(kind);
   }
 
   const dialog = (kind: ConnectionKind) => ({
@@ -90,7 +97,7 @@ export default function ConnectionsPage() {
                     connection={connection}
                     onRefresh={onRefresh}
                     refreshing={refresh.isPending && refresh.variables?.id === connection.id}
-                    onResume={() => setOpen("aws")}
+                    onResume={() => openDialog("aws")}
                   />
                 ))}
               </ul>
@@ -119,7 +126,7 @@ export default function ConnectionsPage() {
                       variant="outline"
                       className="mt-3"
                       disabled={!workspace}
-                      onClick={() => setOpen(provider.kind as ConnectionKind)}
+                      onClick={() => openDialog(provider.kind as ConnectionKind)}
                     >
                       {provider.action}
                     </Button>
@@ -130,7 +137,7 @@ export default function ConnectionsPage() {
           </ul>
         </section>
       </PageBody>
-      <AwsConnectDialog {...dialog("aws")} />
+      <AwsConnectDialog {...dialog("aws")} tab={awsTab} />
       <GitHubConnectDialog {...dialog("github")} />
       <VercelConnectDialog {...dialog("vercel")} />
       <AzureConnectDialog {...dialog("azure")} />

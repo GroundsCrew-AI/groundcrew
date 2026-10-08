@@ -34,7 +34,9 @@ VALUE_SUFFIXES = ("_URL", "_HOST")
 
 
 class VercelError(ConnectorError):
-    pass
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status  # HTTP status from Vercel, when there was a response
 
 
 class VercelReadRefusedError(VercelError):
@@ -103,7 +105,9 @@ class VercelClient:
             with contextlib.suppress(ValueError, AttributeError):
                 message = str((response.json().get("error") or {}).get("message", ""))
             text = f"Vercel {path} returned {response.status_code}: {message}"
-            raise VercelError(redact(text.replace(self._token, "[REDACTED]")))
+            raise VercelError(
+                redact(text.replace(self._token, "[REDACTED]")), status=response.status_code
+            )
         return response.json()
 
     async def whoami(self) -> dict[str, Any]:

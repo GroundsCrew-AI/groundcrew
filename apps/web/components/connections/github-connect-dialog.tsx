@@ -17,6 +17,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useGitHubInstallations, useLinkGitHub } from "@/lib/discovery";
 import { useWorkspace } from "@/lib/workspace";
 
+function Problem({ children, onRetry }: { children: React.ReactNode; onRetry: () => void }) {
+  return (
+    <div role="alert" className="space-y-2">
+      <p className="text-[12.5px] text-[var(--status-failed)]">{children}</p>
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
 /** Pick repositories the Groundcrew GitHub App can see and link them to this workspace. */
 export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { workspace } = useWorkspace();
@@ -66,9 +77,7 @@ export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onO
           </DialogDescription>
         </DialogHeader>
         {installations.error ? (
-          <p role="alert" className="text-[var(--status-failed)]">
-            {installations.error.message}
-          </p>
+          <Problem onRetry={() => void installations.refetch()}>{installations.error.message}</Problem>
         ) : !data ? (
           <div className="space-y-2">
             <Skeleton className="h-4 w-40" />
@@ -76,21 +85,48 @@ export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onO
             <Skeleton className="h-8 w-full" />
           </div>
         ) : !data.configured ? (
-          <p className="text-muted-foreground">
-            The GitHub App is not configured on this server (GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH).
+          <p className="rounded-md border border-dashed px-3 py-2.5 text-[12.5px] text-muted-foreground">
+            GitHub is not set up on this Groundcrew server yet. An admin adds the Groundcrew GitHub App&apos;s ID
+            and private key (<span className="font-mono">GITHUB_APP_ID</span>,{" "}
+            <span className="font-mono">GITHUB_APP_PRIVATE_KEY_PATH</span>; see docs/self-hosting.md).
           </p>
+        ) : data.error ? (
+          <Problem onRetry={() => void installations.refetch()}>
+            Could not list the repositories the GitHub App can see. {data.error}
+          </Problem>
+        ) : data.installations.length === 0 ? (
+          <div className="space-y-3 rounded-md border border-dashed px-4 py-4">
+            <p className="text-[13px]">
+              First, install the Groundcrew GitHub App and choose the repositories it may read. Then come back
+              here and pick them.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {data.install_url && (
+                <Button asChild size="sm">
+                  <a href={data.install_url} target="_blank" rel="noreferrer">
+                    Install the GitHub App
+                    <ExternalLink aria-hidden="true" />
+                  </a>
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => void installations.refetch()}>
+                {installations.isFetching ? "Checking" : "I installed it"}
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="space-y-5">
-            {data.error && <p className="text-[12.5px] text-[var(--status-failed)]">{data.error}</p>}
-            {data.installations.length === 0 && (
-              <p className="text-muted-foreground">The app is not installed on any account yet.</p>
-            )}
             {data.installations.map((installation) => {
               const chosen = selected(installation.id);
               return (
                 <fieldset key={installation.id} className="space-y-2">
                   <legend className="mb-1 text-[12px] font-medium text-muted-foreground">{installation.account}</legend>
-                  <ul className="divide-y rounded-lg border">
+                  {installation.repos.length === 0 && (
+                    <p className="rounded-lg border px-3 py-2 text-[12.5px] text-muted-foreground">
+                      No repositories are shared with the app on this account yet. Use the link below to add some.
+                    </p>
+                  )}
+                  <ul className="divide-y rounded-lg border empty:hidden">
                     {installation.repos.map((repo) => (
                       <li key={repo.full_name}>
                         <label className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-accent/50">
@@ -117,7 +153,7 @@ export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onO
             })}
           </div>
         )}
-        {data?.install_url && (
+        {data?.install_url && data.installations.length > 0 && (
           <DialogFooter className="sm:justify-start">
             <a
               href={data.install_url}

@@ -130,7 +130,11 @@ export function VercelConnectDialog({ open, onOpenChange }: DialogProps) {
         )
       }
     >
-      <Field id="vercel-token" label="Token" hint="Create one scoped to your team at vercel.com/account/tokens. It is stored encrypted.">
+      <Field
+        id="vercel-token"
+        label="Token"
+        hint="At vercel.com/account/tokens, create a token with your team as its scope and paste it here. It is stored encrypted."
+      >
         <Input
           id="vercel-token"
           type="password"

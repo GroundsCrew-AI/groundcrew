@@ -344,6 +344,25 @@ async def test_vercel_bad_team_is_422(
         headers=alice.headers,
     )
     assert r.status_code == 422 and FAKE_VERCEL_TOKEN not in r.text
+    assert "cannot read team team_other" in r.json()["detail"]
+
+
+async def test_vercel_rejected_token_says_what_to_do(
+    client: httpx.AsyncClient, alice: Member, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def make(token: str, team_id: str | None, settings: Settings) -> VercelClient:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"error": {"message": "Not authorized"}})
+
+        return VercelClient(token, team_id, settings, transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(connections_routes, "VercelClient", make)
+    r = await client.post(
+        "/connections/vercel",
+        json={"workspace_id": str(alice.workspace_id), "token": FAKE_VERCEL_TOKEN},
+        headers=alice.headers,
+    )
+    assert r.status_code == 422 and "did not accept this token" in r.json()["detail"]
 
 
 @pytest.fixture
