@@ -1,0 +1,166 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Groundcrew read-only access. Creates one IAM role that only the Groundcrew principal can
+  assume, and only with this workspace's ExternalId. The role reads configuration and metadata;
+  it cannot read secret values, decrypt data, or read objects. Also turns on a local Resource
+  Explorer index in this region. Delete this stack to remove all access.
+
+Parameters:
+  GroundcrewPrincipalArn:
+    Type: String
+    Description: The Groundcrew principal allowed to assume the role (shown on the Connections page).
+    AllowedPattern: "^arn:aws:iam::[0-9]{12}:(root|user/.+|role/.+)$"
+  ExternalId:
+    Type: String
+    Description: This workspace's ExternalId (shown on the Connections page). Do not reuse it elsewhere.
+    MinLength: 16
+    MaxLength: 128
+    AllowedPattern: "^[A-Za-z0-9_+=,.@:/-]+$"
+  RoleName:
+    Type: String
+    Default: GroundcrewReadOnly
+    Description: Name of the role to create.
+  CreateResourceExplorerIndex:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Create a local Resource Explorer index and default view in this region. Set false if this
+      region already has an index.
+
+Conditions:
+  CreateIndex: !Equals [!Ref CreateResourceExplorerIndex, "true"]
+
+Resources:
+  GroundcrewRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: Groundcrew read-only discovery (metadata only, no secret values)
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: GroundcrewWithExternalId
+            Effect: Allow
+            Principal:
+              AWS: !Ref GroundcrewPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: groundcrew-read-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Compute
+                Effect: Allow
+                Action:
+                  - ecs:ListClusters
+                  - ecs:DescribeClusters
+                  - ecs:ListServices
+                  - ecs:DescribeServices
+                  - ecs:ListTaskDefinitions
+                  - ecs:DescribeTaskDefinition
+                  - ecs:ListTasks
+                  - ecs:DescribeTasks
+                  - lambda:ListFunctions
+                  - lambda:GetFunctionConfiguration
+                  - lambda:ListTags
+                Resource: "*"
+              - Sid: ImagesAndDatabases
+                Effect: Allow
+                Action:
+                  - ecr:DescribeRepositories
+                  - ecr:DescribeImages
+                  - ecr:ListTagsForResource
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - rds:ListTagsForResource
+                Resource: "*"
+              - Sid: Network
+                Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSecurityGroupRules
+                  - ec2:DescribeNetworkInterfaces
+                Resource: "*"
+              - Sid: Telemetry
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:DescribeAlarms
+                  - logs:DescribeLogGroups
+                  - logs:FilterLogEvents
+                Resource: "*"
+              - Sid: SecretMetadataOnly
+                Effect: Allow
+                Action:
+                  - secretsmanager:ListSecrets
+                  - secretsmanager:DescribeSecret
+                Resource: "*"
+              - Sid: IamMetadata
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:ListRoles
+                  - iam:ListRolePolicies
+                  - iam:GetRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                Resource: "*"
+              - Sid: Inventory
+                Effect: Allow
+                Action:
+                  - resource-explorer-2:Search
+                  - resource-explorer-2:GetView
+                  - resource-explorer-2:GetDefaultView
+                  - resource-explorer-2:ListViews
+                  - resource-explorer-2:GetIndex
+                  - resource-explorer-2:ListIndexes
+                  - cloudformation:GetResource
+                  - cloudformation:ListResources
+                  - tag:GetResources
+                Resource: "*"
+              # Explicit deny wins over any allow, including ones added to this role later.
+              - Sid: NeverReadSecretValuesOrData
+                Effect: Deny
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter*
+                  - kms:Decrypt
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: "*"
+
+  ResourceExplorerIndex:
+    Type: AWS::ResourceExplorer2::Index
+    Condition: CreateIndex
+    Properties:
+      Type: LOCAL
+
+  ResourceExplorerView:
+    Type: AWS::ResourceExplorer2::View
+    Condition: CreateIndex
+    DependsOn: ResourceExplorerIndex
+    Properties:
+      ViewName: groundcrew-default
+      IncludedProperties:
+        - Name: tags
+
+  ResourceExplorerDefaultView:
+    Type: AWS::ResourceExplorer2::DefaultViewAssociation
+    Condition: CreateIndex
+    Properties:
+      ViewArn: !Ref ResourceExplorerView
+
+Outputs:
+  RoleArn:
+    Description: Paste this into Groundcrew to finish connecting.
+    Value: !GetAtt GroundcrewRole.Arn
