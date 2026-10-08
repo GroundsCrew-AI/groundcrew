@@ -7,6 +7,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   azure: "Azure",
   gcp: "GCP",
   github: "GitHub",
+  groundcrew: "Groundcrew",
   k8s: "Kubernetes",
   vercel: "Vercel",
   vm: "VM",
@@ -34,6 +35,7 @@ const TYPE_LABELS: Record<string, string> = {
   "github:workflow": "Workflow",
   "vercel:project": "Vercel project",
   "vercel:deployment": "Production deployment",
+  "groundcrew:deployer": "Groundcrew deploys",
   "k8s:namespace": "Namespace",
   "k8s:deployment": "Deployment",
   "k8s:statefulset": "StatefulSet",
@@ -53,20 +55,11 @@ export function typeLabel(type: string): string {
 export const EDGE_LABELS: Record<string, string> = {
   calls: "calls",
   reads: "reads",
+  deployed_by: "deployed by",
+  defined_in: "defined in",
   uses: "uses",
-  for: "for",
   pulls_from: "pulls image",
   logs_to: "logs to",
-  built_from: "built from",
-  deployed_by: "deployed by",
-  assumes: "assumes",
-  defined_in: "defined in",
-  same_repo: "same repo",
-  related: "related",
-  runs_in: "runs in",
-  runs_as: "runs as",
-  routes_to: "routes to",
-  deployment_of: "deployment of",
 };
 
 export function edgeLabel(kind: string): string {

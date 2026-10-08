@@ -1,17 +1,43 @@
 """Shapes every connector produces and the discovery engine consumes.
 
-A connector turns one connection (an AWS account, a GitHub installation, a Vercel team, ...)
-into `DiscoveredResource`s with stable `external_id`s, plus facts read from repositories
-(`RepoFacts`). The engine upserts the resources, marks the ones it did not see as stale, and
-hands everything to app.graph.edges to infer relationships.
+A connector (or a deploy target's `discover()`) turns one connection (an AWS account, a
+GitHub installation, a Vercel team, a cluster, ...) into `DiscoveredResource`s with stable
+`external_id`s, optional `DiscoveredEdge`s it knows for certain, plus facts read from
+repositories (`RepoFacts`). The engine upserts the resources, marks the ones it did not see
+as stale, and hands everything to app.graph.edges to infer the remaining relationships.
 
 Nothing here may carry a secret value: names, ARNs, and metadata only.
 """
 
 from collections.abc import Awaitable, Callable
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+class EdgeKind(StrEnum):
+    # Core kinds (roadmap).
+    calls = "calls"  # sends requests to (web -> api, ingress -> service)
+    reads = "reads"  # reads data from (service -> database)
+    deployed_by = "deployed_by"  # is deployed by (service -> workflow, project -> deployment)
+    defined_in = "defined_in"  # is defined in (resource -> repository: IaC, image commit)
+    # Phase 3 extensions (docs/phase3-interfaces.md): none maps onto a core kind.
+    uses = "uses"  # gets a secret or config from (service -> Secrets Manager secret)
+    pulls_from = "pulls_from"  # pulls its image from (service -> ECR repository)
+    logs_to = "logs_to"  # sends logs to (service -> log group); makes it diagnosable
+
+
+class Confidence(StrEnum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class Coverage(StrEnum):
+    observed = "observed"  # we know it exists and how it is configured
+    diagnosable = "diagnosable"  # we can also read its logs or metrics
+    actionable = "actionable"  # a target adapter can deploy, roll back, or restart it
 
 
 class DiscoveredResource(BaseModel):
@@ -28,6 +54,18 @@ class DiscoveredResource(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     iac_path: str | None = None
     repo: str | None = None
+
+
+class DiscoveredEdge(BaseModel):
+    """A relationship a connector or target knows for certain (from configuration, not
+    inferred). Endpoints are external_ids; both must be in the workspace's graph."""
+
+    from_external_id: str
+    to_external_id: str
+    kind: EdgeKind
+    confidence: Confidence = Confidence.high
+    evidence: str  # one line a person can check
+    rule: str = "declared"
 
 
 # ----------------------------------------------------------------------------- IaC facts
@@ -116,6 +154,7 @@ class RepoFacts(BaseModel):
 
 class ConnectorResult(BaseModel):
     resources: list[DiscoveredResource] = Field(default_factory=list)
+    edges: list[DiscoveredEdge] = Field(default_factory=list)
     repos: list[RepoFacts] = Field(default_factory=list)
     # Things a person should know: fallbacks used, permissions missing, limits hit.
     notes: list[str] = Field(default_factory=list)

@@ -52,7 +52,8 @@ from app.discovery.types import (
 )
 from app.graph.coverage import coverage
 from app.graph.digest import digest, find_risks
-from app.graph.edges import EdgeResult, infer_edges, key
+from app.graph.edges import DECLARED_KEY, EdgeResult, infer_edges, key
+from app.graph.sink import SINK_RULE
 from app.llm.budget import PgUsageStore, RunBudget
 from app.llm.client import ChatModel, TokenFactory
 from app.llm.recorder import StepRecorder
@@ -79,15 +80,15 @@ def _now() -> datetime:
 async def _discover_aws(
     conn: Connection, settings: Settings, progress: Progress
 ) -> ConnectorResult:
-    from app.connectors.aws import AwsReader, get_sessions
+    from app.connectors.aws import AwsReader
+    from app.connectors.credentials import ConnectionCredentialsProvider
     from app.discovery.aws import AwsDiscovery
 
-    role_arn = conn.config.get("role_arn")
-    external_id = conn.config.get("external_id")
     account = conn.config.get("account_id")
-    if not role_arn or not external_id or not account:
+    if not conn.config.get("role_arn") or not account:
         raise ConnectorError("This AWS connection is not finished: paste the role ARN first.")
-    session = await asyncio.to_thread(get_sessions().assume, role_arn, external_id)
+    with ConnectionCredentialsProvider([conn]) as credentials:
+        session = await asyncio.to_thread(credentials.aws_session, conn.id)
     reader = AwsReader(session, settings)
     return await AwsDiscovery(
         reader, account, max_resources=settings.max_resources_per_connection, progress=progress
@@ -387,11 +388,16 @@ class DiscoveryEngine:
         started = time.perf_counter()
         seen_at = _now()
         facts = {f.repo.lower(): f for f in result.repos}
+        declared: dict[str, list[dict[str, Any]]] = {}
+        for edge in result.edges:
+            declared.setdefault(edge.from_external_id, []).append(edge.model_dump(mode="json"))
         rows = []
         for r in _dedupe(result.resources):
             config = dict(r.config)
             if r.type == "github:repository" and r.name.lower() in facts:
                 config[FACTS_KEY] = facts[r.name.lower()].model_dump(mode="json")
+            if r.external_id in declared:
+                config[DECLARED_KEY] = declared[r.external_id]
             rows.append(
                 {
                     "id": uuid.uuid4(),
@@ -477,7 +483,22 @@ class DiscoveryEngine:
         ]
         result = infer_edges(resources, repos)
         ids = {key(d): row.id for d, row in zip(resources, rows, strict=True)}
-        await session.execute(delete(Edge).where(Edge.workspace_id == workspace_id))
+        # Inferred edges are recomputed; edges a deploy registered (ResourceSink) are kept.
+        await session.execute(
+            delete(Edge).where(
+                Edge.workspace_id == workspace_id,
+                Edge.evidence["rule"].astext.is_distinct_from(SINK_RULE),
+            )
+        )
+        kept = set(
+            (
+                await session.execute(
+                    select(Edge.from_id, Edge.to_id, Edge.kind).where(
+                        Edge.workspace_id == workspace_id
+                    )
+                )
+            ).tuples()
+        )
         edge_rows = [
             {
                 "id": uuid.uuid4(),
@@ -489,7 +510,9 @@ class DiscoveryEngine:
                 "evidence": {"text": e.evidence, "rule": e.rule, **e.details},
             }
             for e in result.edges
-            if e.source in ids and e.target in ids
+            if e.source in ids
+            and e.target in ids
+            and (ids[e.source], ids[e.target], e.kind.value) not in kept
         ]
         for chunk in [edge_rows[i : i + 500] for i in range(0, len(edge_rows), 500)]:
             await session.execute(insert(Edge).values(chunk))

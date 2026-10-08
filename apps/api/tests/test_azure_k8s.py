@@ -86,15 +86,15 @@ async def test_kubernetes_never_lists_secrets() -> None:
             await reader.list(kind)
 
 
-async def test_kubernetes_routes() -> None:
+async def test_kubernetes_routes_are_calls() -> None:
     result = await discover_kubernetes(FixtureKubeReader.from_file(FIXTURES / "k8s.json"), "c")
     names = {key(r): f"{r.type}:{r.name}" for r in result.resources}
     edges = {
         (names[e.source], e.kind, names[e.target]) for e in infer_edges(result.resources, []).edges
     }
-    assert ("k8s:service:api", EdgeKind.routes_to, "k8s:deployment:api") in edges
-    assert ("k8s:ingress:web", EdgeKind.routes_to, "k8s:service:api") in edges
-    assert ("k8s:service:redis", EdgeKind.routes_to, "k8s:statefulset:redis") in edges
+    assert ("k8s:service:api", EdgeKind.calls, "k8s:deployment:api") in edges
+    assert ("k8s:ingress:web", EdgeKind.calls, "k8s:service:api") in edges
+    assert ("k8s:service:redis", EdgeKind.calls, "k8s:statefulset:redis") in edges
 
 
 def test_kubeconfig_summary_keeps_no_credentials() -> None:

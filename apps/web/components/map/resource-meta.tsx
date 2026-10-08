@@ -64,6 +64,7 @@ export const PROVIDER_MARKS: Record<string, string> = {
   vercel: "Vc",
   vm: "VM",
   gcp: "GCP",
+  groundcrew: "GC",
 };
 
 export function ProviderMark({ provider, className }: { provider: string; className?: string }) {

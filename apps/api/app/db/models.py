@@ -215,8 +215,8 @@ class Edge(TimestampMixin, Base):
     to_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("resources.id", ondelete="CASCADE"), index=True
     )
-    # calls | reads | uses | for | pulls_from | logs_to | built_from | deployed_by |
-    # defined_in | same_repo | related (app.graph.edges.EdgeKind)
+    # calls | reads | deployed_by | defined_in, plus the extensions uses | pulls_from |
+    # logs_to (app.discovery.types.EdgeKind)
     kind: Mapped[str] = mapped_column(String(32))
     # high | medium | low
     confidence: Mapped[str] = mapped_column(String(8), default="medium", server_default="medium")

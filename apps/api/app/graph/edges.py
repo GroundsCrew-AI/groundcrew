@@ -5,58 +5,47 @@ with fixtures. Each edge has a kind, a confidence (high / medium / low), the rul
 it, and one line of evidence a person can check. Secret values are never inputs: secrets are
 matched by ARN and name only, and Vercel values only exist for plain *_URL / *_HOST vars.
 
+Kinds are the four core ones (calls, reads, deployed_by, defined_in) plus three extensions
+(uses, pulls_from, logs_to); see app.discovery.types.EdgeKind.
+
 Rules (docs/phase3-interfaces.md has the full table):
  1 sg_db_ingress      service/function -> db        reads        high
  2 task_secret        service -> secret             uses         high
-   secret_db          secret -> db                  for          high (Terraform) / medium (name)
+   secret_db          service -> db via its secret  reads        medium (no network rule seen)
  3 image_ecr          service -> ECR repo           pulls_from   high
-   image_commit       service -> GitHub repo        built_from   high (SHA seen) / medium
+   image_commit       service -> GitHub repo        defined_in   high (image tag is a commit)
  4 awslogs            service/function -> log group logs_to      high
  5 terraform          resource -> GitHub repo       defined_in   high
  6 oidc_deploy        service -> workflow           deployed_by  high
+   workflow_ecs       service -> workflow           deployed_by  high / medium
    vercel_job         vercel project -> workflow    deployed_by  high / medium
  7 env_url            vercel project -> service     calls        high (value matches) / medium
- 8 same_repo          vercel project <-> service    same_repo    low
- 9 shared_tags        resource <-> resource         related      low
-Structural (always high): service runs_in cluster, runs_as role, workflow assumes role and
-is defined_in its repo, Vercel deployment_of project, k8s routes_to.
+Structural (always high): workflow defined_in its repo, Vercel project deployed_by its latest
+production deployment, k8s ingress/service calls service/workload, and edges a connector
+declares (DiscoveredEdge).
 """
 
 import re
 from collections import defaultdict
 from collections.abc import Sequence
-from enum import StrEnum
 from typing import Any
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
-from app.discovery.types import DiscoveredResource, RepoFacts, Workflow
+from app.discovery.types import (
+    Confidence,
+    DiscoveredEdge,
+    DiscoveredResource,
+    EdgeKind,
+    RepoFacts,
+    Workflow,
+)
 
+__all__ = ["Confidence", "EdgeKind", "EdgeResult", "IacLink", "InferredEdge", "infer_edges", "key"]
 
-class EdgeKind(StrEnum):
-    calls = "calls"
-    reads = "reads"
-    uses = "uses"
-    for_ = "for"
-    pulls_from = "pulls_from"
-    logs_to = "logs_to"
-    built_from = "built_from"
-    deployed_by = "deployed_by"
-    assumes = "assumes"
-    defined_in = "defined_in"
-    same_repo = "same_repo"
-    related = "related"
-    runs_in = "runs_in"
-    runs_as = "runs_as"
-    routes_to = "routes_to"
-    deployment_of = "deployment_of"
-
-
-class Confidence(StrEnum):
-    high = "high"
-    medium = "medium"
-    low = "low"
+# Where a resource keeps the edges its connector declared (DiscoveredEdge, as JSON).
+DECLARED_KEY = "declared_edges"
 
 
 _RANK = {Confidence.high: 3, Confidence.medium: 2, Confidence.low: 1}
@@ -97,6 +86,8 @@ class _Graph:
             self.by_type[r.type].append(r)
         self.edges: dict[tuple[str, str, str], InferredEdge] = {}
         self.iac: dict[str, IacLink] = {}
+        # Secret key -> (database, confidence, evidence): which database a secret is for.
+        self.secret_db: dict[str, tuple[DiscoveredResource, Confidence, str]] = {}
 
     def of(self, *types: str) -> list[DiscoveredResource]:
         return [r for t in types for r in self.by_type.get(t, [])]
@@ -127,21 +118,12 @@ class _Graph:
             details=details,
         )
 
-    def linked(self, a: DiscoveredResource, b: DiscoveredResource) -> bool:
-        ka, kb = key(a), key(b)
-        return any({e.source, e.target} == {ka, kb} for e in self.edges.values())
-
-    def repo_of(self, resource: DiscoveredResource) -> str | None:
-        return next(
-            (
-                self._repo_name(e.target)
-                for e in self.edges.values()
-                if e.source == key(resource)
-                and e.kind in (EdgeKind.built_from, EdgeKind.defined_in)
-                and self._repo_name(e.target)
-            ),
-            None,
-        )
+    def for_db(
+        self, secret: DiscoveredResource, db: DiscoveredResource, confidence: Confidence, why: str
+    ) -> None:
+        current = self.secret_db.get(key(secret))
+        if current is None or _RANK[confidence] > _RANK[current[1]]:
+            self.secret_db[key(secret)] = (db, confidence, why)
 
     def _repo_name(self, target_key: str) -> str | None:
         prefix = "github|github:repo:"
@@ -270,8 +252,9 @@ def rule_task_secrets(g: _Graph) -> None:
 
 
 def rule_secret_db(g: _Graph, matched: dict[str, DiscoveredResource]) -> None:
-    """2b. Which database a secret is for. Terraform wins (the secret version is built from the
-    db instance's attributes); otherwise names and tags, medium."""
+    """2b. Which database a secret is for (not an edge: it explains service -> db reads).
+    Terraform wins (the secret version is built from the db instance's attributes); otherwise
+    names and tags, medium."""
     dbs = g.of("rds:db")
     for repo in g.repos:
         for tf in repo.terraform:
@@ -283,15 +266,12 @@ def rule_secret_db(g: _Graph, matched: dict[str, DiscoveredResource]) -> None:
                 for d_ref in db_refs:
                     secret, db = matched.get(s_ref), matched.get(d_ref)
                     if secret is not None and db is not None:
-                        g.add(
+                        g.for_db(
                             secret,
                             db,
-                            EdgeKind.for_,
                             Confidence.high,
-                            "secret_db",
-                            f"Terraform {tf.address} ({tf.path}) builds this secret from "
-                            f"{d_ref}, which is {db.name}. The value was not read.",
-                            terraform=tf.address,
+                            f"Terraform {tf.address} ({tf.path}) builds secret {secret.name} "
+                            f"from {d_ref}, which is {db.name}. The value was not read.",
                         )
     for secret in g.of("secretsmanager:secret"):
         text = " ".join(
@@ -300,19 +280,17 @@ def rule_secret_db(g: _Graph, matched: dict[str, DiscoveredResource]) -> None:
         if not re.search(r"(?i)database|postgres|mysql|rds|\bdb\b|-db\b|_db\b|/db\b", text):
             continue
         for db in dbs:
-            if any(e.source == key(secret) and e.target == key(db) for e in g.edges.values()):
+            if key(secret) in g.secret_db:
                 continue
             shared = _tokens(text) & (
                 _tokens(db.name) | _tokens(str(db.config.get("db_name") or ""))
             )
             if shared or len(dbs) == 1:
                 why = f"shares '{sorted(shared)[0]}' with" if shared else "and the only database is"
-                g.add(
+                g.for_db(
                     secret,
                     db,
-                    EdgeKind.for_,
                     Confidence.medium,
-                    "secret_db",
                     f"Secret {secret.name} names a database {why} {db.name}. "
                     "Matched on names only; the value was not read.",
                 )
@@ -371,19 +349,31 @@ def rule_images(g: _Graph) -> None:
                 continue
             url = f"{repo.html_url}/commit/{commit.get('sha')}" if repo.html_url else None
             message = commit.get("message")
+            text = (
+                f"Image tag {str(tag)[:12]} is commit {str(commit.get('sha'))[:7]} of {repo.repo}"
+                + (f" ({message})" if message else "")
+                + "."
+            )
+            details = {
+                "commit": commit.get("sha"),
+                "commit_url": url,
+                "commit_message": message,
+                "committed_at": commit.get("at"),
+            }
+            existing = g.edges.get((key(service), key(target), EdgeKind.defined_in.value))
+            if existing is not None:
+                # Also defined there in Terraform: one edge, both pieces of evidence.
+                existing.evidence = f"{existing.evidence} {text}"
+                existing.details.update(details)
+                continue
             g.add(
                 service,
                 target,
-                EdgeKind.built_from,
+                EdgeKind.defined_in,
                 Confidence.high,
                 "image_commit",
-                f"Image tag {str(tag)[:12]} is commit {str(commit.get('sha'))[:7]} of {repo.repo}"
-                + (f" ({message})" if message else "")
-                + ".",
-                commit=commit.get("sha"),
-                commit_url=url,
-                commit_message=message,
-                committed_at=commit.get("at"),
+                text,
+                **details,
             )
 
 
@@ -539,15 +529,6 @@ def rule_deploys(g: _Graph) -> None:
                     roles += literal or _roles_for_repo(g, repo.repo)
                 for role in {key(r): r for r in roles}.values():
                     subjects = ", ".join(role.config.get("github_oidc_subjects") or [])
-                    g.add(
-                        wf,
-                        role,
-                        EdgeKind.assumes,
-                        Confidence.high,
-                        "oidc_deploy",
-                        f"Job {job.id} assumes a role through GitHub OIDC; {role.name} trusts "
-                        f"{subjects or repo.repo}.",
-                    )
                     if not job.ecs_deploy:
                         continue
                     allowed = _role_allows(role, "ecs:UpdateService")
@@ -560,8 +541,8 @@ def rule_deploys(g: _Graph) -> None:
                                 Confidence.high if "*" not in allowed else Confidence.medium,
                                 "oidc_deploy",
                                 f"{workflow.path} job {job.id} runs aws ecs update-service with "
-                                f"role {role.name}, which only {repo.repo} can assume and which "
-                                f"may update {service.name}.",
+                                f"role {role.name}, which only {subjects or repo.repo} can "
+                                f"assume through GitHub OIDC and which may update {service.name}.",
                                 job=job.id,
                                 role=role.external_id,
                             )
@@ -706,7 +687,7 @@ def _service_repos(g: _Graph, service: DiscoveredResource) -> set[str]:
     for e in g.edges.values():
         if e.source != key(service):
             continue
-        if e.kind in (EdgeKind.built_from, EdgeKind.defined_in) and g._repo_name(e.target):
+        if e.kind == EdgeKind.defined_in and g._repo_name(e.target):
             repos.add(str(g._repo_name(e.target)))
         if e.kind == EdgeKind.deployed_by:
             wf = next((r for r in g.of("github:workflow") if key(r) == e.target), None)
@@ -762,112 +743,33 @@ def _env_by_name(g: _Graph, project: DiscoveredResource, valued: set[str]) -> No
             )
 
 
-def rule_same_repo(g: _Graph) -> None:
-    """8. A Vercel project and services built or deployed from the same repository."""
-    for project in g.of("vercel:project"):
-        repo = _project_repo(g, project)
-        if not repo:
-            continue
-        for service in g.of("ecs:service"):
-            if repo.lower() in _service_repos(g, service) and not g.linked(project, service):
-                g.add(
-                    project,
-                    service,
-                    EdgeKind.same_repo,
-                    Confidence.low,
-                    "same_repo",
-                    f"Both come from {repo}.",
-                )
-
-
-GENERIC_TAGS = frozenset(
-    {
-        "name",
-        "project",
-        "environment",
-        "env",
-        "owner",
-        "managed_by",
-        "managedby",
-        "terraform",
-        "createdby",
-        "created_by",
-        "cost-center",
-        "costcenter",
-        "team",
-        "stage",
-    }
-)
-MAX_TAG_GROUP = 5
-
-
-def rule_shared_tags(g: _Graph) -> None:
-    """9. Resources sharing a specific tag (small groups only; generic tags ignored)."""
-    groups: dict[tuple[str, str], list[DiscoveredResource]] = defaultdict(list)
-    for r in g.resources:
-        for k, v in r.tags.items():
-            if k.lower() not in GENERIC_TAGS and not k.lower().startswith(
-                ("aws:", "kubernetes.io")
-            ):
-                groups[(k, v)].append(r)
-    for (k, v), members in sorted(groups.items()):
-        if not 2 <= len(members) <= MAX_TAG_GROUP:
-            continue
-        for i, a in enumerate(members):
-            for b in members[i + 1 :]:
-                if not g.linked(a, b):
-                    g.add(
-                        a,
-                        b,
-                        EdgeKind.related,
-                        Confidence.low,
-                        "shared_tags",
-                        f"Both are tagged {k}={v}.",
-                    )
-
-
-_ROLE_FIELDS = {"execution_role_arn": "execution role", "task_role_arn": "task role"}
-
-
 def rule_structure(g: _Graph) -> None:
     """Facts read straight from configuration (always high)."""
-    clusters = {r.external_id: r for r in g.of("ecs:cluster")}
-    roles = {r.external_id: r for r in g.of("iam:role")}
-    for service in g.of("ecs:service"):
-        cluster = clusters.get(str(service.config.get("cluster_arn")))
-        if cluster is not None:
-            g.add(
-                service,
-                cluster,
-                EdgeKind.runs_in,
-                Confidence.high,
-                "ecs_cluster",
-                f"{service.name} runs in cluster {cluster.name}.",
-            )
-        for field in _ROLE_FIELDS:
-            role = roles.get(str(service.config.get(field)))
-            if role is not None:
-                g.add(
-                    service,
-                    role,
-                    EdgeKind.runs_as,
-                    Confidence.high,
-                    "task_role",
-                    f"Task definition uses {role.name} as its {_ROLE_FIELDS[field]}.",
-                )
     projects = {r.config.get("project_id"): r for r in g.of("vercel:project")}
     for deployment in g.of("vercel:deployment"):
         project = projects.get(deployment.config.get("project_id"))
         if project is not None:
             g.add(
-                deployment,
                 project,
-                EdgeKind.deployment_of,
+                deployment,
+                EdgeKind.deployed_by,
                 Confidence.high,
                 "vercel_deployment",
-                f"Latest production deployment of {project.name}.",
+                f"{deployment.name} is the latest production deployment of {project.name}.",
             )
     _k8s_routes(g)
+    rule_declared(g)
+
+
+def rule_declared(g: _Graph) -> None:
+    """Edges a connector declared (DiscoveredEdge), kept on the from-resource's config."""
+    by_external = {r.external_id: r for r in g.resources}
+    for source in g.resources:
+        for raw in source.config.get(DECLARED_KEY) or []:
+            edge = DiscoveredEdge.model_validate(raw)
+            target = by_external.get(edge.to_external_id)
+            if target is not None:
+                g.add(source, target, edge.kind, edge.confidence, edge.rule, edge.evidence)
 
 
 def _k8s_routes(g: _Graph) -> None:
@@ -884,7 +786,7 @@ def _k8s_routes(g: _Graph) -> None:
                 g.add(
                     svc,
                     w,
-                    EdgeKind.routes_to,
+                    EdgeKind.calls,
                     Confidence.high,
                     "k8s_selector",
                     f"Service selector {selector} matches {w.name}'s pods.",
@@ -898,7 +800,7 @@ def _k8s_routes(g: _Graph) -> None:
                     g.add(
                         ingress,
                         svc,
-                        EdgeKind.routes_to,
+                        EdgeKind.calls,
                         Confidence.high,
                         "k8s_ingress",
                         f"Ingress backend is service {backend}.",
@@ -917,34 +819,34 @@ def infer_edges(resources: Sequence[DiscoveredResource], repos: Sequence[RepoFac
     rule_deploys(g)
     rule_env_urls(g)
     _reads_via_secret(g)
-    rule_same_repo(g)
-    rule_shared_tags(g)
     edges = sorted(g.edges.values(), key=lambda e: (e.kind.value, e.source, e.target))
     return EdgeResult(edges=edges, iac=g.iac)
 
 
 def _reads_via_secret(g: _Graph) -> None:
-    """A service that uses a secret for a database, with no network rule seen, probably reads
-    that database (medium)."""
+    """A service that uses a secret for a database reads that database: medium on its own,
+    and the secret is added to the evidence of a high (network rule) edge."""
     uses = [e for e in g.edges.values() if e.kind == EdgeKind.uses]
-    fors = [e for e in g.edges.values() if e.kind == EdgeKind.for_]
     by_key = {key(r): r for r in g.resources}
     for u in uses:
-        for f in fors:
-            if f.source != u.target:
-                continue
-            service, db = by_key.get(u.source), by_key.get(f.target)
-            if service is None or db is None:
-                continue
-            k = (u.source, f.target, EdgeKind.reads.value)
-            if k in g.edges:
-                continue
-            g.add(
-                service,
-                db,
-                EdgeKind.reads,
-                Confidence.medium,
-                "secret_db",
-                f"{service.name} gets {u.details.get('env_name') or 'a secret'} from a secret "
-                f"for {db.name}; no network rule between them was seen.",
-            )
+        found = g.secret_db.get(u.target)
+        service, secret = by_key.get(u.source), by_key.get(u.target)
+        if found is None or service is None or secret is None:
+            continue
+        db, _confidence, why = found
+        details = {"secret_name": secret.name, "secret_db": why}
+        existing = g.edges.get((u.source, key(db), EdgeKind.reads.value))
+        if existing is not None:
+            existing.details.update(details)
+            continue
+        g.add(
+            service,
+            db,
+            EdgeKind.reads,
+            Confidence.medium,
+            "secret_db",
+            f"{service.name} gets {u.details.get('env_name') or 'a secret'} from secret "
+            f"{secret.name}, which is for {db.name} ({why}); no network rule between them "
+            "was seen.",
+            **details,
+        )

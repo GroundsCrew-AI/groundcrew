@@ -8,6 +8,7 @@ import pytest
 from app.agents.scout.summary import summarize_system
 from app.config import Settings
 from app.discovery.types import (
+    DiscoveredEdge,
     DiscoveredResource,
     RepoFacts,
     TerraformResource,
@@ -147,10 +148,13 @@ def test_rule2_task_secret_and_secret_for_db_by_name() -> None:
     edges = edges_of([api, secret, db])
     uses = edges[("api", "uses", "shop/database-url")]
     assert uses.confidence == Confidence.high and "value not read" in uses.evidence
-    secret_for = edges[("shop/database-url", "for", "shop-orders-db")]
-    assert secret_for.confidence == Confidence.medium and "names only" in secret_for.evidence
-    # Without a network rule, using the database's secret means reading it (medium).
-    assert edges[("api", "reads", "shop-orders-db")].confidence == Confidence.medium
+    # Without a network rule, using the database's secret means reading it (medium); which
+    # database the secret is for is evidence on that edge, not an edge of its own.
+    reads = edges[("api", "reads", "shop-orders-db")]
+    assert reads.confidence == Confidence.medium and reads.rule == "secret_db"
+    assert reads.details["secret_name"] == "shop/database-url"  # noqa: S105 - a name
+    assert "names only" in reads.evidence
+    assert not any(k[0] == "shop/database-url" for k in edges)
 
 
 def test_rule2_secret_for_db_from_terraform_is_high() -> None:
@@ -180,9 +184,11 @@ def test_rule2_secret_for_db_from_terraform_is_high() -> None:
             ),
         ],
     )
-    edges = edges_of([secret, db, other_db, gh_repo()], [facts])
-    assert edges[("app/creds", "for", "main")].confidence == Confidence.high
-    assert ("app/creds", "for", "reporting") not in edges
+    api = svc(containers=[{"name": "api", "secrets": [{"name": "DB", "value_from": "app/creds"}]}])
+    edges = edges_of([api, secret, db, other_db, gh_repo()], [facts])
+    reads = edges[("api", "reads", "main")]
+    assert "Terraform aws_secretsmanager_secret_version.creds" in reads.details["secret_db"]
+    assert ("api", "reads", "reporting") not in edges
 
 
 # --- 3. images ---------------------------------------------------------------------------
@@ -208,7 +214,8 @@ def test_rule3_image_to_ecr_and_commit() -> None:
     )
     edges = edges_of([api, ecr, gh_repo()], [facts])
     assert edges[("api", "pulls_from", "shop-api")].confidence == Confidence.high
-    built = edges[("api", "built_from", REPO)]
+    built = edges[("api", "defined_in", REPO)]
+    assert built.rule == "image_commit"
     assert built.details["commit_url"] == f"https://github.com/{REPO}/commit/{sha}"
     assert "Fix checkout" in built.evidence
 
@@ -219,7 +226,7 @@ def test_rule3_non_sha_tag_links_no_commit() -> None:
             {"name": "api", "image_registry": "r", "image_repository": "x", "image_tag": "latest"}
         ]
     )
-    assert not any(k[1] == "built_from" for k in edges_of([api, gh_repo()], [RepoFacts(repo=REPO)]))
+    assert not any(k[1] == "defined_in" for k in edges_of([api, gh_repo()], [RepoFacts(repo=REPO)]))
 
 
 # --- 4. logs ---------------------------------------------------------------------------
@@ -317,9 +324,10 @@ def test_rule6_oidc_role_scope_proves_deployed_by() -> None:
     edges = edges_of([api, worker, other, role, gh_workflow(), gh_repo()], [_deploy_facts()])
     for name in ("shop-api", "shop-worker"):
         edge = edges[(name, "deployed_by", "deploy")]
-        assert edge.confidence == Confidence.high and "only acme/shop can assume" in edge.evidence
+        assert edge.confidence == Confidence.high
+        assert "role shop-deploy, which only repo:acme/shop:ref:refs/heads/main" in edge.evidence
     assert ("unrelated", "deployed_by", "deploy") not in edges
-    assert edges[("deploy", "assumes", "shop-deploy")].confidence == Confidence.high
+    assert not any(k[2] == "shop-deploy" for k in edges)  # the role is evidence, not a node
 
 
 def test_rule6_service_name_hint_without_role_is_medium() -> None:
@@ -408,8 +416,6 @@ def test_rule7_name_and_shared_repo_is_medium() -> None:
     assert edge.confidence == Confidence.medium
     assert "value not read" in edge.evidence and "web/lib/api.ts reads API_URL" in edge.evidence
     assert ("web", "calls", "shop-worker") not in edges  # no port, and the name does not match
-    # 8. The worker shares the repo only.
-    assert edges[("web", "same_repo", "shop-worker")].confidence == Confidence.low
 
 
 def test_rule7_no_repo_no_guess() -> None:
@@ -420,21 +426,51 @@ def test_rule7_no_repo_no_guess() -> None:
     assert not any(k[1] == "calls" for k in edges_of([api, project]))
 
 
-# --- 9. tags ---------------------------------------------------------------------------
+# --- structural and declared ------------------------------------------------------------
 
 
-def test_rule9_shared_specific_tags_only() -> None:
-    a = res("s3:bucket", "a", tags={"component": "uploads", "project": "groundcrew"})
-    b = res("sqs:queue", "b", tags={"component": "uploads", "project": "groundcrew"})
-    c = res("sns:topic", "c", tags={"project": "groundcrew"})
-    edges = edges_of([a, b, c])
-    assert edges[("a", "related", "b")].confidence == Confidence.low
-    assert ("a", "related", "c") not in edges  # `project` is generic
+def test_vercel_project_is_deployed_by_its_latest_deployment() -> None:
+    project = res("vercel:project", "web", provider="vercel", project_id="prj_1")
+    deployment = res("vercel:deployment", "dpl_9", provider="vercel", project_id="prj_1")
+    edge = edges_of([project, deployment])[("web", "deployed_by", "dpl_9")]
+    assert edge.rule == "vercel_deployment" and edge.confidence == Confidence.high
 
 
-def test_rule9_large_groups_are_ignored() -> None:
-    many = [res("s3:bucket", f"b{i}", tags={"app": "x"}) for i in range(8)]
-    assert not edges_of(many)
+def test_declared_edges_from_a_connector() -> None:
+    target = res("rds:db", "orders")
+    declared = DiscoveredEdge(
+        from_external_id="arn:svc",
+        to_external_id=target.external_id,
+        kind=EdgeKind.reads,
+        evidence="The app's config names this database.",
+    )
+    source = res(
+        "ecs:service",
+        "api",
+        external_id="arn:svc",
+        declared_edges=[
+            declared.model_dump(mode="json"),
+            {**declared.model_dump(mode="json"), "to_external_id": "missing"},
+        ],
+    )
+    edges = edges_of([source, target])
+    assert edges[("api", "reads", "orders")].evidence == "The app's config names this database."
+    assert len(edges) == 1
+
+
+def test_no_low_value_kinds_and_tags_make_no_edges() -> None:
+    a = res("s3:bucket", "a", tags={"component": "uploads"})
+    b = res("sqs:queue", "b", tags={"component": "uploads"})
+    assert not edges_of([a, b])
+    assert {k.value for k in EdgeKind} == {
+        "calls",
+        "reads",
+        "deployed_by",
+        "defined_in",
+        "uses",
+        "pulls_from",
+        "logs_to",
+    }
 
 
 # --- the whole demo ------------------------------------------------------------------
@@ -446,7 +482,6 @@ EXPECTED = {
     ("checkout-worker", "reads", "checkout-orders-db"),
     ("checkout-api", "uses", "checkout/database-url"),
     ("checkout-worker", "uses", "checkout/database-url"),
-    ("checkout/database-url", "for", "checkout-orders-db"),
     ("checkout-api", "pulls_from", "checkout-api"),
     ("checkout-worker", "pulls_from", "checkout-worker"),
     ("checkout-api", "logs_to", "/ecs/checkout-api"),
@@ -454,7 +489,6 @@ EXPECTED = {
     ("checkout-api", "deployed_by", "deploy (deploy.yml)"),
     ("checkout-worker", "deployed_by", "deploy (deploy.yml)"),
     ("checkout-demo", "deployed_by", "deploy (deploy.yml)"),
-    ("checkout-api", "built_from", "GroundsCrew-AI/checkout-demo"),
     ("checkout-api", "defined_in", "GroundsCrew-AI/checkout-demo"),
 }
 
@@ -468,6 +502,9 @@ async def test_demo_graph_has_every_expected_edge_with_evidence() -> None:
     calls = edges[("checkout-demo", "calls", "checkout-api")]
     assert calls.confidence == Confidence.medium
     assert "deploy.yml job web sets API_URL" in calls.evidence
+    # The running image's commit is evidence on the defined_in edge, with the Terraform file.
+    defined = edges[("checkout-api", "defined_in", "GroundsCrew-AI/checkout-demo")]
+    assert defined.rule == "terraform" and defined.details["commit"].startswith("cef79e7")
     for k in EXPECTED - {("checkout-demo", "calls", "checkout-api")}:
         assert edges[k].confidence == Confidence.high, k
 

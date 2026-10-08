@@ -36,13 +36,9 @@ _RELATION_KINDS = {
     EdgeKind.calls,
     EdgeKind.reads,
     EdgeKind.uses,
-    EdgeKind.for_,
     EdgeKind.pulls_from,
     EdgeKind.logs_to,
-    EdgeKind.built_from,
     EdgeKind.deployed_by,
-    EdgeKind.routes_to,
-    EdgeKind.runs_in,
 }
 
 
