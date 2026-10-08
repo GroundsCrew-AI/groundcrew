@@ -33,10 +33,13 @@ Handler = Callable[[SessionFactory, dict[str, Any]], Awaitable[None]]
 def default_handlers() -> dict[str, Handler]:
     # Imported here so `app.queue` users do not load every agent and tool.
     from app.agents.base import run_agent_job
+    from app.discovery.engine import discovery_job
 
     return {
         "run_agent": run_agent_job,
         "resume_run": run_agent_job,
+        "discover": discovery_job,
+        "discover_workspace": discovery_job,
     }
 
 
