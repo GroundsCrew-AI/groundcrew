@@ -1,0 +1,41 @@
+{
+  "namespaces": [
+    {"metadata": {"name": "shop", "labels": {"team": "web"}}},
+    {"metadata": {"name": "kube-system"}}
+  ],
+  "deployments": [
+    {"metadata": {"name": "api", "namespace": "shop", "labels": {"app": "api"}},
+     "spec": {"replicas": 2, "selector": {"matchLabels": {"app": "api"}},
+              "template": {"metadata": {"labels": {"app": "api", "tier": "backend"}},
+                           "spec": {"containers": [{"name": "api", "image": "ghcr.io/acme/api:1.4.2", "ports": [{"containerPort": 8000}],
+                                                    "env": [{"name": "REDIS_HOST", "value": "redis.shop.svc"},
+                                                            {"name": "API_TOKEN", "value": "plain-token-must-not-leak"},
+                                                            {"name": "DATABASE_URL", "valueFrom": {"secretKeyRef": {"name": "db-creds", "key": "url"}}}],
+                                                    "envFrom": [{"secretRef": {"name": "api-env"}}]}]}}},
+     "status": {"readyReplicas": 2}}
+  ],
+  "statefulsets": [
+    {"metadata": {"name": "redis", "namespace": "shop"},
+     "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "redis"}},
+              "template": {"metadata": {"labels": {"app": "redis"}}, "spec": {"containers": [{"name": "redis", "image": "redis:7"}]}}},
+     "status": {"readyReplicas": 1}}
+  ],
+  "services": [
+    {"metadata": {"name": "api", "namespace": "shop"}, "spec": {"type": "LoadBalancer", "clusterIP": "10.0.0.10", "selector": {"app": "api"},
+     "ports": [{"port": 80, "targetPort": 8000}]}, "status": {"loadBalancer": {"ingress": [{"ip": "34.1.2.3"}]}}},
+    {"metadata": {"name": "redis", "namespace": "shop"}, "spec": {"type": "ClusterIP", "clusterIP": "10.0.0.11", "selector": {"app": "redis"},
+     "ports": [{"port": 6379, "targetPort": 6379}]}, "status": {}}
+  ],
+  "ingresses": [
+    {"metadata": {"name": "web", "namespace": "shop"},
+     "spec": {"rules": [{"host": "shop.example.com", "http": {"paths": [{"path": "/api", "backend": {"service": {"name": "api", "port": {"number": 80}}}}]}}]}}
+  ],
+  "pods": [
+    {"metadata": {"name": "api-7d9f-abcde", "namespace": "shop", "ownerReferences": [{"kind": "ReplicaSet", "name": "api-7d9f"}]}},
+    {"metadata": {"name": "api-7d9f-fghij", "namespace": "shop", "ownerReferences": [{"kind": "ReplicaSet", "name": "api-7d9f"}]}},
+    {"metadata": {"name": "redis-0", "namespace": "shop", "ownerReferences": [{"kind": "StatefulSet", "name": "redis"}]}}
+  ],
+  "secrets": [
+    {"metadata": {"name": "db-creds", "namespace": "shop"}, "data": {"url": "cG9zdGdyZXM6Ly9zZWNyZXQ="}}
+  ]
+}
