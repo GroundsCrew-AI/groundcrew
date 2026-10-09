@@ -128,7 +128,8 @@ and the GitHub App it needs.
 
 - `apps/api`: FastAPI control plane (Python 3.12, uv)
 - `apps/web`: Next.js 15 frontend (TypeScript, Tailwind, shadcn/ui)
-- `scripts`: developer scripts, including the Token Factory smoke test
+- `scripts`: developer scripts, including the Token Factory smoke test and `replay_discovery.py`
+  (discovery on recorded fixtures)
 - `infra`: customer connection templates and our hosting setup
 - `demo`: sample app and demo cloud environments
 
@@ -142,6 +143,12 @@ and pause the run; a decision enqueues a job that resumes it. `GET /runs/{id}/ev
 The web app (Next.js) signs users in with GitHub through Auth.js. Its server proxies REST calls to the API
 under `/api/gc`, attaching a short-lived internal JWT for the signed-in user. The live run stream goes from
 the browser straight to the API with a 60-second token for that run.
+
+Discovery is a run like any other (`agent = "discovery"`), so it streams over the same SSE. It reads each
+connection with read-only credentials, upserts resources by a stable external id (anything not seen again is
+marked stale), infers edges with a confidence and one line of evidence each, and asks Scout for a system
+summary that is then checked against the graph. The **Map** page draws that graph. Contracts for the agents
+that build on it: [docs/phase3-interfaces.md](docs/phase3-interfaces.md).
 
 Full design: [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
 

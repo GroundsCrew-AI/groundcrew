@@ -57,8 +57,8 @@ about 6k tokens (Nano's reliable range), and says how many were left out.
 
 # Phase 3: what landed (connections, discovery, graph)
 
-For Phase 4 (Deployer) and Phase 5 (Medic). Everything below is in `main` once
-`phase3-discovery` merges. Phase 3 changed no file under `llm/`, `repos/`, `agents/`,
+For Phase 4 (Deployer) and Phase 5 (Medic). Everything below is in `main` (PR #6, with
+follow-ups #7 and #8) and was verified live on the demo stack on 2026-10-09. Phase 3 changed no file under `llm/`, `repos/`, `agents/`,
 `sandbox/`, `targets/`, or `tools/repo_read.py`.
 
 ## The five contracts (final signatures)
