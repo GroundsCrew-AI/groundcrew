@@ -243,13 +243,17 @@ the worker "uses the same image" (it has its own `checkout-worker` image). Witho
 `agents/`, Phase 3 now:
 
 - marks tooling with `app.graph.roles.role()` (Terraform state and lock stores, the template
-  bucket, Groundcrew's own role, Resource Explorer) and leaves it out of the digest unless an
-  edge connects it to the app;
+  bucket, Groundcrew's own role, Resource Explorer) and tags it in the digest notes as
+  `role=tooling (manages the app's infrastructure; the app does not use it)` unless an edge
+  connects it to the app;
 - states facts explicitly: `own image <repo>:<tag>` per service, and relations with the
   target's type (`pulls_from checkout-worker (ECR image repository)`);
 - checks every summary bullet against the graph (`app.graph.summary_check.check_summary`)
   and drops bullets that name unlinked tooling, claim a kind of resource the app does not
-  have, say services share an image when they do not, or relate a resource with no edges.
+  have, say services share an image when they do not, relate a resource with no edges, or
+  claim a relationship (calls, reads, uses, deploys, ...) between named resources that no edge
+  connects. Names written as a list ("checkout-api and checkout-worker") are not related to
+  each other by the claim; Unicode hyphens are normalised first.
   Each dropped bullet is a `check_summary` step in the discovery run.
 
 **Proposed tweak to `SYSTEM_PROMPT` in `agents/scout/summary.py` (Ahmed's call):** append

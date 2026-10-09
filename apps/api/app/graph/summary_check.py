@@ -10,7 +10,9 @@ A bullet is dropped when it:
 2. mentions a kind of resource the app does not have (S3, DynamoDB, SQS, Lambda, ...);
 3. says services share an image while they pull from different image repositories;
 4. names two or more resources and one of them has no edge to the app at all and is related
-   to none of the others (not even as a service in a named cluster).
+   to none of the others (not even as a service in a named cluster);
+5. claims a relationship (calls, reads, uses, deploys, ...) between named resources and one
+   of them is related by an edge to none of the others.
 Lines that are not bullets (headings, blank lines) are kept.
 """
 
@@ -36,6 +38,13 @@ _TYPE_WORDS: dict[str, tuple[str, ...]] = {
     ),
     r"\bkafka\b|\bmsk\b|\bkinesis\b": ("kafka:cluster", "kinesis:stream"),
 }
+# Verbs that claim a relationship an edge would record.
+_RELATION_VERB = re.compile(
+    r"\b(call(s|ed|ing)?|read(s|ing)?|writ(es?|ing)|quer(y|ies|ying)|connect(s|ed|ing)?|"
+    r"talks?|sends?|uses?|using|pulls?|deploy(s|ed|ing)?|logs?|stores?|depends?|invokes?|"
+    r"triggers?|fetch(es)?|hits?)\b",
+    re.IGNORECASE,
+)
 _SAME_IMAGE = re.compile(r"\bsame\s+(?:container\s+|docker\s+)?image\b", re.IGNORECASE)
 _MIN_PREFIX = 12  # "groundcrew-checkout-tfstate-..." still names the bucket
 _TRUNCATED = re.compile(r"([\w/-]{" + str(_MIN_PREFIX) + r",})(?:…|\.\.\.)")
@@ -47,8 +56,12 @@ class SummaryCheck:
     dropped: list[tuple[str, str]] = field(default_factory=list)  # (bullet, why)
 
 
+# Hyphens models write inside names (Nano writes "checkout\u2011api" with a non-breaking one).
+_HYPHENS = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2212": "-"})
+
+
 def _clean(line: str) -> str:
-    return re.sub(r"[`*_]", "", line)
+    return re.sub(r"[`*_]", "", line.translate(_HYPHENS))
 
 
 def _mentions(text: str, name: str) -> bool:
@@ -123,7 +136,29 @@ class _Graph:
                     self.related(name, other) for other in names if other != name
                 ):
                     return f"no edge relates {name} to {', '.join(n for n in names if n != name)}"
+            groups = _listed(text, names)
+            if _RELATION_VERB.search(text) and len(set(groups.values())) > 1:
+                for name in names:
+                    others = [n for n in names if groups[n] != groups[name]]
+                    if not any(self.related(name, other) for other in others):
+                        return f"no edge relates {name} to {', '.join(others)}"
         return None
+
+
+def _listed(text: str, names: list[str]) -> dict[str, int]:
+    """Groups names written as one list ("checkout-api and checkout-worker"): a list states
+    no relationship among its own members, only with the names outside it."""
+    group = {n: i for i, n in enumerate(names)}
+    low = text.lower()
+    for a in names:
+        for b in names:
+            joined = (
+                rf"{re.escape(a.lower())}`?\s*(?:,|and|or|&|,\s*and)\s*`?{re.escape(b.lower())}"
+            )
+            if a != b and re.search(joined, low):
+                old, new = group[b], group[a]
+                group = {n: new if g == old else g for n, g in group.items()}
+    return group
 
 
 def check_summary(

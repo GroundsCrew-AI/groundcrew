@@ -27,6 +27,7 @@ from app.graph.edges import Confidence, EdgeKind, InferredEdge, key
 from app.graph.roles import role
 
 TOKEN_CAP = 6_000
+TOOLING_NOTE = "role=tooling (manages the app's infrastructure; the app does not use it)"
 CHARS_PER_TOKEN = 4
 # Room for Scout's system prompt and the "N more resources" line.
 _RESERVED_CHARS = 1_000
@@ -184,7 +185,9 @@ def _fold(items: list[ResourceSummary], *, keep_linked: bool) -> list[ResourceSu
     groups: dict[tuple[str, str], list[ResourceSummary]] = defaultdict(list)
     kept: list[ResourceSummary] = []
     for item in items:
-        linked = item.relations or (item.notes and "Risk:" in item.notes)
+        linked = item.relations or (
+            item.notes and ("Risk:" in item.notes or TOOLING_NOTE in item.notes)
+        )
         if keep_linked and linked:
             kept.append(item)
         else:
@@ -212,10 +215,12 @@ def digest(
             relations[e.source].append(f"{e.kind.value} {target.name} ({_type_name(target.type)})")
         if e.kind != EdgeKind.defined_in:
             linked |= {e.source, e.target}
-    # Tooling (state buckets, template buckets, Groundcrew's role) is not part of the app:
-    # left out unless an edge says the app uses it.
-    resources = [r for r in resources if role(r) == "app" or key(r) in linked]
     risk_notes: dict[str, list[str]] = defaultdict(list)
+    # Tooling (state buckets, template buckets, Groundcrew's role) is not part of the app:
+    # tagged, so the model does not describe the app as using it unless an edge says so.
+    for r in resources:
+        if role(r) == "tooling" and key(r) not in linked:
+            risk_notes[key(r)].insert(0, TOOLING_NOTE)
     for risk in risks:
         risk_notes[risk.resource].append(risk.text)
     items = [

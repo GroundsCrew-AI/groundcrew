@@ -17,7 +17,7 @@ from app.discovery.types import (
 )
 from app.graph import coverage as coverage_module
 from app.graph.coverage import coverage, register_actionable
-from app.graph.digest import digest, find_risks, risks
+from app.graph.digest import TOOLING_NOTE, digest, find_risks, risks
 from app.graph.edges import Confidence, EdgeKind, InferredEdge, infer_edges, key
 from app.llm.budget import MemoryUsageStore, RunBudget
 from app.llm.router import ROUTES, Task
@@ -668,12 +668,42 @@ async def test_summary_check_drops_the_live_false_claims() -> None:
     assert "S3" not in checked.text and "same image" not in checked.text
 
 
-async def test_digest_leaves_tooling_out_and_states_each_image() -> None:
+async def test_digest_tags_tooling_and_states_each_image() -> None:
     resources, repos = await demo_inventory()
     resources.append(res("s3:bucket", "groundcrew-templates-881050425883"))
+    resources.append(res("iam:role", "groundcrew-read-only"))
     edges = infer_edges(resources, repos).edges
     items = digest(resources, edges)
-    assert not any(i.type == "s3:bucket" for i in items)  # state and template buckets
+    buckets = [i for i in items if i.type == "s3:bucket"]  # state and template buckets
+    assert len(buckets) == 2 and all(b.notes and TOOLING_NOTE in b.notes for b in buckets)
+    assert not any(b.relations for b in buckets)
+    gc_role = next(i for i in items if i.name == "groundcrew-read-only")
+    assert gc_role.notes and TOOLING_NOTE in gc_role.notes
+    assert not any(TOOLING_NOTE in (i.notes or "") for i in items if i.type == "ecs:service")
     worker = next(i for i in items if i.name == "checkout-worker" and i.type == "ecs:service")
     assert worker.notes and "own image checkout-worker:cef79e7" in worker.notes
     assert "pulls_from checkout-worker (ECR image repository)" in worker.relations
+
+
+async def test_summary_check_drops_relationships_with_no_edge() -> None:
+    from app.graph.summary_check import check_summary
+
+    resources, repos = await demo_inventory()
+    edges = infer_edges(resources, repos).edges
+    text = "\n".join(
+        [
+            "- checkout-api calls checkout-worker over HTTP.",
+            "- checkout-api and checkout-worker read checkout-orders-db.",
+            "- checkout-demo calls checkout-api through API_URL.",
+            "- checkout-api and checkout-worker run in the checkout cluster.",
+            "- checkout\u2011worker runs alongside checkout\u2011api and reads the same database.",
+        ]
+    )
+    checked = check_summary(text, resources, edges)
+    assert [b for b, _ in checked.dropped] == [
+        "checkout-api calls checkout-worker over HTTP.",
+        "checkout\u2011worker runs alongside checkout\u2011api and reads the same database.",
+    ]
+    assert "no edge relates" in checked.dropped[0][1]
+    assert "read checkout-orders-db" in checked.text and "through API_URL" in checked.text
+    assert "checkout cluster" in checked.text
