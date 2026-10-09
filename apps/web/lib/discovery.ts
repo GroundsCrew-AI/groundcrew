@@ -197,6 +197,16 @@ export function useResource(resourceId: string | null) {
 }
 
 /** The CloudFormation template, downloaded through the proxy (it needs the session). */
+/** The connect template's S3 URL (null when the server has none) for updating a stack. */
+export function useAwsTemplateUrl(enabled = true) {
+  return useQuery({
+    queryKey: ["aws-template-url"],
+    queryFn: async () => unwrap(await api.GET("/connections/aws/template-url")),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
 export async function downloadAwsTemplate(): Promise<void> {
   const response = await fetch("/api/gc/connections/aws/template");
   if (!response.ok) throw new Error(`Could not download the template (${response.status}).`);

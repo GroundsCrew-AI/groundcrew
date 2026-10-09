@@ -104,6 +104,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/aws/template-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Aws Template Url
+         * @description Where the connect template lives, for updating an existing stack (Enable deploys).
+         */
+        get: operations["aws_template_url_connections_aws_template_url_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/azure": {
         parameters: {
             query?: never;
@@ -639,6 +659,13 @@ export interface components {
              * @enum {string}
              */
             tier: "observe" | "deploy";
+        };
+        /** AwsTemplateUrlOut */
+        AwsTemplateUrlOut: {
+            /** Template Path */
+            template_path: string;
+            /** Url */
+            url: string | null;
         };
         /** AwsTierIn */
         AwsTierIn: {
@@ -1549,6 +1576,37 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_template_url_connections_aws_template_url_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AwsTemplateUrlOut"];
                 };
             };
             /** @description Validation Error */
