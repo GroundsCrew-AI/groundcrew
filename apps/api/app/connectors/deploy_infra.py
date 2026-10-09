@@ -86,6 +86,19 @@ def ecs_service(app: str) -> str:
     return _fit("", app, 255)
 
 
+def task_family(app: str) -> str:
+    """Task definition family for an app: groundcrew-<app>. The deploy role may only run task
+    definitions whose family starts with groundcrew-."""
+    return _fit("groundcrew-", app, 255)
+
+
+def deploy_role_arn(account_id: str) -> str:
+    """The groundcrew-deploy role a Tier=deploy stack creates in that account."""
+    if not re.fullmatch(r"\d{12}", account_id):
+        raise DeployInfraError(f"Not an AWS account id: {account_id!r}.")
+    return f"arn:aws:iam::{account_id}:role/{DEPLOY_ROLE}"
+
+
 def task_execution_role_arn(settings: Settings, account_id: str) -> str:
     """The task execution role ARN: the setting, or the stack's fixed name in that account."""
     if settings.gc_task_execution_role_arn:

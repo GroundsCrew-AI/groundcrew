@@ -74,6 +74,56 @@ AWS_READ_OPERATIONS: frozenset[str] = frozenset(
     }
 )
 
+# Operations a deploy session (the groundcrew-deploy role, Tier=deploy) may call. The IAM
+# policy in infra/aws-connect.yaml limits them to groundcrew-* resources tagged
+# project=groundcrew; this allowlist keeps code from calling anything else even so (no IAM,
+# no RDS, no secret values). Image pushes go through the registry with the ECR token, not here.
+AWS_DEPLOY_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "sts:GetCallerIdentity",
+        "resourcegroupstaggingapi:GetResources",
+        "ecs:CreateService",
+        "ecs:UpdateService",
+        "ecs:DeleteService",
+        "ecs:DescribeServices",
+        "ecs:DescribeClusters",
+        "ecs:ListServices",
+        "ecs:ListTasks",
+        "ecs:RunTask",
+        "ecs:StopTask",
+        "ecs:DescribeTasks",
+        "ecs:RegisterTaskDefinition",
+        "ecs:DeregisterTaskDefinition",
+        "ecs:DescribeTaskDefinition",
+        "ecs:ListTaskDefinitions",
+        "ecs:TagResource",
+        "ecr:GetAuthorizationToken",
+        "ecr:CreateRepository",
+        "ecr:TagResource",
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListImages",
+        "ecr:BatchDeleteImage",
+        "ecr:DeleteRepository",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:DeleteSecurityGroup",
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:TagResource",
+        "logs:DescribeLogGroups",
+        "logs:FilterLogEvents",
+    }
+)
+
 # Operations the base identity may call: assume a customer role and check who it is.
 BASE_OPERATIONS: frozenset[str] = frozenset({"sts:AssumeRole", "sts:GetCallerIdentity"})
 
@@ -100,6 +150,7 @@ READ_PREFIXES = ("Describe", "List", "Get", "Search", "Filter")
 GLOBAL_SERVICES = frozenset({"iam", "sts"})
 
 SESSION_NAME = "groundcrew-discovery"
+DEPLOY_SESSION_NAME = "groundcrew-deploy"
 SESSION_SECONDS = 3600
 # Refresh a cached session this long before it expires.
 REFRESH_MARGIN_SECONDS = 300
@@ -237,7 +288,7 @@ class AwsSessions:
     def __init__(self, settings: Settings | None = None, *, base: boto3.Session | None = None):
         self.settings = settings or get_settings()
         self._base = base
-        self._cache: dict[tuple[str, str], _Cached] = {}
+        self._cache: dict[tuple[str, str, frozenset[str], str], _Cached] = {}
         self._lock = threading.Lock()
 
     @property
@@ -273,10 +324,12 @@ class AwsSessions:
             return f"arn:aws:iam::{assumed.group(1)}:role/{assumed.group(2)}"
         return arn
 
-    def _assume(self, role_arn: str, external_id: str | None) -> dict[str, Any]:
+    def _assume(
+        self, role_arn: str, external_id: str | None, session_name: str = SESSION_NAME
+    ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "RoleArn": role_arn,
-            "RoleSessionName": SESSION_NAME,
+            "RoleSessionName": session_name,
             "DurationSeconds": SESSION_SECONDS,
         }
         if external_id is not None:
@@ -284,17 +337,27 @@ class AwsSessions:
         creds: dict[str, Any] = self._sts(self.base()).assume_role(**kwargs)["Credentials"]
         return creds
 
-    def assume(self, role_arn: str, external_id: str) -> boto3.Session:
-        """A guarded customer session, from the cache when it has over 5 minutes left."""
+    def assume(
+        self,
+        role_arn: str,
+        external_id: str,
+        *,
+        operations: frozenset[str] = AWS_READ_OPERATIONS,
+        region: str | None = None,
+        session_name: str = SESSION_NAME,
+    ) -> boto3.Session:
+        """A customer session guarded by `operations` (read-only unless the deploy allowlist is
+        passed), from the cache when it has over 5 minutes left."""
         if not external_id:
             raise AwsError("An ExternalId is required to assume a customer role.")
-        key = (role_arn, external_id)
+        region = region or self.home_region
+        key = (role_arn, external_id, operations, region)
         with self._lock:
             cached = self._cache.get(key)
             if cached and cached.expires_at - REFRESH_MARGIN_SECONDS > time.time():
                 return cached.session
         try:
-            creds = self._assume(role_arn, external_id)
+            creds = self._assume(role_arn, external_id, session_name)
         except (ClientError, BotoCoreError) as exc:
             raise AwsError(f"Could not assume {role_arn}: {error_text(exc)}") from None
         session = guard_session(
@@ -302,9 +365,9 @@ class AwsSessions:
                 aws_access_key_id=creds["AccessKeyId"],
                 aws_secret_access_key=creds["SecretAccessKey"],
                 aws_session_token=creds["SessionToken"],
-                region_name=self.home_region,
+                region_name=region,
             ),
-            AWS_READ_OPERATIONS,
+            operations,
         )
         expiration = creds.get("Expiration")
         expires_at = (
@@ -318,7 +381,8 @@ class AwsSessions:
 
     def forget(self, role_arn: str, external_id: str) -> None:
         with self._lock:
-            self._cache.pop((role_arn, external_id), None)
+            for key in [k for k in self._cache if k[:2] == (role_arn, external_id)]:
+                del self._cache[key]
 
     def verify(self, role_arn: str, external_id: str) -> CallerIdentity:
         """Prove the role works only with our ExternalId and belongs to the ARN's account.
