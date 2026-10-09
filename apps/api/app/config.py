@@ -6,7 +6,7 @@ Code that needs a secret must check for it and fail with a clear error at call t
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -25,6 +25,10 @@ class Settings(BaseSettings):
         # An empty value in .env means "not set", so optional numbers can stay blank.
         env_ignore_empty=True,
     )
+
+    # Where this instance runs. Unset means production, so dev-only tools (make kind-register)
+    # refuse to run unless APP_ENV=dev is set explicitly. docker-compose.yml sets it for local dev.
+    app_env: Literal["dev", "test", "staging", "production"] = "production"
 
     # Nebius Token Factory
     token_factory_base_url: str | None = None

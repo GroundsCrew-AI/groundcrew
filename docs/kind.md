@@ -37,7 +37,10 @@ Then either:
 - **Command line:** `make kind-register LOGIN=<your GitHub login>`. It posts the same file to
   `POST /connections/k8s` in the workspace you own (sign in to the web app once first). It signs
   a 5-minute API token with `INTERNAL_JWT_SECRET` from `.env`, like the web proxy, so it is for
-  your own dev stack only. Already registered? It reuses the connection.
+  your own dev stack only: it refuses to run unless `.env` (or the environment) has
+  `APP_ENV=dev` and the API URL is on this machine (`localhost`, `127.0.0.1`, `::1`). `APP_ENV`
+  defaults to `production`; never set `dev` on a hosted instance. Already registered? It reuses
+  the connection.
 
 `make kind-register LOGIN=<login> DISCOVER=1` also runs discovery for the connection and checks
 that the cluster's `gc-*` namespaces (and every other non-`kube-*` namespace) are on the Map and

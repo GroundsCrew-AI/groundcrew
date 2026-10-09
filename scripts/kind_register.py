@@ -11,8 +11,9 @@ every gc-* namespace in the cluster (read with the host kubeconfig) is on the Ma
 Secret was read. Exits non-zero otherwise.
 
 It signs a 5-minute API token for LOGIN with INTERNAL_JWT_SECRET from .env, like the web
-app's proxy, so it only works for whoever runs the stack. Needs `make dev KIND=1` (the API
-must reach https://groundcrew-control-plane:6443) and the local Postgres (DB_URL).
+app's proxy, so it refuses to run unless APP_ENV=dev and the API is on this machine
+(app.devtools.require_dev). Needs `make dev KIND=1` (the API must reach
+https://groundcrew-control-plane:6443) and the local Postgres (DB_URL).
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ from typing import Any, NoReturn
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "apps" / "api"))
-os.chdir(REPO_ROOT)  # Settings reads .env from here
 
 import httpx  # noqa: E402
 import jwt  # noqa: E402
@@ -37,6 +37,7 @@ from app.config import get_settings  # noqa: E402
 from app.connectors.kubernetes import LiveKubeReader  # noqa: E402
 from app.db.models import User, Workspace  # noqa: E402
 from app.db.session import get_session_factory  # noqa: E402
+from app.devtools import NotDevError, require_dev  # noqa: E402
 from app.security.auth import ALGORITHM, API_AUDIENCE, WEB_ISSUER  # noqa: E402
 
 KUBECONFIG = REPO_ROOT / ".kind" / "groundcrew-deployer.kubeconfig"
@@ -159,6 +160,12 @@ def main() -> None:
     parser.add_argument("--api", default=os.environ.get("API_URL", "http://localhost:8000"))
     parser.add_argument("--discover", action="store_true", help="run discovery and check the Map")
     args = parser.parse_args()
+    os.chdir(REPO_ROOT)  # Settings reads .env from here
+    # Before anything else: it signs API tokens, so it must never run against a hosted instance.
+    try:
+        require_dev(get_settings(), args.api, tool="make kind-register")
+    except NotDevError as exc:
+        fail(str(exc))
     if not KUBECONFIG.exists():
         fail("No .kind/groundcrew-deployer.kubeconfig: run make kind-up and make kind-kubeconfig.")
     user, workspace = asyncio.run(owner(args.login))
