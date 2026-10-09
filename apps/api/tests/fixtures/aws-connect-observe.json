@@ -1,0 +1,356 @@
+{
+  "CreateResourceExplorerIndex=false": {
+    "Outputs": {
+      "RoleArn": {
+        "Description": "Paste this into Groundcrew to finish connecting.",
+        "Value": {
+          "Fn::GetAtt": [
+            "GroundcrewRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "Resources": {
+      "GroundcrewRole": {
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Statement": [
+              {
+                "Action": "sts:AssumeRole",
+                "Condition": {
+                  "StringEquals": {
+                    "sts:ExternalId": {
+                      "Ref": "ExternalId"
+                    }
+                  }
+                },
+                "Effect": "Allow",
+                "Principal": {
+                  "AWS": {
+                    "Ref": "GroundcrewPrincipalArn"
+                  }
+                },
+                "Sid": "GroundcrewWithExternalId"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "Description": "Groundcrew read-only discovery (metadata only, no secret values)",
+          "MaxSessionDuration": 3600,
+          "Policies": [
+            {
+              "PolicyDocument": {
+                "Statement": [
+                  {
+                    "Action": [
+                      "ecs:ListClusters",
+                      "ecs:DescribeClusters",
+                      "ecs:ListServices",
+                      "ecs:DescribeServices",
+                      "ecs:ListTaskDefinitions",
+                      "ecs:DescribeTaskDefinition",
+                      "ecs:ListTasks",
+                      "ecs:DescribeTasks",
+                      "lambda:ListFunctions",
+                      "lambda:GetFunctionConfiguration",
+                      "lambda:ListTags"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "Compute"
+                  },
+                  {
+                    "Action": [
+                      "ecr:DescribeRepositories",
+                      "ecr:DescribeImages",
+                      "ecr:ListTagsForResource",
+                      "rds:DescribeDBInstances",
+                      "rds:DescribeDBClusters",
+                      "rds:ListTagsForResource"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "ImagesAndDatabases"
+                  },
+                  {
+                    "Action": [
+                      "ec2:DescribeVpcs",
+                      "ec2:DescribeSubnets",
+                      "ec2:DescribeSecurityGroups",
+                      "ec2:DescribeSecurityGroupRules",
+                      "ec2:DescribeNetworkInterfaces"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "Network"
+                  },
+                  {
+                    "Action": [
+                      "cloudwatch:GetMetricData",
+                      "cloudwatch:GetMetricStatistics",
+                      "cloudwatch:ListMetrics",
+                      "cloudwatch:DescribeAlarms",
+                      "logs:DescribeLogGroups",
+                      "logs:FilterLogEvents"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "Telemetry"
+                  },
+                  {
+                    "Action": [
+                      "secretsmanager:ListSecrets",
+                      "secretsmanager:DescribeSecret"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "SecretMetadataOnly"
+                  },
+                  {
+                    "Action": [
+                      "iam:GetRole",
+                      "iam:ListRoles",
+                      "iam:ListRolePolicies",
+                      "iam:GetRolePolicy",
+                      "iam:ListAttachedRolePolicies",
+                      "iam:GetPolicy",
+                      "iam:GetPolicyVersion"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "IamMetadata"
+                  },
+                  {
+                    "Action": [
+                      "resource-explorer-2:Search",
+                      "resource-explorer-2:GetView",
+                      "resource-explorer-2:GetDefaultView",
+                      "resource-explorer-2:ListViews",
+                      "resource-explorer-2:GetIndex",
+                      "resource-explorer-2:ListIndexes",
+                      "cloudformation:GetResource",
+                      "cloudformation:ListResources",
+                      "tag:GetResources"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "Inventory"
+                  },
+                  {
+                    "Action": [
+                      "secretsmanager:GetSecretValue",
+                      "ssm:GetParameter*",
+                      "kms:Decrypt",
+                      "s3:GetObject",
+                      "s3:GetObjectVersion"
+                    ],
+                    "Effect": "Deny",
+                    "Resource": "*",
+                    "Sid": "NeverReadSecretValuesOrData"
+                  }
+                ],
+                "Version": "2012-10-17"
+              },
+              "PolicyName": "groundcrew-read-only"
+            }
+          ],
+          "RoleName": {
+            "Ref": "RoleName"
+          }
+        },
+        "Type": "AWS::IAM::Role"
+      }
+    }
+  },
+  "CreateResourceExplorerIndex=true": {
+    "Outputs": {
+      "RoleArn": {
+        "Description": "Paste this into Groundcrew to finish connecting.",
+        "Value": {
+          "Fn::GetAtt": [
+            "GroundcrewRole",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "Resources": {
+      "GroundcrewRole": {
+        "Properties": {
+          "AssumeRolePolicyDocument": {
+            "Statement": [
+              {
+                "Action": "sts:AssumeRole",
+                "Condition": {
+                  "StringEquals": {
+                    "sts:ExternalId": {
+                      "Ref": "ExternalId"
+                    }
+                  }
+                },
+                "Effect": "Allow",
+                "Principal": {
+                  "AWS": {
+                    "Ref": "GroundcrewPrincipalArn"
+                  }
+                },
+                "Sid": "GroundcrewWithExternalId"
+              }
+            ],
+            "Version": "2012-10-17"
+          },
+          "Description": "Groundcrew read-only discovery (metadata only, no secret values)",
+          "MaxSessionDuration": 3600,
+          "Policies": [
+            {
+              "PolicyDocument": {
+                "Statement": [
+                  {
+                    "Action": [
+                      "ecs:ListClusters",
+                      "ecs:DescribeClusters",
+                      "ecs:ListServices",
+                      "ecs:DescribeServices",
+                      "ecs:ListTaskDefinitions",
+                      "ecs:DescribeTaskDefinition",
+                      "ecs:ListTasks",
+                      "ecs:DescribeTasks",
+                      "lambda:ListFunctions",
+                      "lambda:GetFunctionConfiguration",
+                      "lambda:ListTags"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "Compute"
+                  },
+                  {
+                    "Action": [
+                      "ecr:DescribeRepositories",
+                      "ecr:DescribeImages",
+                      "ecr:ListTagsForResource",
+                      "rds:DescribeDBInstances",
+                      "rds:DescribeDBClusters",
+                      "rds:ListTagsForResource"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "ImagesAndDatabases"
+                  },
+                  {
+                    "Action": [
+                      "ec2:DescribeVpcs",
+                      "ec2:DescribeSubnets",
+                      "ec2:DescribeSecurityGroups",
+                      "ec2:DescribeSecurityGroupRules",
+                      "ec2:DescribeNetworkInterfaces"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "Network"
+                  },
+                  {
+                    "Action": [
+                      "cloudwatch:GetMetricData",
+                      "cloudwatch:GetMetricStatistics",
+                      "cloudwatch:ListMetrics",
+                      "cloudwatch:DescribeAlarms",
+                      "logs:DescribeLogGroups",
+                      "logs:FilterLogEvents"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "Telemetry"
+                  },
+                  {
+                    "Action": [
+                      "secretsmanager:ListSecrets",
+                      "secretsmanager:DescribeSecret"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "SecretMetadataOnly"
+                  },
+                  {
+                    "Action": [
+                      "iam:GetRole",
+                      "iam:ListRoles",
+                      "iam:ListRolePolicies",
+                      "iam:GetRolePolicy",
+                      "iam:ListAttachedRolePolicies",
+                      "iam:GetPolicy",
+                      "iam:GetPolicyVersion"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "IamMetadata"
+                  },
+                  {
+                    "Action": [
+                      "resource-explorer-2:Search",
+                      "resource-explorer-2:GetView",
+                      "resource-explorer-2:GetDefaultView",
+                      "resource-explorer-2:ListViews",
+                      "resource-explorer-2:GetIndex",
+                      "resource-explorer-2:ListIndexes",
+                      "cloudformation:GetResource",
+                      "cloudformation:ListResources",
+                      "tag:GetResources"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "*",
+                    "Sid": "Inventory"
+                  },
+                  {
+                    "Action": [
+                      "secretsmanager:GetSecretValue",
+                      "ssm:GetParameter*",
+                      "kms:Decrypt",
+                      "s3:GetObject",
+                      "s3:GetObjectVersion"
+                    ],
+                    "Effect": "Deny",
+                    "Resource": "*",
+                    "Sid": "NeverReadSecretValuesOrData"
+                  }
+                ],
+                "Version": "2012-10-17"
+              },
+              "PolicyName": "groundcrew-read-only"
+            }
+          ],
+          "RoleName": {
+            "Ref": "RoleName"
+          }
+        },
+        "Type": "AWS::IAM::Role"
+      },
+      "ResourceExplorerDefaultView": {
+        "Properties": {
+          "ViewArn": {
+            "Ref": "ResourceExplorerView"
+          }
+        },
+        "Type": "AWS::ResourceExplorer2::DefaultViewAssociation"
+      },
+      "ResourceExplorerIndex": {
+        "Properties": {
+          "Type": "LOCAL"
+        },
+        "Type": "AWS::ResourceExplorer2::Index"
+      },
+      "ResourceExplorerView": {
+        "DependsOn": "ResourceExplorerIndex",
+        "Properties": {
+          "IncludedProperties": [
+            {
+              "Name": "tags"
+            }
+          ],
+          "ViewName": "groundcrew-default"
+        },
+        "Type": "AWS::ResourceExplorer2::View"
+      }
+    }
+  }
+}

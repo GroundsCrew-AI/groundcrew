@@ -1,9 +1,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Groundcrew read-only access. Creates one IAM role that only the Groundcrew principal can
-  assume, and only with this workspace's ExternalId. The role reads configuration and metadata;
-  it cannot read secret values, decrypt data, or read objects. Also turns on a local Resource
-  Explorer index in this region. Delete this stack to remove all access.
+  Groundcrew access. Tier=observe (default) creates one IAM role that only the Groundcrew
+  principal can assume, and only with this workspace's ExternalId. The role reads configuration
+  and metadata; it cannot read secret values, decrypt data, or read objects. Also turns on a
+  local Resource Explorer index in this region. Tier=deploy also creates the groundcrew-deploys
+  ECS cluster, the groundcrew-task-execution role, and the groundcrew-deploy role, which may
+  only create and change groundcrew-* resources tagged project=groundcrew. Delete this stack to
+  remove all access.
 
 Parameters:
   GroundcrewPrincipalArn:
@@ -34,8 +37,18 @@ Parameters:
       Create a local Resource Explorer index and default view in this region. Set false if this
       region already has an index.
 
+  Tier:
+    Type: String
+    Default: observe
+    AllowedValues: ["observe", "deploy"]
+    Description: >-
+      observe: read-only discovery (the groundcrew-read-only role). deploy: also lets
+      Groundcrew deploy apps into a groundcrew-deploys ECS cluster, using only resources named
+      groundcrew-* and tagged project=groundcrew. Switch by updating this stack.
+
 Conditions:
   CreateIndex: !Equals [!Ref CreateResourceExplorerIndex, "true"]
+  IsDeploy: !Equals [!Ref Tier, "deploy"]
 
 Resources:
   GroundcrewRole:
@@ -166,7 +179,281 @@ Resources:
     Properties:
       ViewArn: !Ref ResourceExplorerView
 
+  # ------------------------------------------------------------------ Tier=deploy only
+  # Everything below exists only with Tier=deploy. Names are fixed: the deploy role's policy,
+  # Groundcrew's settings (docs/phase4-infra.md), and cleanup rely on them.
+
+  DeployCluster:
+    Type: AWS::ECS::Cluster
+    Condition: IsDeploy
+    Properties:
+      ClusterName: groundcrew-deploys
+      CapacityProviders: ["FARGATE", "FARGATE_SPOT"]
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      Tags:
+        - Key: project
+          Value: groundcrew
+
+  # Used by ECS (not by Groundcrew) to pull a deploy's image and write its logs.
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: IsDeploy
+    Properties:
+      RoleName: groundcrew-task-execution
+      Description: ECS task execution for Groundcrew deploys (pull groundcrew-* images, write /groundcrew/* logs)
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EcsTasksInThisAccount
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+      Policies:
+        - PolicyName: groundcrew-task-execution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: RegistryLogin
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: PullGroundcrewImages
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !Sub "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/groundcrew-*"
+              - Sid: WriteGroundcrewLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/groundcrew/*"
+      Tags:
+        - Key: project
+          Value: groundcrew
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Condition: IsDeploy
+    Properties:
+      RoleName: groundcrew-deploy
+      Description: Groundcrew deploys (groundcrew-* resources tagged project=groundcrew only, no secret values)
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: GroundcrewWithExternalId
+            Effect: Allow
+            Principal:
+              AWS: !Ref GroundcrewPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: groundcrew-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # --- ECS: only the groundcrew-deploys cluster
+              - Sid: EcsServicesInDeployCluster
+                Effect: Allow
+                Action:
+                  - ecs:CreateService
+                  - ecs:UpdateService
+                  - ecs:DeleteService
+                  - ecs:DescribeServices
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/groundcrew-deploys/*"
+              - Sid: EcsDescribeDeployCluster
+                Effect: Allow
+                Action: ecs:DescribeClusters
+                Resource: !GetAtt DeployCluster.Arn
+              - Sid: EcsListInDeployCluster
+                Effect: Allow
+                Action:
+                  - ecs:ListServices
+                  - ecs:ListTasks
+                Resource: "*"
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !GetAtt DeployCluster.Arn
+              - Sid: EcsRunGroundcrewTasksInDeployCluster
+                Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/groundcrew-*:*"
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !GetAtt DeployCluster.Arn
+              - Sid: EcsTasksInDeployCluster
+                Effect: Allow
+                Action:
+                  - ecs:StopTask
+                  - ecs:DescribeTasks
+                Resource: !Sub "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/groundcrew-deploys/*"
+              # RegisterTaskDefinition has no resource-level permissions; it must carry the tag.
+              - Sid: EcsRegisterTaggedTaskDefinitions
+                Effect: Allow
+                Action: ecs:RegisterTaskDefinition
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/project: groundcrew
+              # No resource-level permissions or tag conditions exist for these.
+              - Sid: EcsTaskDefinitionsUnscoped
+                Effect: Allow
+                Action:
+                  - ecs:DeregisterTaskDefinition
+                  - ecs:DescribeTaskDefinition
+                  - ecs:ListTaskDefinitions
+                Resource: "*"
+              - Sid: EcsTagOnlyWhileCreating
+                Effect: Allow
+                Action: ecs:TagResource
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ecs:CreateAction:
+                      - CreateService
+                      - RegisterTaskDefinition
+                      - RunTask
+                    aws:RequestTag/project: groundcrew
+              # --- ECR: only repositories named groundcrew-*
+              - Sid: EcrLogin
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcrCreateTaggedGroundcrewRepositories
+                Effect: Allow
+                Action:
+                  - ecr:CreateRepository
+                  - ecr:TagResource
+                Resource: !Sub "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/groundcrew-*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/project: groundcrew
+              - Sid: EcrUseGroundcrewRepositories
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:DescribeRepositories
+                  - ecr:DescribeImages
+                  - ecr:ListImages
+                  - ecr:BatchDeleteImage
+                  - ecr:DeleteRepository
+                Resource: !Sub "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/groundcrew-*"
+              # --- EC2: read the network; security groups only when tagged project=groundcrew
+              - Sid: Ec2DescribeNetwork
+                Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSecurityGroupRules
+                  - ec2:DescribeNetworkInterfaces
+                Resource: "*"
+              - Sid: Ec2CreateTaggedSecurityGroups
+                Effect: Allow
+                Action: ec2:CreateSecurityGroup
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/project: groundcrew
+              # CreateSecurityGroup is also authorized against the VPC the group goes in.
+              - Sid: Ec2SecurityGroupsInThisRegionsVpcs
+                Effect: Allow
+                Action: ec2:CreateSecurityGroup
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*"
+              - Sid: Ec2TagOnlyWhileCreatingSecurityGroups
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction: CreateSecurityGroup
+              - Sid: Ec2ChangeOnlyGroundcrewSecurityGroups
+                Effect: Allow
+                Action:
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:DeleteSecurityGroup
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/project: groundcrew
+              # --- CloudWatch Logs: only /groundcrew/*
+              - Sid: LogsGroundcrewLogGroups
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:TagResource
+                  - logs:TagLogGroup
+                  - logs:FilterLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/groundcrew/*"
+              - Sid: LogsDescribe
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
+              # --- IAM: hand ECS only the task execution role
+              - Sid: PassOnlyTheTaskExecutionRoleToEcs
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt TaskExecutionRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+              # --- Cleanup finds deploys by tag (make cleanup-deploys)
+              - Sid: FindTaggedResources
+                Effect: Allow
+                Action: tag:GetResources
+                Resource: "*"
+              # Explicit deny wins over any allow, including ones added to this role later.
+              - Sid: NeverReadSecretValuesOrData
+                Effect: Deny
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter*
+                  - kms:Decrypt
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: "*"
+      Tags:
+        - Key: project
+          Value: groundcrew
+
 Outputs:
   RoleArn:
     Description: Paste this into Groundcrew to finish connecting.
     Value: !GetAtt GroundcrewRole.Arn
+  DeployRoleArn:
+    Condition: IsDeploy
+    Description: The role Groundcrew deploys with (Tier=deploy).
+    Value: !GetAtt DeployRole.Arn
+  ClusterName:
+    Condition: IsDeploy
+    Description: ECS cluster for Groundcrew deploys (GC_ECS_CLUSTER).
+    Value: !Ref DeployCluster
+  TaskExecutionRoleArn:
+    Condition: IsDeploy
+    Description: ECS task execution role for Groundcrew deploys (GC_TASK_EXECUTION_ROLE_ARN).
+    Value: !GetAtt TaskExecutionRole.Arn
