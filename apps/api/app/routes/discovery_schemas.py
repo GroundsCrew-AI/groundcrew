@@ -27,6 +27,9 @@ class ConnectionKind(StrEnum):
 
 
 ConnectionStatus = Literal["pending", "connected", "error"]
+# AWS access tier (infra/aws-connect.yaml, parameter Tier): observe = read-only discovery;
+# deploy = also the groundcrew-deploy role for deploys into the groundcrew-deploys cluster.
+AwsTier = Literal["observe", "deploy"]
 
 
 class LastDiscovery(BaseModel):
@@ -57,6 +60,9 @@ class ConnectionOut(BaseModel):
     team_id: str | None = None
     resource_group: str | None = None
     server: str | None = None
+    # AWS: the stack's Tier, and the deploy role once verified (Tier=deploy).
+    tier: AwsTier | None = None
+    deploy_role_arn: str | None = None
     # Kubernetes: namespaces the kubeconfig could list when it was verified.
     namespaces: int | None = None
     error: str | None = None
@@ -86,6 +92,8 @@ class ConnectionOut(BaseModel):
             team_id=c.get("team_id"),
             resource_group=c.get("resource_group"),
             server=c.get("server"),
+            tier=(c.get("tier") or "observe") if conn.kind == "aws" else None,
+            deploy_role_arn=c.get("deploy_role_arn"),
             namespaces=c.get("namespaces"),
             error=c.get("last_error"),
             resource_count=resource_count,
@@ -96,10 +104,12 @@ class ConnectionOut(BaseModel):
 
 class AwsStartIn(BaseModel):
     workspace_id: uuid.UUID
+    tier: AwsTier = "observe"
 
 
 class AwsStartOut(BaseModel):
     connection_id: uuid.UUID
+    tier: AwsTier
     external_id: str
     principal_arn: str
     region: str
@@ -116,6 +126,10 @@ class AwsStartOut(BaseModel):
 class AwsCompleteIn(BaseModel):
     connection_id: uuid.UUID
     role_arn: str = Field(min_length=20, max_length=2048)
+
+
+class AwsTierIn(BaseModel):
+    tier: AwsTier
 
 
 class GitHubRepoOut(BaseModel):

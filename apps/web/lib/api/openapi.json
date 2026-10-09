@@ -193,6 +193,15 @@
       },
       "AwsStartIn": {
         "properties": {
+          "tier": {
+            "default": "observe",
+            "enum": [
+              "observe",
+              "deploy"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
           "workspace_id": {
             "format": "uuid",
             "title": "Workspace Id",
@@ -250,10 +259,19 @@
           "template_path": {
             "title": "Template Path",
             "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "observe",
+              "deploy"
+            ],
+            "title": "Tier",
+            "type": "string"
           }
         },
         "required": [
           "connection_id",
+          "tier",
           "external_id",
           "principal_arn",
           "region",
@@ -264,6 +282,23 @@
           "role_arn_command"
         ],
         "title": "AwsStartOut",
+        "type": "object"
+      },
+      "AwsTierIn": {
+        "properties": {
+          "tier": {
+            "enum": [
+              "observe",
+              "deploy"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier"
+        ],
+        "title": "AwsTierIn",
         "type": "object"
       },
       "AzureConnectIn": {
@@ -370,6 +405,17 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "deploy_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deploy Role Arn"
           },
           "error": {
             "anyOf": [
@@ -494,6 +540,21 @@
               }
             ],
             "title": "Team Id"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "observe",
+                  "deploy"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
           },
           "workspace_id": {
             "format": "uuid",
@@ -2690,7 +2751,7 @@
     },
     "/connections/aws/complete": {
       "post": {
-        "description": "Verify the role (refused without the ExternalId, works with it, right account) and\nstore its ARN. No credentials are stored.",
+        "description": "Verify the role (refused without the ExternalId, works with it, right account) and\nstore its ARN; for Tier=deploy, verify the groundcrew-deploy role the same way. No\ncredentials are stored.",
         "operationId": "aws_complete_connections_aws_complete_post",
         "parameters": [
           {
@@ -2750,7 +2811,7 @@
     },
     "/connections/aws/start": {
       "post": {
-        "description": "Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link.",
+        "description": "Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link for\nthe chosen tier (stored on the connection; complete verifies the deploy role for deploy).",
         "operationId": "aws_start_connections_aws_start_post",
         "parameters": [
           {
@@ -3213,6 +3274,76 @@
           }
         },
         "summary": "Delete Connection",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/aws/tier": {
+      "post": {
+        "description": "Switch a connected AWS account between observe and deploy after its stack was updated.\ndeploy: verifies the groundcrew-deploy role first (nothing changes if it cannot be used).\nobserve: Groundcrew stops using the deploy role at once; update the stack to Tier=observe\nto delete it.",
+        "operationId": "aws_set_tier_connections__connection_id__aws_tier_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AwsTierIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Aws Set Tier",
         "tags": [
           "connections"
         ]
