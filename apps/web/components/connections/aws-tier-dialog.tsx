@@ -1,13 +1,15 @@
 "use client";
 
+import { Download } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { type Connection, useAwsSetTier } from "@/lib/discovery";
+import { type Connection, downloadAwsTemplate, useAwsSetTier, useAwsTemplateUrl } from "@/lib/discovery";
 import { useWorkspace } from "@/lib/workspace";
 
 import { DEPLOY_CREATES } from "./aws-connect-dialog";
+import { CopyField } from "./copy-field";
 
 /**
  * Switch a connected AWS account between observe and deploy. Quick-create links only create
@@ -26,6 +28,8 @@ export function AwsTierDialog({
   const { workspace } = useWorkspace();
   const setTier = useAwsSetTier(workspace?.id);
   const enabling = connection.tier !== "deploy";
+  const template = useAwsTemplateUrl(open && enabling);
+  const templateUrl = template.data?.url;
   const region = "us-east-2";
   const stacks = `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks`;
 
@@ -48,7 +52,7 @@ export function AwsTierDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{enabling ? "Turn on deploys" : "Turn off deploys"}</DialogTitle>
           <DialogDescription>
@@ -67,10 +71,36 @@ export function AwsTierDialog({
               in account <span className="font-mono">{connection.account}</span>, select{" "}
               <span className="font-mono">groundcrew-read-only</span>, and click <span className="font-medium">Update</span>.
             </li>
-            <li>
-              Choose <span className="font-medium">Replace existing template</span> with the current template (Connect
-              AWS, &quot;Other ways to connect&quot;, aws-connect.yaml), and set <span className="font-mono">Tier</span> to{" "}
-              <span className="font-mono">deploy</span>. Leave the other parameters as they are.
+            <li className="space-y-2">
+              {templateUrl ? (
+                <>
+                  <p>
+                    Choose <span className="font-medium">Replace existing template</span>, then{" "}
+                    <span className="font-medium">Amazon S3 URL</span>, and paste:
+                  </p>
+                  <CopyField label="Template URL" value={templateUrl} multiline />
+                </>
+              ) : (
+                <>
+                  <p>
+                    Choose <span className="font-medium">Replace existing template</span>, then{" "}
+                    <span className="font-medium">Upload a template file</span>, and upload this file:
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={template.isLoading}
+                    onClick={() => void downloadAwsTemplate().catch((e: Error) => toast.error(e.message))}
+                  >
+                    <Download aria-hidden="true" />
+                    aws-connect.yaml
+                  </Button>
+                </>
+              )}
+              <p>
+                On the next page set <span className="font-mono">Tier</span> to <span className="font-mono">deploy</span>.
+                Leave the other parameters as they are.
+              </p>
             </li>
             <li>
               Acknowledge that it creates IAM resources with custom names, submit, and wait for{" "}

@@ -337,6 +337,21 @@ async def test_aws_tier_switch(
     assert DEPLOY_ROLE in sessions.forgotten
 
 
+@pytest.mark.parametrize(
+    "overrides,url",
+    [
+        ({"aws_connect_template_url": "https://gc.s3.us-east-2.amazonaws.com/aws-connect.yaml"},
+         "https://gc.s3.us-east-2.amazonaws.com/aws-connect.yaml"),
+        ({}, None),
+    ],
+)  # fmt: skip
+async def test_aws_template_url(client: httpx.AsyncClient, alice: Member, url: str | None) -> None:
+    r = await client.get("/connections/aws/template-url", headers=alice.headers)
+    assert r.status_code == 200
+    assert r.json() == {"url": url, "template_path": "/connections/aws/template"}
+    assert (await client.get("/connections/aws/template-url")).status_code == 401
+
+
 async def test_aws_complete_errors(
     client: httpx.AsyncClient, alice: Member, sessions: FakeSessions
 ) -> None:

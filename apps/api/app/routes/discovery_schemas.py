@@ -128,6 +128,14 @@ class AwsCompleteIn(BaseModel):
     role_arn: str = Field(min_length=20, max_length=2048)
 
 
+class AwsTemplateUrlOut(BaseModel):
+    # S3 URL of infra/aws-connect.yaml (AWS_CONNECT_TEMPLATE_URL), for CloudFormation's
+    # "Amazon S3 URL" field when updating a stack. Null when not configured: download the
+    # template from template_path and upload it instead.
+    url: str | None
+    template_path: str
+
+
 class AwsTierIn(BaseModel):
     tier: AwsTier
 

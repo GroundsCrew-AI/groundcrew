@@ -284,6 +284,31 @@
         "title": "AwsStartOut",
         "type": "object"
       },
+      "AwsTemplateUrlOut": {
+        "properties": {
+          "template_path": {
+            "title": "Template Path",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "url",
+          "template_path"
+        ],
+        "title": "AwsTemplateUrlOut",
+        "type": "object"
+      },
       "AwsTierIn": {
         "properties": {
           "tier": {
@@ -2914,6 +2939,56 @@
           }
         },
         "summary": "Aws Template",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/aws/template-url": {
+      "get": {
+        "description": "Where the connect template lives, for updating an existing stack (Enable deploys).",
+        "operationId": "aws_template_url_connections_aws_template_url_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AwsTemplateUrlOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Aws Template Url",
         "tags": [
           "connections"
         ]

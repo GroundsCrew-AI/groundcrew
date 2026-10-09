@@ -175,9 +175,11 @@ policy; `SimulateCustomPolicy`:
 - **New account:** choose **Deploy** on the AWS card of the Connections page before **Connect
   AWS**. The Quick-create link carries `Tier=deploy`; Verify checks both roles.
 - **Connected account:** Quick-create can only create stacks, so update the existing
-  `groundcrew-read-only` stack (Update, Replace existing template with the current
-  `aws-connect.yaml`, `Tier=deploy`), then **Enable deploys** on the connection, which verifies
-  the deploy role before Groundcrew uses it (`POST /connections/{id}/aws/tier`).
+  `groundcrew-read-only` stack: Update, Replace existing template, Amazon S3 URL (the
+  **Enable deploys** dialog shows `AWS_CONNECT_TEMPLATE_URL` with a Copy button, from
+  `GET /connections/aws/template-url`; without it, the dialog offers `aws-connect.yaml` to
+  upload), then `Tier=deploy`. Back in the dialog, **Verify** checks the deploy role before
+  Groundcrew uses it (`POST /connections/{id}/aws/tier`).
 - **Off:** **Turn off deploys** stops Groundcrew using the role at once; update the stack with
   `Tier=observe` to delete the cluster and both roles (delete deployed services first; cleanup
   does that).

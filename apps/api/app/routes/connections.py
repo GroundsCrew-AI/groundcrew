@@ -34,6 +34,7 @@ from app.routes.discovery_schemas import (
     AwsCompleteIn,
     AwsStartIn,
     AwsStartOut,
+    AwsTemplateUrlOut,
     AwsTierIn,
     AzureConnectIn,
     ConnectionDeleted,
@@ -143,6 +144,14 @@ def _console_url(settings: Settings, external_id: str, principal: str, tier: str
     return (
         f"https://{region}.console.aws.amazon.com/cloudformation/home?region={region}"
         f"#/stacks/quickcreate?{params}"
+    )
+
+
+@router.get("/aws/template-url")
+async def aws_template_url(_user: CurrentUser, settings: SettingsDep) -> AwsTemplateUrlOut:
+    """Where the connect template lives, for updating an existing stack (Enable deploys)."""
+    return AwsTemplateUrlOut(
+        url=settings.aws_connect_template_url, template_path="/connections/aws/template"
     )
 
 
