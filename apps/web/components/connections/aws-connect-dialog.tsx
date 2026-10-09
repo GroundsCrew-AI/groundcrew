@@ -23,9 +23,9 @@ const CREATES = [
 
 export const DEPLOY_CREATES = [
   "An ECS cluster, groundcrew-deploys (Fargate, no running cost until something is deployed).",
-  "A role, groundcrew-deploy, with the same trust and ExternalId. It may only create and change ECS services in groundcrew-deploys, ECR repositories named groundcrew-*, log groups under /groundcrew/, and security groups tagged project=groundcrew.",
-  "A role, groundcrew-task-execution, that ECS uses to pull groundcrew-* images and write /groundcrew/ logs.",
-  "The same explicit deny on secret values. Nothing else in the account can be changed.",
+  "A role, groundcrew-deploy, with the same trust and ExternalId. It may only create and change ECS services in groundcrew-deploys, ECR repositories named groundcrew-*, log groups under /groundcrew/, security groups tagged project=groundcrew, and secrets under groundcrew/ (write only).",
+  "A role, groundcrew-task-execution, that ECS uses to pull groundcrew-* images, write /groundcrew/ logs, and inject groundcrew/ secrets when an app starts.",
+  "The same explicit deny on reading secret values. Nothing else in the account can be changed.",
 ];
 
 /**

@@ -105,7 +105,8 @@ click **Connect AWS** again.
 **Observe or Deploy.** The AWS card has a choice. **Observe** (the default) is the read-only role above.
 **Deploy** also creates an ECS cluster `groundcrew-deploys` and a `groundcrew-deploy` role that may only
 create and change Groundcrew's own resources (named `groundcrew-*`, tagged `project=groundcrew`, logs
-under `/groundcrew/`); it is explicitly denied secret values too. For an account that is already
+under `/groundcrew/`, secrets under `groundcrew/`). It can write a deploy's secrets but is explicitly
+denied reading any secret value; only ECS reads them, when it starts the app. For an account that is already
 connected, update its stack with `Tier=deploy` and click **Enable deploys**. Exact permissions:
 [docs/phase4-infra.md](docs/phase4-infra.md).
 

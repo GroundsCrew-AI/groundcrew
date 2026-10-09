@@ -91,8 +91,9 @@ with a secret in the message).
     connection's `groundcrew-deploy` role (`config.deploy_role_arn`, verified when the tier was
     set), assumed with the same ExternalId, in `GC_AWS_REGION`, session name
     `groundcrew-deploy`, cached in memory, and guarded by `AWS_DEPLOY_OPERATIONS` (ECS in
-    `groundcrew-deploys`, ECR `groundcrew-*`, tagged security groups, `/groundcrew/*` logs; no
-    IAM, RDS, or secret values even if a policy allowed them). Raises `CredentialsError`
+    `groundcrew-deploys`, ECR `groundcrew-*`, tagged security groups, `/groundcrew/*` logs,
+    write-only `groundcrew/*` secrets; no IAM, RDS, secret values, or task definition
+    deregistration even if a policy allowed them). Raises `CredentialsError`
     ("...is connected with Tier=observe, which cannot deploy...") unless the connection's
     tier is `deploy`. The role's exact permissions: `docs/phase4-infra.md`.
   - `kubeconfig`: decrypts the stored kubeconfig into a 0600 file in a 0700 temp dir.

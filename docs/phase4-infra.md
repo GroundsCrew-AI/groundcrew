@@ -86,7 +86,7 @@ with a snapshot of it). `deploy` adds three resources and changes none:
 | Resource | What it is |
 |---|---|
 | `groundcrew-deploys` | ECS cluster, Fargate and Fargate Spot capacity providers, Container Insights off, tagged `project=groundcrew`. Free until something runs |
-| `groundcrew-task-execution` | Role ECS assumes for a deploy's tasks (trust: `ecs-tasks.amazonaws.com` from this account only). Pulls `groundcrew-*` images, writes `/groundcrew/*` logs. No secrets |
+| `groundcrew-task-execution` | Role ECS assumes for a deploy's tasks (trust: `ecs-tasks.amazonaws.com` from this account only). Pulls `groundcrew-*` images, writes `/groundcrew/*` logs, and reads `groundcrew/*` secrets so ECS can inject them when a task starts. Nothing else |
 | `groundcrew-deploy` | Role Groundcrew deploys with. Same trust as `groundcrew-read-only` (the platform principal, with this workspace's ExternalId), 1-hour sessions |
 
 New outputs: `DeployRoleArn`, `ClusterName`, `TaskExecutionRoleArn`. The platform identity
@@ -106,7 +106,7 @@ a scope widens). `<r>` and `<a>` are the stack's region and account.
 | `ecs:StopTask`, `DescribeTasks` | `task/groundcrew-deploys/*` | |
 | `ecs:RegisterTaskDefinition` | `*` | request tag `project=groundcrew` |
 | `ecs:TagResource` | `*` | `ecs:CreateAction` in CreateService / RegisterTaskDefinition / RunTask, and request tag `project=groundcrew` |
-| `ecs:DeregisterTaskDefinition`, `DescribeTaskDefinition`, `ListTaskDefinitions` | `*` | none (see below) |
+| `ecs:DescribeTaskDefinition`, `ListTaskDefinitions` | `*` | none (read-only, see below) |
 | `ecr:GetAuthorizationToken` | `*` | none (see below) |
 | `ecr:CreateRepository`, `ecr:TagResource` | `repository/groundcrew-*` | request tag `project=groundcrew` |
 | `ecr:` push and pull (`BatchCheckLayerAvailability`, `InitiateLayerUpload`, `UploadLayerPart`, `CompleteLayerUpload`, `PutImage`, `BatchGetImage`, `GetDownloadUrlForLayer`), `DescribeRepositories`, `DescribeImages`, `ListImages`, `BatchDeleteImage`, `DeleteRepository` | `repository/groundcrew-*` | |
@@ -117,29 +117,58 @@ a scope widens). `<r>` and `<a>` are the stack's region and account.
 | `ec2:AuthorizeSecurityGroupIngress`, `RevokeSecurityGroupIngress`, `DeleteSecurityGroup` | `security-group/*` | resource tag `project=groundcrew` |
 | `logs:CreateLogGroup`, `DeleteLogGroup`, `PutRetentionPolicy`, `TagResource`, `TagLogGroup`, `FilterLogEvents` | `log-group:/groundcrew/*` | |
 | `logs:DescribeLogGroups` | `*` | none (see below) |
+| `secretsmanager:CreateSecret` | `secret:groundcrew/*` | request tag `project=groundcrew` |
+| `secretsmanager:PutSecretValue`, `TagResource`, `DeleteSecret`, `DescribeSecret` | `secret:groundcrew/*` | |
 | `iam:PassRole` | `role/groundcrew-task-execution` | `iam:PassedToService` = `ecs-tasks.amazonaws.com` |
 | `tag:GetResources` | `*` | none (see below) |
 | **Deny** `secretsmanager:GetSecretValue`, `ssm:GetParameter*`, `kms:Decrypt`, `s3:GetObject`, `s3:GetObjectVersion` | `*` | explicit, same as the read-only role |
+
+Not granted on purpose: `ecs:DeregisterTaskDefinition` (it cannot be scoped to Groundcrew's
+families, task definitions cost nothing, and a rollback uses the previous revision), and
+`secretsmanager:GetSecretValue` (the Deny above; Groundcrew writes a deploy's secrets but never
+reads them back). **The deploy role has no unscoped write action**: every action that is `*`
+with no condition only reads (a test enforces it).
+
+`groundcrew-task-execution` may do exactly this:
+
+| Action | Resource |
+|---|---|
+| `ecr:GetAuthorizationToken` | `*` (registry login) |
+| `ecr:BatchCheckLayerAvailability`, `BatchGetImage`, `GetDownloadUrlForLayer` | `repository/groundcrew-*` |
+| `logs:CreateLogStream`, `PutLogEvents` | `log-group:/groundcrew/*` |
+| `secretsmanager:GetSecretValue` | `secret:groundcrew/*` (ECS injects them at task start; Groundcrew never assumes this role) |
+
+Secrets use the AWS managed key (`aws/secretsmanager`), so neither role needs `kms:Decrypt`.
 
 ### What cannot be scoped, and why
 
 | Action | Why it is `*` | What it means |
 |---|---|---|
-| `ecs:DeregisterTaskDefinition` | AWS has no resource-level permission or tag condition for it | The role could mark **any** task definition revision in the account INACTIVE (for example `checkout-api:7`). Running services keep running; new deployments of that revision fail until a new one is registered. It cannot delete task definitions (`DeleteTaskDefinitions` is not granted). Groundcrew's code must only deregister `groundcrew-*` families tagged `project=groundcrew` (`make cleanup-deploys`, deliverable 4, checks both and is tested for it) |
 | `ecs:DescribeTaskDefinition`, `ecs:ListTaskDefinitions` | No resource-level permissions | Read-only: task definition contents (env var values included) are already readable by the read-only role's Describe |
-| `ecs:RegisterTaskDefinition` | No resource-level permissions | Scoped by the required request tag instead; the family name is not checked by IAM, but `ecs:RunTask` only runs `groundcrew-*` families |
+| `ecs:RegisterTaskDefinition` (a write) | No resource-level permissions | Not unscoped: it needs the request tag `project=groundcrew`. IAM does not check the family name, but `ecs:RunTask` only runs `groundcrew-*` families |
 | `ecr:GetAuthorizationToken` | Account-wide by design (it returns a registry login, not repository access) | The token alone grants nothing: push and pull are limited to `repository/groundcrew-*` |
 | `ec2:Describe*` | EC2 Describe calls do not support resource-level permissions | Read-only network metadata |
-| `ec2:CreateSecurityGroup` on `vpc/*` | CreateSecurityGroup is also authorized against the VPC; the default VPC's ID differs per account and is unknown when the stack is written | The new group itself must be tagged `project=groundcrew`; the role cannot change any group without that tag |
+| `ec2:CreateSecurityGroup` on `vpc/*` (a write) | CreateSecurityGroup is also authorized against the VPC; the default VPC's ID differs per account and is unknown when the stack is written | Not unscoped: the same call is also checked against the new group, which must carry `project=groundcrew`; the role cannot change any group without that tag |
 | `logs:DescribeLogGroups` | Authorized against all log groups | Read-only names and settings |
 | `tag:GetResources` | The tagging API has no resource-level permissions | Read-only; cleanup uses it to find `project=groundcrew` resources |
 
 Checked on 2026-10-09 without changing anything in AWS: `cfn-lint` passes for both tiers; IAM
 Access Analyzer `ValidatePolicy` reports no findings for either role's permission or trust
-policy; `SimulateCustomPolicy` allows the deploy role on `groundcrew-*` resources and denies it
-on the demo's (`service/checkout/*`, `checkout-api` task definition, repository and log group,
-untagged security groups, `checkout-api-task-execution` PassRole, RDS, IAM), with
-`GetSecretValue` an explicit deny.
+policy; `SimulateCustomPolicy`:
+
+| Role | Action | Resource | Result |
+|---|---|---|---|
+| deploy | `secretsmanager:CreateSecret` | `groundcrew/x`, tagged `project=groundcrew` | allowed |
+| deploy | `secretsmanager:CreateSecret` | `groundcrew/x`, no tag | denied |
+| deploy | `secretsmanager:CreateSecret` | `checkout/x`, tagged | denied |
+| deploy | `secretsmanager:GetSecretValue` | `groundcrew/x` | denied (explicit) |
+| task-execution | `secretsmanager:GetSecretValue` | `groundcrew/x` | allowed |
+| task-execution | `secretsmanager:GetSecretValue` | `checkout/database-url` | denied |
+| deploy | `secretsmanager:PutSecretValue` / `DeleteSecret` / `TagResource` | `checkout/database-url` | denied |
+| deploy | `ecs:DeregisterTaskDefinition` | any | denied |
+| deploy | ECS, ECR, EC2, Logs, PassRole on `groundcrew-*` / tagged resources | | allowed |
+| deploy | the same on the demo's (`service/checkout/*`, `checkout-api` task definition, repository, log group, untagged security groups, `checkout-api-task-execution`), RDS, IAM | | denied |
+| task-execution | `ecr:BatchGetImage` | `checkout-api` / `groundcrew-shop` | denied / allowed |
 
 ### Turning deploys on or off
 
@@ -156,7 +185,19 @@ untagged security groups, `checkout-api-task-execution` PassRole, RDS, IAM), wit
 ### Names a deploy uses
 
 `task_family(app)` gives `groundcrew-<app>` (the only families `ecs:RunTask` allows), next to
-`ecr_repository`, `log_group`, and `ecs_service`. `deploy_role_arn(account)` gives the role ARN.
+`ecr_repository`, `log_group`, and `ecs_service`. `secret_name(app, var)` gives
+`groundcrew/<app>/<VAR>` for an env secret: Ahmed's ECS target creates it with
+`CreateSecret` (tags `project=groundcrew` and `groundcrew:deploy=<run_id>`), updates it with
+`PutSecretValue`, and references it in the task definition's `secrets` (`valueFrom` = the ARN);
+ECS reads it with the task execution role. `deploy_role_arn(account)` gives the role ARN.
+
+### Cleanup plan (deliverable 4)
+
+`make cleanup-deploys` deletes services, security groups, log groups, ECR repositories, and
+`groundcrew/*` secrets tagged `project=groundcrew`. It **does not deregister task definitions**:
+the deploy role cannot (see above), they cost nothing, and leaving them keeps every revision
+available for a rollback. Deleted secrets use Secrets Manager's recovery window (default 7 days)
+unless cleanup is told otherwise.
 
 ## Kubernetes namespaces
 
