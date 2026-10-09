@@ -12,7 +12,10 @@ A bullet is dropped when it:
 4. names two or more resources and one of them has no edge to the app at all and is related
    to none of the others (not even as a service in a named cluster);
 5. claims a relationship (calls, reads, uses, deploys, ...) between named resources and one
-   of them is related by an edge to none of the others.
+   of them is related by an edge to none of the others;
+6. says a workflow provisions, creates, or manages infrastructure when none of its jobs runs
+   an infrastructure-as-code apply (deploying services is not provisioning them).
+A workflow is also named by its file ("deploy.yml" for "deploy (deploy.yml)").
 Lines that are not bullets (headings, blank lines) are kept.
 """
 
@@ -42,9 +45,10 @@ _TYPE_WORDS: dict[str, tuple[str, ...]] = {
 _RELATION_VERB = re.compile(
     r"\b(call(s|ed|ing)?|read(s|ing)?|writ(es?|ing)|quer(y|ies|ying)|connect(s|ed|ing)?|"
     r"talks?|sends?|uses?|using|pulls?|deploy(s|ed|ing)?|logs?|stores?|depends?|invokes?|"
-    r"triggers?|fetch(es)?|hits?)\b",
+    r"triggers?|fetch(es)?|hits?|provision(s|ed|ing)?|creat(es?|ed|ing)|manag(es?|ed|ing))\b",
     re.IGNORECASE,
 )
+_PROVISION = re.compile(r"\b(provision(s|ed|ing)?|creat(es?|ed|ing)|manag(es?|ed|ing))\b", re.I)
 _SAME_IMAGE = re.compile(r"\bsame\s+(?:container\s+|docker\s+)?image\b", re.IGNORECASE)
 _MIN_PREFIX = 12  # "groundcrew-checkout-tfstate-..." still names the bucket
 _TRUNCATED = re.compile(r"([\w/-]{" + str(_MIN_PREFIX) + r",})(?:…|\.\.\.)")
@@ -92,7 +96,17 @@ class _Graph:
             if r.type == "ecs:service" and cluster:
                 self.pairs.add(frozenset((key(r), cluster)))
         # Names longest first, so "checkout-api" inside "/ecs/checkout-api" is not a match.
-        self.names = sorted({r.name for r in resources if len(r.name) >= 3}, key=len, reverse=True)
+        # Other names a resource goes by -> its name: a workflow by its file name.
+        self.aliases = {
+            str(r.config["path"]).rsplit("/", 1)[-1]: r.name
+            for r in resources
+            if r.type == "github:workflow" and r.config.get("path")
+        }
+        self.names = sorted(
+            {r.name for r in resources if len(r.name) >= 3} | set(self.aliases),
+            key=len,
+            reverse=True,
+        )
         self.images = {
             str(c.get("image_repository"))
             for r in resources
@@ -107,7 +121,8 @@ class _Graph:
         for name in self.names:
             if _mentions(text, name) and not any(name.lower() in f.lower() for f in found):
                 found.append(name)
-        return found
+        canonical = [self.aliases.get(n, n) for n in found]
+        return list(dict.fromkeys(canonical))
 
     def keys(self, name: str) -> list[str]:
         return [k for k, r in self.by_key.items() if r.name == name]
@@ -129,6 +144,17 @@ class _Graph:
                 return f"the graph has no {types[0]} the app uses"
         if _SAME_IMAGE.search(text) and len(self.images) > 1:
             return f"the services pull different images ({', '.join(sorted(self.images))})"
+        if _PROVISION.search(text):
+            for name in names:
+                for k in self.keys(name):
+                    r = self.by_key[k]
+                    jobs = r.config.get("jobs") or []
+                    if r.type == "github:workflow" and not any(
+                        j.get("provisions_infra") for j in jobs
+                    ):
+                        return (
+                            f"{name} runs no infrastructure-as-code apply, so it provisions nothing"
+                        )
         if len(names) >= 2:
             for name in names:
                 connected = any(k in self.app_linked for k in self.keys(name))

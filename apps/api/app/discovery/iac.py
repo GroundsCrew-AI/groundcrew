@@ -271,6 +271,13 @@ def _env_sources(run: str) -> dict[str, str]:
     return out
 
 
+_IAC_APPLY = re.compile(
+    r"\b(terraform|tofu|terragrunt)\b[^\n]*\bapply\b|\bcdk\s+deploy\b|\bpulumi\s+up\b|"
+    r"\baws\s+cloudformation\s+(deploy|create-stack|update-stack)\b|\bmake\s+tf-apply\b"
+)
+_IAC_ACTIONS = ("aws-actions/aws-cloudformation-github-deploy", "pulumi/actions")
+
+
 def _job_facts(job: WorkflowJob, workflow_env: dict[str, str]) -> WorkflowJob:
     env = {**workflow_env, **job.env}
     for step in job.steps:
@@ -296,6 +303,8 @@ def _job_facts(job: WorkflowJob, workflow_env: dict[str, str]) -> WorkflowJob:
                     job.ecs_services.append(step_env[var])
             if step.inputs.get("service"):
                 job.ecs_services.append(step.inputs["service"])
+        if _IAC_APPLY.search(run) or uses.startswith(_IAC_ACTIONS):
+            job.provisions_infra = True
         if "vercel" in uses or "vercel" in run.lower() or "VERCEL_TOKEN" in step_env:
             job.vercel = True
             job.vercel_env_keys += re.findall(r"\b([A-Z][A-Z0-9_]*)=\S+\s+\S*vercel", run)

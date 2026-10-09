@@ -253,7 +253,9 @@ the worker "uses the same image" (it has its own `checkout-worker` image). Witho
   have, say services share an image when they do not, relate a resource with no edges, or
   claim a relationship (calls, reads, uses, deploys, ...) between named resources that no edge
   connects. Names written as a list ("checkout-api and checkout-worker") are not related to
-  each other by the claim; Unicode hyphens are normalised first.
+  each other by the claim; Unicode hyphens are normalised first. A workflow is also named by
+  its file (`deploy.yml`), and a bullet saying a workflow provisions, creates, or manages
+  infrastructure is dropped unless one of its jobs runs an IaC apply (`provisions_infra`).
   Each dropped bullet is a `check_summary` step in the discovery run.
 
 **Proposed tweak to `SYSTEM_PROMPT` in `agents/scout/summary.py` (Ahmed's call):** append

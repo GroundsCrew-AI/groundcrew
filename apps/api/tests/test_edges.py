@@ -707,3 +707,23 @@ async def test_summary_check_drops_relationships_with_no_edge() -> None:
     assert "no edge relates" in checked.dropped[0][1]
     assert "read checkout-orders-db" in checked.text and "through API_URL" in checked.text
     assert "checkout cluster" in checked.text
+
+
+async def test_summary_check_names_workflows_by_file_and_checks_provisioning() -> None:
+    """Live summary (2026-10-09): deploy.yml deploys the services; Terraform provisions them."""
+    from app.graph.summary_check import check_summary
+
+    resources, repos = await demo_inventory()
+    edges = infer_edges(resources, repos).edges
+    text = "\n".join(
+        [
+            "- The entire infrastructure is provisioned by the GitHub workflow `deploy.yml`.",
+            "- `deploy.yml` deploys checkout-api and checkout-worker on every push to main.",
+        ]
+    )
+    checked = check_summary(text, resources, edges)
+    assert [b for b, _ in checked.dropped] == [
+        "The entire infrastructure is provisioned by the GitHub workflow `deploy.yml`."
+    ]
+    assert "provisions nothing" in checked.dropped[0][1]
+    assert "deploys checkout-api and checkout-worker" in checked.text
