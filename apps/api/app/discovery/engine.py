@@ -64,7 +64,7 @@ from app.steps import record_step
 logger = logging.getLogger("groundcrew.discovery")
 
 AGENT = "discovery"
-PREVIEW_KINDS = frozenset({"azure", "k8s"})
+PREVIEW_KINDS = frozenset({"azure"})
 # Where a GitHub repository resource keeps the facts edge inference needs.
 FACTS_KEY = "iac_facts"
 
@@ -125,10 +125,28 @@ async def _discover_vercel(
     )
 
 
+async def _discover_k8s(
+    conn: Connection, settings: Settings, progress: Progress
+) -> ConnectorResult:
+    from app.connectors.kubernetes import live_reader
+    from app.discovery.kubernetes import discover_kubernetes
+    from app.security.crypto import decrypt
+
+    if not conn.secret_encrypted:
+        raise ConnectorError("This Kubernetes connection has no kubeconfig.")
+    limit = settings.max_resources_per_connection
+    reader = live_reader(decrypt(conn.secret_encrypted), max_items=limit)
+    try:
+        cluster = str(conn.config.get("cluster") or conn.name)
+        return await discover_kubernetes(reader, cluster, progress=progress, max_resources=limit)
+    finally:
+        reader.close()
+
+
 async def _discover_preview(
     conn: Connection, settings: Settings, progress: Progress
 ) -> ConnectorResult:
-    # TODO(azure-live) / TODO(k8s-live): live readers are not built yet (fixtures only).
+    # TODO(azure-live): the live Azure reader is not built yet (fixtures only).
     raise ConnectorError(f"{conn.kind} discovery is in preview and does not run live yet.")
 
 
@@ -137,7 +155,7 @@ DEFAULT_CONNECTORS: dict[str, DiscoverFn] = {
     "github": _discover_github,
     "vercel": _discover_vercel,
     "azure": _discover_preview,
-    "k8s": _discover_preview,
+    "k8s": _discover_k8s,
 }
 
 

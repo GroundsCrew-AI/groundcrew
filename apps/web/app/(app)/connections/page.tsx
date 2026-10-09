@@ -34,7 +34,7 @@ const PROVIDERS: Provider[] = [
   { kind: "github", name: "GitHub", access: "The Groundcrew GitHub App on the repositories you pick.", action: "Pick repositories" },
   { kind: "vercel", name: "Vercel", access: "A team token, stored encrypted. Env var names, not values.", action: "Add token" },
   { kind: "azure", name: "Azure", access: "Reader on one resource group, through a service principal.", action: "Connect", preview: true },
-  { kind: "k8s", name: "Kubernetes", access: "A read-only service account. No access to Secrets.", action: "Upload kubeconfig", preview: true },
+  { kind: "k8s", name: "Kubernetes", access: "A service account's kubeconfig, checked before saving. Groundcrew never lists Secrets.", action: "Upload kubeconfig" },
   { kind: "vm", name: "VM", access: "SSH key, encrypted at rest. Read commands only.", action: "Connect", later: true },
 ];
 

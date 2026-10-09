@@ -43,3 +43,7 @@ Thumbs.db
 # Output of scripts/probe_token_factory.py
 probe_results.json
 probe_followup.json
+
+# kind: downloaded tools and the deployer kubeconfigs (they hold a token)
+.tools/
+.kind/

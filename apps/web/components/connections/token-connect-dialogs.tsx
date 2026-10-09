@@ -220,13 +220,34 @@ export function KubernetesConnectDialog({ open, onOpenChange }: DialogProps) {
   const connect = useConnectKubernetes();
   const [name, setName] = useState("");
   const [kubeconfig, setKubeconfig] = useState("");
+  const [fileName, setFileName] = useState<string | null>(null);
+  function close(next: boolean) {
+    onOpenChange(next);
+    if (!next) {
+      setKubeconfig("");
+      setFileName(null);
+      connect.reset();
+    }
+  }
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    setKubeconfig(await file.text());
+    setFileName(file.name);
+  }
   return (
     <FormDialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={close}
       title="Connect Kubernetes"
-      description="A kubeconfig for the read-only service account in infra/k8s-readonly-rbac.yaml. It cannot read Secrets."
-      submitLabel="Save"
+      description={
+        <>
+          A kubeconfig for a service account Groundcrew may use: the read-only one in infra/k8s-readonly-rbac.yaml,
+          or the local kind cluster&apos;s deployer from <code className="font-mono text-[11.5px]">make kind-kubeconfig</code>{" "}
+          (.kind/groundcrew-deployer.kubeconfig). Groundcrew lists namespaces with it before saving, stores it encrypted,
+          and never lists Secrets.
+        </>
+      }
+      submitLabel="Verify and connect"
       pending={connect.isPending}
       error={connect.error}
       onSubmit={() =>
@@ -234,24 +255,34 @@ export function KubernetesConnectDialog({ open, onOpenChange }: DialogProps) {
         connect.mutate(
           { workspace_id: workspace.id, name: name.trim() || null, kubeconfig },
           {
-            onSuccess: () => {
-              toast.success("Kubernetes connection saved (preview)");
-              setKubeconfig("");
-              onOpenChange(false);
+            onSuccess: (conn) => {
+              const count = conn.namespaces ?? 0;
+              toast.success(`Connected to ${conn.account ?? "the cluster"}: ${count} namespace${count === 1 ? "" : "s"}`);
+              close(false);
             },
           },
         )
       }
     >
-      <PreviewNote>The kubeconfig is stored encrypted, but discovery does not read clusters live yet.</PreviewNote>
       <Field id="k8s-name" label="Name">
-        <Input id="k8s-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="production cluster" />
+        <Input id="k8s-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="kind groundcrew" />
+      </Field>
+      <Field id="k8s-file" label="Kubeconfig file" hint={fileName ? `Loaded ${fileName}` : "Or paste it below."}>
+        <Input
+          id="k8s-file"
+          type="file"
+          accept=".kubeconfig,.yaml,.yml,.conf,text/yaml,text/plain"
+          onChange={(e) => void upload(e.target.files?.[0])}
+        />
       </Field>
       <Field id="k8s-config" label="Kubeconfig">
         <Textarea
           id="k8s-config"
           value={kubeconfig}
-          onChange={(e) => setKubeconfig(e.target.value)}
+          onChange={(e) => {
+            setKubeconfig(e.target.value);
+            setFileName(null);
+          }}
           rows={8}
           className="font-mono text-[11.5px]"
           spellCheck={false}

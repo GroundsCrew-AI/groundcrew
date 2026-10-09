@@ -21,6 +21,7 @@ dependencies = [
     "boto3>=1.43.109",
     "python-hcl2>=8.1.4",
     "pyyaml>=6.0.3",
+    "kubernetes>=36.0.3,<37",
 ]
 
 [dependency-groups]
@@ -55,8 +56,8 @@ module = ["asyncpg", "asyncpg.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# boto3 / botocore and python-hcl2 ship no type hints. AWS responses are handled as dicts.
-module = ["boto3", "boto3.*", "botocore", "botocore.*", "hcl2", "hcl2.*"]
+# boto3 / botocore, python-hcl2, and kubernetes ship no type hints. AWS responses are handled as dicts.
+module = ["boto3", "boto3.*", "botocore", "botocore.*", "hcl2", "hcl2.*", "kubernetes", "kubernetes.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

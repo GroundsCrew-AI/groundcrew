@@ -1,0 +1,63 @@
+# Limits every write the groundcrew-deployer ServiceAccount makes, whatever RBAC allows.
+# RBAC cannot say "only namespaces named gc-*"; this policy can. Needs Kubernetes >= 1.30
+# (ValidatingAdmissionPolicy GA). Reads are not admitted, so RBAC alone keeps it read-only
+# outside gc-* (rbac.yaml).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: groundcrew-deployer-scope
+  labels:
+    project: groundcrew
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        resources: ["*"]
+        operations: ["CREATE", "UPDATE", "DELETE", "CONNECT"]
+  matchConditions:
+    - name: is-groundcrew-deployer
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:groundcrew-system:groundcrew-deployer'
+  variables:
+    - name: isNamespace
+      expression: "request.resource.group == '' && request.resource.resource == 'namespaces'"
+  validations:
+    # Namespaced writes only inside gc-* (so never in groundcrew-system or kube-system).
+    - expression: "request.namespace == '' || request.namespace.startsWith('gc-')"
+      messageExpression: >-
+        'groundcrew-deployer may only change objects in gc-* namespaces, not in ' + request.namespace
+      reason: Forbidden
+    # The only cluster-scoped object it may touch is a namespace.
+    - expression: "request.namespace != '' || variables.isNamespace"
+      messageExpression: >-
+        'groundcrew-deployer may not change cluster-scoped ' + request.resource.resource
+      reason: Forbidden
+    - expression: "!variables.isNamespace || request.name.startsWith('gc-')"
+      messageExpression: "'groundcrew-deployer may only create or delete gc-* namespaces, not ' + request.name"
+      reason: Forbidden
+    # A namespace it creates carries project=groundcrew, so cleanup can find it.
+    - expression: >-
+        !variables.isNamespace || request.operation != 'CREATE' ||
+        (has(object.metadata.labels) && 'project' in object.metadata.labels &&
+         object.metadata.labels['project'] == 'groundcrew')
+      message: "a namespace created by groundcrew-deployer must have the label project=groundcrew"
+      reason: Invalid
+    # A RoleBinding it writes may only grant gc-namespace-admin.
+    - expression: >-
+        request.resource.group != 'rbac.authorization.k8s.io' ||
+        request.resource.resource != 'rolebindings' || request.operation == 'DELETE' ||
+        (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == 'gc-namespace-admin')
+      message: "groundcrew-deployer may only create RoleBindings to the gc-namespace-admin ClusterRole"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: groundcrew-deployer-scope
+  labels:
+    project: groundcrew
+spec:
+  policyName: groundcrew-deployer-scope
+  validationActions: ["Deny"]

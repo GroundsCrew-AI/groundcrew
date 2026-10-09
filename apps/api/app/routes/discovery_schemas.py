@@ -47,7 +47,7 @@ class ConnectionOut(BaseModel):
     kind: ConnectionKind
     name: str
     status: ConnectionStatus
-    # Azure and Kubernetes: stored, but discovery runs on fixtures only for now.
+    # Azure: stored, but discovery runs on fixtures only for now.
     preview: bool
     # AWS account ID, GitHub owner, Vercel team, Azure subscription, or k8s cluster.
     account: str | None = None
@@ -57,6 +57,8 @@ class ConnectionOut(BaseModel):
     team_id: str | None = None
     resource_group: str | None = None
     server: str | None = None
+    # Kubernetes: namespaces the kubeconfig could list when it was verified.
+    namespaces: int | None = None
     error: str | None = None
     resource_count: int = 0
     last_discovery: LastDiscovery | None = None
@@ -84,6 +86,7 @@ class ConnectionOut(BaseModel):
             team_id=c.get("team_id"),
             resource_group=c.get("resource_group"),
             server=c.get("server"),
+            namespaces=c.get("namespaces"),
             error=c.get("last_error"),
             resource_count=resource_count,
             last_discovery=last,

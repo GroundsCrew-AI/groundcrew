@@ -1,4 +1,4 @@
-"""Kubernetes discovery (fixtures until TODO(k8s-live)). Never lists Secrets."""
+"""Kubernetes discovery through a KubeReader (live or fixtures). Never lists Secrets."""
 
 from typing import Any
 
@@ -116,7 +116,10 @@ async def discover_kubernetes(
             external_id=external_id(cluster, None, "namespaces", str(n["metadata"]["name"])),
             name=str(n["metadata"]["name"]),
             account=cluster,
-            config={"labels": (n.get("metadata") or {}).get("labels") or {}},
+            config={
+                "labels": (n.get("metadata") or {}).get("labels") or {},
+                "phase": (n.get("status") or {}).get("phase"),
+            },
         )
         for n in namespaces
         if not str(n["metadata"]["name"]).startswith("kube-")

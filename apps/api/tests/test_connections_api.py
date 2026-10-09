@@ -20,6 +20,7 @@ from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Job, Resource, Run, Workspace
 from app.db.session import SessionFactory, get_session_factory
 from app.discovery.engine import DiscoveryEngine, start_discovery
+from app.discovery.types import ConnectorError
 from app.main import app
 from app.security.auth import WebIdentity
 from app.security.crypto import decrypt, generate_key
@@ -415,14 +416,13 @@ async def test_github_picker_and_link(client: httpx.AsyncClient, alice: Member, 
     assert refused.status_code == 422 and "cannot see" in refused.json()["detail"]
 
 
-async def test_azure_and_k8s_are_previews_with_encrypted_secrets(
+async def test_azure_is_a_preview_with_an_encrypted_secret(
     client: httpx.AsyncClient, alice: Member
 ) -> None:
-    ws = str(alice.workspace_id)
     azure = await client.post(
         "/connections/azure",
         json={
-            "workspace_id": ws,
+            "workspace_id": str(alice.workspace_id),
             "tenant_id": "t",
             "client_id": "c",
             "client_secret": "azure-secret-value",
@@ -436,24 +436,83 @@ async def test_azure_and_k8s_are_previews_with_encrypted_secrets(
         and azure.json()["preview"] is True
         and "azure-secret-value" not in azure.text
     )
-    kubeconfig = (
-        "apiVersion: v1\n"
-        "clusters: [{name: demo, cluster: {server: 'https://1.2.3.4'}}]\n"
-        "contexts: [{name: r, context: {cluster: demo, user: u}}]\n"
-        "current-context: r\n"
-        "users: [{name: u, user: {token: kube-token-value}}]\n"
-    )
+
+
+KUBECONFIG = (
+    "apiVersion: v1\n"
+    "clusters: [{name: demo, cluster: {server: 'https://1.2.3.4'}}]\n"
+    "contexts: [{name: r, context: {cluster: demo, user: u}}]\n"
+    "current-context: r\n"
+    "users: [{name: u, user: {token: kube-token-value}}]\n"
+)
+
+
+class _FakeKubeReader:
+    def __init__(self, kubeconfig: str, error: str | None) -> None:
+        self.kubeconfig, self.error, self.closed = kubeconfig, error, False
+
+    async def verify(self) -> list[str]:
+        if self.error:
+            raise ConnectorError(self.error)
+        return ["default", "gc-shop", "groundcrew-system"]
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _fake_kube(monkeypatch: pytest.MonkeyPatch, error: str | None = None) -> list[_FakeKubeReader]:
+    from app.connectors import kubernetes as kube
+
+    made: list[_FakeKubeReader] = []
+
+    def factory(kubeconfig: str, **_: object) -> _FakeKubeReader:
+        made.append(_FakeKubeReader(kubeconfig, error))
+        return made[-1]
+
+    monkeypatch.setattr(kube, "live_reader", factory)
+    return made
+
+
+async def test_k8s_is_verified_live_and_stored_encrypted(
+    client: httpx.AsyncClient,
+    alice: Member,
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    made = _fake_kube(monkeypatch)
     k8s = await client.post(
         "/connections/k8s",
-        json={"workspace_id": ws, "kubeconfig": kubeconfig},
+        json={"workspace_id": str(alice.workspace_id), "kubeconfig": KUBECONFIG},
         headers=alice.headers,
     )
-    assert (
-        k8s.status_code == 200
-        and k8s.json()["server"] == "https://1.2.3.4"
-        and "kube-token-value" not in k8s.text
+    assert k8s.status_code == 200, k8s.text
+    body = k8s.json()
+    assert body["server"] == "https://1.2.3.4" and "kube-token-value" not in k8s.text
+    assert body["preview"] is False and body["status"] == "connected"
+    assert made[0].kubeconfig == KUBECONFIG and made[0].closed
+    async with session_factory() as s:
+        conn = await s.get(Connection, uuid.UUID(body["id"]))
+        assert conn is not None and conn.secret_encrypted
+        assert "kube-token-value" not in conn.secret_encrypted
+        assert decrypt(conn.secret_encrypted) == KUBECONFIG
+        assert conn.config["namespaces"] == 3 and conn.config["verified_at"]
+
+
+async def test_k8s_that_cannot_be_read_is_not_stored(
+    client: httpx.AsyncClient,
+    alice: Member,
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_kube(monkeypatch, error="The cluster at https://1.2.3.4 rejected the credentials (401)")
+    k8s = await client.post(
+        "/connections/k8s",
+        json={"workspace_id": str(alice.workspace_id), "kubeconfig": KUBECONFIG},
+        headers=alice.headers,
     )
-    assert k8s.json()["preview"] is True and k8s.json()["status"] == "pending"
+    assert k8s.status_code == 422 and "401" in k8s.json()["detail"]
+    async with session_factory() as s:
+        assert not list(await s.scalars(select(Connection).where(Connection.kind == "k8s")))
 
 
 # --- discovery, graph, delete --------------------------------------------------------

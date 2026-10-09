@@ -389,8 +389,9 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         works without the ExternalId; sessions in memory only; runtime allowlist guard on every boto3 call
   - [x] GitHub App: installation tokens, GET-only client, repo picker, `GitHubAppSource` (authenticated clone)
   - [x] Vercel: token encrypted, names and types only, values only for plain *_URL / *_HOST
-  - [x] Azure (Resource Graph, `infra/azure-connect.bicep`) and Kubernetes (`infra/k8s-readonly-rbac.yaml`)
-        on fixtures, marked Preview: `TODO(azure-live)`, `TODO(k8s-live)`
+  - [x] Azure (Resource Graph, `infra/azure-connect.bicep`) on fixtures, marked Preview: `TODO(azure-live)`
+  - [x] Kubernetes (`infra/k8s-readonly-rbac.yaml`, or the kind deployer): live since 2026-10-09 (`LiveKubeReader`,
+        kubeconfig verified by listing namespaces before it is stored, `make kind-register`; see Phase 4 infra)
   - [x] Discovery engine (`app/discovery/`): jobs `discover` / `discover_workspace` as normal runs with SSE;
         AWS Resource Explorer search with tagging API fallback plus core describes; IaC facts (python-hcl2,
         workflows, Dockerfiles, compose); upsert on stable external_id; stale marking; limits and timeouts.
@@ -463,6 +464,10 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         Rules win conflicts (recorded); model values with no supporting line are not applied (`low_confidence` +
         `unverified`); per-field source rule/model; deterministic confidence. `summarize_system` (Nano, off).
         Fixtures in `demo/fixtures/` with golden specs; `scripts/live_scout.py` (not run)
+  - [ ] Infra (`phase4-infra`, PR #9): deploy contract (`docs/phase4-infra.md`, `GC_*` settings,
+        `app/connectors/deploy_infra.py`); local kind cluster with registry, ingress, and the `groundcrew-deployer`
+        ServiceAccount limited to `gc-*` namespaces (RBAC + ValidatingAdmissionPolicy, `docs/kind.md`); Kubernetes
+        connections live (`TODO(k8s-live)` done). Next: AWS deploy tier, cleanup, CI, live runbook
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission
@@ -492,7 +497,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   stay off).
 - Tool calling with reasoning off is verified only on the Echo Ops toy agent. Re-check quality when
   Scout, Builder, and Deployer land.
-- Phase 3 leftovers: Azure and Kubernetes connectors run on fixtures only (`TODO(azure-live)`, `TODO(k8s-live)`);
+- Phase 3 leftovers: the Azure connector runs on fixtures only (`TODO(azure-live)`);
   the summary check is rule based and does not catch negative claims (e.g. "does not depend on the ECS
   services" despite a `calls` edge); Medic's log and metric reads (`logs:FilterLogEvents`,
   `cloudwatch:GetMetricData`) are allowed but not yet called live through the connect role.

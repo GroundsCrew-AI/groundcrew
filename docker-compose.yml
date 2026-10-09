@@ -3,6 +3,8 @@
 x-api-env: &api-env
   # Overrides any DATABASE_URL in .env so local dev never touches the hosted database.
   DATABASE_URL: postgresql+asyncpg://groundcrew:groundcrew@postgres:5432/groundcrew
+  # Local development: enables dev-only tools; a hosted instance leaves it unset (production).
+  APP_ENV: dev
 
 services:
   postgres:
