@@ -186,7 +186,7 @@ export function AwsConnectDialog({
   const done = complete.data;
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[90dvh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{tier === "deploy" ? "Connect an AWS account for deploys" : "Connect an AWS account"}</DialogTitle>
           <DialogDescription>

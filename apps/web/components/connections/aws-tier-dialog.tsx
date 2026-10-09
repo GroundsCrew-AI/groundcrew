@@ -52,7 +52,7 @@ export function AwsTierDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{enabling ? "Turn on deploys" : "Turn off deploys"}</DialogTitle>
           <DialogDescription>
@@ -78,7 +78,7 @@ export function AwsTierDialog({
                     Choose <span className="font-medium">Replace existing template</span>, then{" "}
                     <span className="font-medium">Amazon S3 URL</span>, and paste:
                   </p>
-                  <CopyField label="Template URL" value={templateUrl} />
+                  <CopyField label="Template URL" value={templateUrl} multiline />
                 </>
               ) : (
                 <>
