@@ -70,6 +70,60 @@ make seed     # dev user + "Demo" workspace, for API experiments without the web
 make down     # stop the stack
 ```
 
+## Connecting your cloud
+
+Groundcrew only ever reads. It never sees secret values or your data, and it never stores AWS keys.
+Open **Connections** in the sidebar and add what you use. Each one takes a minute or two.
+
+> Screenshot placeholder: the Connections page, with AWS, GitHub, and Vercel cards.
+
+### AWS
+
+1. Click **Connect AWS**. A new tab opens in the AWS console with a CloudFormation stack that is
+   already filled in: the stack name (`groundcrew-read-only`), your workspace's ExternalId, and the
+   Groundcrew identity that may use the role. If AWS asks you to sign in, sign in to the account you want
+   to connect.
+2. Check that the region at the top right is **US East (Ohio) us-east-2**. At the bottom, tick
+   *I acknowledge that AWS CloudFormation might create IAM resources with custom names*, then click
+   **Create stack**.
+3. Wait about a minute for **CREATE_COMPLETE**. Open the **Outputs** tab and copy **RoleArn**.
+4. Back in Groundcrew, paste it and click **Verify**. Groundcrew checks that the role refuses access
+   without your ExternalId and works with it, then shows the account as connected.
+
+> Screenshot placeholder: the CloudFormation Quick-create page with the parameters filled in.
+>
+> Screenshot placeholder: the stack's Outputs tab with RoleArn.
+
+The stack creates one read-only role and a Resource Explorer index. The role is explicitly denied secret
+values, SSM parameters, KMS decrypt, and S3 objects. To disconnect, remove the connection in Groundcrew and
+delete the `groundcrew-read-only` stack in CloudFormation.
+
+If Verify says the ExternalId is different, the stack was made from an older link: delete the stack and
+click **Connect AWS** again.
+
+### GitHub
+
+1. Click **Pick repositories**. The first time, click **Install the GitHub App**, choose your account,
+   and select the repositories Groundcrew may read.
+2. Come back, click **I installed it**, tick the repositories, and click **Link**.
+
+> Screenshot placeholder: the repository picker.
+
+### Vercel
+
+1. At vercel.com/account/tokens, create a token with your team as its scope.
+2. Click **Add token**, paste it, and add your Team ID (Vercel, Settings, General; it starts with
+   `team_`). Groundcrew reads projects, domains, deployments, and the names of env vars, but never
+   encrypted or sensitive values.
+
+### Then
+
+Click **Run discovery**. It streams what it finds and takes well under two minutes. Open **Map** to see
+every resource, how they connect, and why Groundcrew thinks so.
+
+Running Groundcrew yourself? See [docs/self-hosting.md](docs/self-hosting.md) for the one AWS identity
+and the GitHub App it needs.
+
 ## Repository layout
 
 - `apps/api`: FastAPI control plane (Python 3.12, uv)

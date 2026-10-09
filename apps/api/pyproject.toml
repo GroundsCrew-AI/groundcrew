@@ -18,6 +18,9 @@ dependencies = [
     "cryptography",
     "pyjwt>=2.15.1",
     "pathspec",
+    "boto3>=1.43.109",
+    "python-hcl2>=8.1.4",
+    "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
@@ -25,6 +28,7 @@ dev = [
     "pytest",
     "ruff",
     "mypy",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [tool.uv]
@@ -48,6 +52,11 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 # asyncpg ships no type hints. Only tests use it directly (SQLAlchemy wraps it in app code).
 module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# boto3 / botocore and python-hcl2 ship no type hints. AWS responses are handled as dicts.
+module = ["boto3", "boto3.*", "botocore", "botocore.*", "hcl2", "hcl2.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

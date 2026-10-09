@@ -1,0 +1,162 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for AWS; no stored AWS keys
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+# Every value comes from repository variables (Settings > Secrets and variables > Actions >
+# Variables). See README "GitHub repository variables". Nothing secret lives here.
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_API_REPOSITORY: ${{ vars.ECR_API_REPOSITORY }}
+  ECR_WORKER_REPOSITORY: ${{ vars.ECR_WORKER_REPOSITORY }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+  ECS_API_SERVICE: ${{ vars.ECS_API_SERVICE }} # empty when the api runs on Azure
+  ECS_WORKER_SERVICE: ${{ vars.ECS_WORKER_SERVICE }}
+  ECS_API_TASK_FAMILY: ${{ vars.ECS_API_TASK_FAMILY }}
+  ECS_WORKER_TASK_FAMILY: ${{ vars.ECS_WORKER_TASK_FAMILY }}
+  ECS_SUBNETS: ${{ vars.ECS_SUBNETS }}
+  ECS_TASK_SECURITY_GROUP: ${{ vars.ECS_TASK_SECURITY_GROUP }}
+  # The image tag is the commit SHA so every running task traces back to a commit.
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  deploy:
+    # Skip cleanly until the AWS stack is applied and the variables are set.
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: checkout-deploy-${{ github.run_id }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push images
+        id: images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          api_image="$REGISTRY/$ECR_API_REPOSITORY:$IMAGE_TAG"
+          worker_image="$REGISTRY/$ECR_WORKER_REPOSITORY:$IMAGE_TAG"
+          docker build --label "org.opencontainers.image.revision=$IMAGE_TAG" -t "$api_image" api
+          docker build --label "org.opencontainers.image.revision=$IMAGE_TAG" -t "$worker_image" worker
+          docker push "$api_image"
+          docker push "$worker_image"
+          echo "api_image=$api_image" >> "$GITHUB_OUTPUT"
+          echo "worker_image=$worker_image" >> "$GITHUB_OUTPUT"
+
+      - name: Register task definitions
+        id: taskdefs
+        env:
+          API_IMAGE: ${{ steps.images.outputs.api_image }}
+          WORKER_IMAGE: ${{ steps.images.outputs.worker_image }}
+        run: |
+          register() { # family container image overrides-file
+            aws ecs describe-task-definition --task-definition "$1" > "current-$2.json"
+            scripts/render-task-def.sh "current-$2.json" "$2" "$3" "$4" > "new-$2.json"
+            aws ecs register-task-definition --cli-input-json "file://new-$2.json" \
+              --tags key=project,value=groundcrew key=app,value=checkout key=commit,value="$IMAGE_TAG" \
+              --query taskDefinition.taskDefinitionArn --output text
+          }
+          api_td=$(register "$ECS_API_TASK_FAMILY" api "$API_IMAGE" api/ecs-task.json)
+          worker_td=$(register "$ECS_WORKER_TASK_FAMILY" worker "$WORKER_IMAGE" worker/ecs-task.json)
+          echo "Registered $api_td and $worker_td"
+          echo "api=$api_td" >> "$GITHUB_OUTPUT"
+          echo "worker=$worker_td" >> "$GITHUB_OUTPUT"
+
+      # Runs with the new api image before any service changes, so a failed migration
+      # leaves the running version untouched.
+      - name: Run database migrations
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER }}
+          TASK_DEFINITION: ${{ steps.taskdefs.outputs.api }}
+          SUBNETS: ${{ vars.ECS_SUBNETS }}
+          SECURITY_GROUP: ${{ vars.ECS_TASK_SECURITY_GROUP }}
+          REGION: ${{ vars.AWS_REGION }}
+          STARTED_BY: migrate-${{ github.run_id }}
+        run: scripts/run-api-task.sh alembic upgrade head
+
+      - name: Update services
+        env:
+          API_TD: ${{ steps.taskdefs.outputs.api }}
+          WORKER_TD: ${{ steps.taskdefs.outputs.worker }}
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_WORKER_SERVICE" \
+            --task-definition "$WORKER_TD" --desired-count 1 --query service.serviceName --output text
+          services="$ECS_WORKER_SERVICE"
+          if [ -n "$ECS_API_SERVICE" ]; then
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_API_SERVICE" \
+              --task-definition "$API_TD" --desired-count 1 --query service.serviceName --output text
+            services="$services $ECS_API_SERVICE"
+          fi
+          echo "Waiting for $services to become stable"
+          # shellcheck disable=SC2086
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services $services
+
+      - name: Summary
+        if: always()
+        env:
+          API_TD: ${{ steps.taskdefs.outputs.api }}
+          WORKER_TD: ${{ steps.taskdefs.outputs.worker }}
+        run: |
+          {
+            echo "### Deploy $IMAGE_TAG"
+            echo "- api task definition: \`${API_TD:-not registered}\`"
+            echo "- worker task definition: \`${WORKER_TD:-not registered}\`"
+            echo "- Print the api IP locally with \`make api-ip\` (it changes on every api deploy)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The api's public IP changes with every new api task, so point the Vercel page at it.
+  # Skipped when VERCEL_TOKEN is not set, and on Azure (stable URL, no ECS api service).
+  web:
+    needs: deploy
+    if: vars.ECS_API_SERVICE != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+    steps:
+      - name: Skip without VERCEL_TOKEN
+        if: env.VERCEL_TOKEN == ''
+        run: echo "::notice::VERCEL_TOKEN is not set; run make web-deploy to update the page."
+
+      - uses: actions/checkout@v4
+        if: env.VERCEL_TOKEN != ''
+
+      - name: Configure AWS credentials (OIDC)
+        if: env.VERCEL_TOKEN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: checkout-web-${{ github.run_id }}
+
+      - name: Point Vercel at the new api IP and redeploy
+        if: env.VERCEL_TOKEN != ''
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER }}
+          SERVICE: ${{ vars.ECS_API_SERVICE }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: |
+          ip=$(scripts/api-ip.sh)
+          API_URL="http://$ip:8000" scripts/vercel-api-url.sh

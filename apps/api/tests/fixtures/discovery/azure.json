@@ -1,0 +1,17 @@
+{
+  "data": [
+    {"id": "/subscriptions/sub-123/resourceGroups/rg-groundcrew-checkout/providers/Microsoft.Web/sites/app-checkout-api", "name": "app-checkout-api",
+     "type": "Microsoft.Web/sites", "kind": "app,linux,container", "location": "eastus2", "resourceGroup": "rg-groundcrew-checkout", "subscriptionId": "sub-123",
+     "tags": {"project": "groundcrew", "app": "checkout"}, "sku": null,
+     "properties": {"defaultHostName": "app-checkout-api.azurewebsites.net", "httpsOnly": true, "state": "Running", "outboundIpAddresses": "20.1.2.3,20.1.2.4",
+                    "siteConfig": {"linuxFxVersion": "DOCKER|acrcheckout.azurecr.io/checkout-api:cef79e7"}, "serverFarmId": "/subscriptions/sub-123/.../asp-checkout"}},
+    {"id": "/subscriptions/sub-123/resourceGroups/rg-groundcrew-checkout/providers/Microsoft.Web/serverfarms/asp-checkout", "name": "asp-checkout",
+     "type": "Microsoft.Web/serverfarms", "kind": "linux", "location": "eastus2", "resourceGroup": "rg-groundcrew-checkout", "subscriptionId": "sub-123",
+     "tags": {}, "sku": {"name": "B1"}, "properties": {"status": "Ready", "numberOfWorkers": 1}},
+    {"id": "/subscriptions/sub-123/resourceGroups/rg-groundcrew-checkout/providers/Microsoft.ContainerRegistry/registries/acrcheckout", "name": "acrcheckout",
+     "type": "Microsoft.ContainerRegistry/registries", "location": "eastus2", "resourceGroup": "rg-groundcrew-checkout", "subscriptionId": "sub-123",
+     "tags": {}, "sku": {"name": "Basic"}, "properties": {"loginServer": "acrcheckout.azurecr.io", "adminUserEnabled": false}},
+    {"id": "/subscriptions/other/resourceGroups/rg-else/providers/Microsoft.Web/sites/not-ours", "name": "not-ours", "type": "Microsoft.Web/sites",
+     "location": "westeurope", "resourceGroup": "rg-else", "subscriptionId": "other", "tags": {}, "properties": {}}
+  ]
+}

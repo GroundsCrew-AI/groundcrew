@@ -160,7 +160,11 @@ class Connection(TimestampMixin, Base):
     config: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
     # Fernet token (app.security.crypto). Never store plaintext secrets.
     secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    # pending | connected | error
     status: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending")
+    # The last discovery of this connection: {at, run_id, status, resources, stale, error,
+    # duration_ms, notes}. Empty until it has run once.
+    last_discovery: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
 
 
 class Resource(TimestampMixin, Base):
@@ -183,8 +187,10 @@ class Resource(TimestampMixin, Base):
     # aws | azure | gcp | k8s | vercel | vm
     provider: Mapped[str] = mapped_column(String(16))
     type: Mapped[str] = mapped_column(String(200))
-    # Provider ID (ARN, Azure resource ID, k8s uid, ...)
+    # Provider ID (ARN, Azure resource ID, k8s uid, ...). Stable across discoveries.
     external_id: Mapped[str] = mapped_column(Text)
+    # AWS account ID, Azure subscription, k8s cluster, Vercel team, GitHub owner.
+    account: Mapped[str | None] = mapped_column(String(200))
     region: Mapped[str | None] = mapped_column(String(64))
     name: Mapped[str] = mapped_column(String(500))
     tags: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
@@ -193,6 +199,9 @@ class Resource(TimestampMixin, Base):
     coverage: Mapped[str] = mapped_column(String(16), default="observed", server_default="observed")
     iac_path: Mapped[str | None] = mapped_column(Text)
     repo: Mapped[str | None] = mapped_column(String(500))
+    # Not seen by the last discovery of its connection. Kept (with its edges) until removed.
+    stale: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Edge(TimestampMixin, Base):
@@ -206,8 +215,13 @@ class Edge(TimestampMixin, Base):
     to_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("resources.id", ondelete="CASCADE"), index=True
     )
-    # calls | reads | deployed_by | defined_in
+    # calls | reads | deployed_by | defined_in, plus the extensions uses | pulls_from |
+    # logs_to (app.discovery.types.EdgeKind)
     kind: Mapped[str] = mapped_column(String(32))
+    # high | medium | low
+    confidence: Mapped[str] = mapped_column(String(8), default="medium", server_default="medium")
+    # {"text": one line a person can check, "rule": which inference rule made it, ...}.
+    # Never holds secret values.
     evidence: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
 
 

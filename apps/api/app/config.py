@@ -6,9 +6,10 @@ Code that needs a secret must check for it and fail with a clear error at call t
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Repo root .env (apps/api/app/config.py -> ../../../.env), then a local .env if present.
 # In the Docker image the file is /app/app/config.py (no repo root); compose passes env vars.
@@ -104,6 +105,36 @@ class Settings(BaseSettings):
     github_app_client_secret: SecretStr | None = None
     github_app_private_key_path: Path | None = None
     github_webhook_secret: SecretStr | None = None
+
+    # Connections and discovery (Phase 3)
+    # Groundcrew's own AWS identity, the platform identity that assumes customer roles: an IAM
+    # user whose only permission is sts:AssumeRole on arn:aws:iam::*:role/groundcrew-*. Unset =
+    # the default credential chain without profiles or ~/.aws (a hosted deployment's task or
+    # instance role). Customer sessions are cached in memory only, never stored.
+    groundcrew_aws_access_key_id: SecretStr | None = None
+    groundcrew_aws_secret_access_key: SecretStr | None = None
+    # Its ARN: the principal customers trust in infra/aws-connect.yaml (prefilled in the
+    # Quick-create link). Unset = whatever GetCallerIdentity says the platform identity is.
+    groundcrew_platform_principal_arn: str | None = None
+    # S3 URL of infra/aws-connect.yaml for the one-click CloudFormation Quick-create link
+    # (CloudFormation only accepts S3 template URLs). `make publish-connect-template` uploads it.
+    aws_connect_template_url: str | None = None
+    # Regions discovery may call (comma separated). The demo account's org policy allows
+    # workloads only in us-east-2; global services (IAM, STS) are fine.
+    discovery_regions: Annotated[list[str], NoDecode] = ["us-east-2"]
+    # Discovery stops adding resources for one connection after this many (and says so).
+    max_resources_per_connection: int = 2000
+    # Wall clock limit for one connection's discovery.
+    discovery_timeout_seconds: float = 100.0
+    github_api_url: str = "https://api.github.com"
+    vercel_api_url: str = "https://api.vercel.com"
+
+    @field_validator("discovery_regions", mode="before")
+    @classmethod
+    def _split_regions(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [r.strip() for r in value.split(",") if r.strip()]
+        return value
 
     # Spend caps in USD, counted in the llm_usage table. The total cap is the hard stop for the
     # whole hackathon (credits are about $30). Hosted demo: set LLM_DAILY_USD_CAP=0.50.

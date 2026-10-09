@@ -1,0 +1,32 @@
+{
+  "GET /app": {"id": 2050123, "slug": "groundcrew-app", "name": "Groundcrew"},
+  "GET /app/installations": [
+    {"id": 168436777, "account": {"login": "GroundsCrew-AI", "type": "Organization"}, "repository_selection": "selected"}
+  ],
+  "POST /app/installations/168436777/access_tokens": {"token": "ghs_FAKEinstallationTOKEN0123456789abcdefABCD", "expires_at": "2099-01-01T00:00:00Z"},
+  "GET /installation/repositories": {
+    "total_count": 2,
+    "repositories": [
+      {"full_name": "GroundsCrew-AI/checkout-demo", "private": true, "default_branch": "main", "html_url": "https://github.com/GroundsCrew-AI/checkout-demo", "description": "Customer demo", "pushed_at": "2026-10-08T08:40:00Z"},
+      {"full_name": "GroundsCrew-AI/groundcrew", "private": false, "default_branch": "main", "html_url": "https://github.com/GroundsCrew-AI/groundcrew", "description": null, "pushed_at": "2026-10-08T08:00:00Z"}
+    ]
+  },
+  "GET /repos/GroundsCrew-AI/checkout-demo": {"full_name": "GroundsCrew-AI/checkout-demo", "private": true, "default_branch": "main", "html_url": "https://github.com/GroundsCrew-AI/checkout-demo", "pushed_at": "2026-10-08T08:40:00Z"},
+  "GET /repos/GroundsCrew-AI/checkout-demo/commits": [
+    {"sha": "cef79e7a1b2c3d4e5f60718293a4b5c6d7e8f901", "html_url": "https://github.com/GroundsCrew-AI/checkout-demo/commit/cef79e7a1b2c3d4e5f60718293a4b5c6d7e8f901",
+     "commit": {"message": "Show the Vercel deployment and production URLs in the web job summary\n\nDetails.", "author": {"name": "Rizwan"}, "committer": {"date": "2026-10-08T08:30:00Z"}}},
+    {"sha": "150c2e0aa9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4", "html_url": "https://github.com/GroundsCrew-AI/checkout-demo/commit/150c2e0aa9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4",
+     "commit": {"message": "broken-env: simulate a Fargate task retirement", "author": {"name": "Rizwan"}, "committer": {"date": "2026-10-07T18:00:00Z"}}}
+  ],
+  "GET /repos/GroundsCrew-AI/checkout-demo/actions/runs": {
+    "total_count": 2,
+    "workflow_runs": [
+      {"id": 901, "name": "deploy", "path": ".github/workflows/deploy.yml", "event": "push", "status": "completed", "conclusion": "success",
+       "head_sha": "cef79e7a1b2c3d4e5f60718293a4b5c6d7e8f901", "head_branch": "main", "created_at": "2026-10-08T08:31:00Z", "updated_at": "2026-10-08T08:39:00Z",
+       "html_url": "https://github.com/GroundsCrew-AI/checkout-demo/actions/runs/901"},
+      {"id": 900, "name": "ci", "path": ".github/workflows/ci.yml", "event": "push", "status": "completed", "conclusion": "success",
+       "head_sha": "cef79e7a1b2c3d4e5f60718293a4b5c6d7e8f901", "head_branch": "main", "created_at": "2026-10-08T08:31:00Z", "updated_at": "2026-10-08T08:35:00Z",
+       "html_url": "https://github.com/GroundsCrew-AI/checkout-demo/actions/runs/900"}
+    ]
+  }
+}

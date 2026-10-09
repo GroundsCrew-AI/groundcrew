@@ -16,7 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
-from app.routes import approvals, runs, workspaces
+from app.routes import approvals, connections, graph, runs, workspaces
 from app.routes.schemas import ApprovalStepEvent, RunStatusEvent, StepOut
 
 VERSION = "0.1.0"
@@ -94,6 +94,8 @@ app.add_middleware(RequestIdMiddleware)
 app.include_router(workspaces.router)
 app.include_router(runs.router)
 app.include_router(approvals.router)
+app.include_router(connections.router)
+app.include_router(graph.router)
 
 
 def _openapi() -> dict[str, Any]:
