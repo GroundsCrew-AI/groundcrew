@@ -13,7 +13,7 @@ CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
 .PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
-	kind-up kind-down kind-kubeconfig kind-check
+	kind-up kind-down kind-kubeconfig kind-check kind-register
 
 # KIND=1 joins api and worker to the kind network (make kind-up first).
 COMPOSE := docker compose$(if $(filter 1,$(KIND)), -f docker-compose.yml -f docker-compose.kind.yml)
@@ -38,6 +38,7 @@ help:
 	@echo "make kind-kubeconfig  Kubeconfigs for the groundcrew-deployer ServiceAccount (.kind/)"
 	@echo "make kind-check  Check the deployer's RBAC and admission policy on the live cluster"
 	@echo "make dev KIND=1  The dev stack, with api and worker on the kind network"
+	@echo "make kind-register LOGIN=<github login> [DISCOVER=1]  Register kind as a Kubernetes connection (dev)"
 
 install:
 	cd $(API) && $(UV) sync
@@ -114,3 +115,10 @@ kind-kubeconfig:
 
 kind-check:
 	scripts/kind/check.sh
+
+# Registers .kind/groundcrew-deployer.kubeconfig through the API in LOGIN's workspace (dev only:
+# signs an API token with INTERNAL_JWT_SECRET). DISCOVER=1 also runs discovery and checks the Map.
+kind-register:
+	@test -n "$(LOGIN)" || { echo "Usage: make kind-register LOGIN=<your GitHub login> [DISCOVER=1]"; exit 1; }
+	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/kind_register.py --login $(LOGIN) \
+		$(if $(filter 1,$(DISCOVER)),--discover)

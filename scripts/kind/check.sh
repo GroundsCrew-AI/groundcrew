@@ -102,7 +102,7 @@ if k create -f <(ns_yaml "$CHECK_NS" $'  labels: {project: groundcrew}\n') >/dev
   can no create serviceaccounts/token -n "$CHECK_NS"
   can no create roles -n "$CHECK_NS"
   admits yes "create a Deployment in $CHECK_NS" -- create deployment check --image=busybox -n "$CHECK_NS"
-  if k delete namespace "$CHECK_NS" --wait=false >/dev/null; then
+  if k delete namespace "$CHECK_NS" --wait=true --timeout=120s >/dev/null; then
     pass "deleted namespace $CHECK_NS"
   else
     fail "could not delete namespace $CHECK_NS"
