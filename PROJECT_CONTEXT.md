@@ -382,7 +382,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         the step is recorded as `tool_rejected` and shown as "Not run: rejected"; runs carry
         `rejected_actions`, shown as "N actions rejected" beside the status (verified live on Nano)
   - [x] Real GitHub sign-in works (approvals recorded as the signed-in GitHub user)
-- [ ] Phase 3 — Discovery + graph (3B code done on `phase3-discovery`; live connect pending, see blockers)
+- [x] Phase 3 — Discovery + graph (complete 2026-10-09: PRs #6, #7, #8; verified live on the rebuilt demo stack)
   - [x] AWS: `infra/aws-connect.yaml` (role trusted by `GroundcrewPrincipalArn` with `sts:ExternalId`, 1 h,
         read-only policy, explicit deny on secret values / SSM / KMS decrypt / S3 objects, Resource Explorer
         LOCAL index + default view, no AWS Config); start / complete endpoints; verify refuses a role that
@@ -403,8 +403,26 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [x] API: connections, graph, resources; web types regenerated
   - [x] Web: Connections (AWS flow, GitHub picker, Vercel token, Azure / K8s Preview) and Map (React Flow +
         ELK grouped layout, evidence panel, filters, summary)
-  - [x] Tests: 426 API (allowlist, secret values never requested, ExternalId, platform identity, regions,
-        upsert / stale, every edge rule, contracts, coverage, summary with FakeLLM, API), 37 web
+  - [x] Fixes from the first live run (#6): git in the API image (the clone failed without it); workflows read
+        through the GitHub contents API when the clone fails, so the 3 `deployed_by` edges to deploy.yml survive;
+        web -> checkout-api `calls` edge from the `API_URL` name, shared repo, and deploy.yml's web job (medium
+        while the value is encrypted); Map fits on load, larger nodes, Vercel / AWS / GitHub side by side, ELK-placed
+        labels, tooling in a collapsed Tooling group
+  - [x] Summary safety without editing `agents/`: tooling (`app/graph/roles.py`) tagged `role=tooling` in the
+        digest; each service's own image stated; `app/graph/summary_check.py` drops bullets the graph contradicts
+        (unlinked tooling, missing resource kinds, shared images or image repositories, relationships with no
+        edge, workflows "provisioning" infrastructure with no IaC apply), each recorded as a `check_summary` run
+        step; Unicode hyphens normalised (Nano writes `checkout‑api`); prompt tweak proposed for Ahmed in
+        `docs/phase3-interfaces.md` (#6, #7, #8)
+  - [x] `scripts/replay_discovery.py`: the pipeline on the recorded demo fixtures (edge counts, Scout's summary,
+        dropped bullets), for checks while the demo stack is down
+  - [x] Live verification (2026-10-09, demo stack destroyed and rebuilt): old VPC / security groups / secret
+        marked stale and hidden, new ones discovered; 23 resources, 13 relationships (calls 1 medium,
+        deployed_by 4, logs_to / pulls_from / reads / uses 2 each) matching the fixtures; discovery in 15–17 s;
+        Map and summary checked in the UI
+  - [x] Tests: 437 API (allowlist, secret values never requested, ExternalId, platform identity, regions,
+        upsert / stale, every edge rule, contracts, coverage, digest tooling tags, summary check with the live
+        false claims, API), 40 web
   - Env vars: `GROUNDCREW_AWS_ACCESS_KEY_ID`, `GROUNDCREW_AWS_SECRET_ACCESS_KEY`,
     `GROUNDCREW_PLATFORM_PRINCIPAL_ARN`, `AWS_CONNECT_TEMPLATE_URL`,
     `DISCOVERY_REGIONS` [us-east-2], `MAX_RESOURCES_PER_CONNECTION` [2000], `DISCOVERY_TIMEOUT_SECONDS` [100]
@@ -450,8 +468,8 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 - [ ] Phase 7 — Submission
 - [ ] Phase 8 — Judging upkeep
 
-**Current phase:** 3
-**Last updated:** 2026-10-07
+**Current phase:** 4 (Build + deploy agents, in progress); Phase 3 complete 2026-10-09, Phase 5 next
+**Last updated:** 2026-10-09
 **Known issues / blockers:**
 - Phase 0 open items: Tavily API key; budget alerts (AWS $20 / $50, Azure $20).
 - Any member of a workspace can approve. Roles (who may approve write vs emergency actions) come with
@@ -474,12 +492,21 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   stay off).
 - Tool calling with reasoning off is verified only on the Echo Ops toy agent. Re-check quality when
   Scout, Builder, and Deployer land.
+- Phase 3 leftovers: Azure and Kubernetes connectors run on fixtures only (`TODO(azure-live)`, `TODO(k8s-live)`);
+  the summary check is rule based and does not catch negative claims (e.g. "does not depend on the ECS
+  services" despite a `calls` edge); Medic's log and metric reads (`logs:FilterLogEvents`,
+  `cloudwatch:GetMetricData`) are allowed but not yet called live through the connect role.
+- Phase 5 depends on Phase 4 Step 8 (the shape of a finished deployment in `runs.state`).
 - The demo runs locally only; nothing in Phase 1 targets Neon. Run `make migrate DB_URL=<neon url>` when hosting.
 
 ## 15. Decisions log (newest first)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-09 | A Vercel `calls` edge is high only when a plain env value matches the target's IP or endpoint; an encrypted value gives medium even when a workflow is seen writing the task IP into it | We never read the value, so we cannot confirm it still matches the current task |
+| 2026-10-09 | Scout's summary is checked against the graph by rules (`check_summary`) and unsupported bullets are dropped and recorded as run steps; Scout's prompt is unchanged (tweak proposed to Ahmed) | Nano invented links on the live run (app storing state in the tfstate bucket, shared images, deploy.yml provisioning infrastructure); `agents/` is owned by Phase 4 |
+| 2026-10-09 | Tooling (state and lock stores, the template bucket, `groundcrew-*` roles, Resource Explorer) is tagged `role=tooling` in the digest and folded into a Tooling group on the Map | It is real infrastructure, but the app does not use it; showing it as app resources led to false summary claims |
+| 2026-10-09 | When the clone fails, GitHub discovery reads `.github/workflows/*.yml` through the contents API (GET only, 512 KB cap) | `deployed_by` and `calls` evidence depends on workflow files; one failed clone should not remove those edges |
 | 2026-10-07 | Scout is rules first: a detector value (with file:line evidence) beats the model, and each disagreement is recorded as a conflict | Strict enums force confident wrong answers; files are the ground truth |
 | 2026-10-07 | A model value no cited line supports is not applied: the field stays unknown, listed in `low_confidence`, with the value in `unverified` | Applying it let invented values (a `DATABASE_URL` for a Next.js app) flow into Builder and Deployer; later steps can still see the suggestion |
 | 2026-10-07 | Scout's confidence is computed (known key fields, conflicts, unsupported values), not taken from the model | Model self-reported confidence is not calibrated |

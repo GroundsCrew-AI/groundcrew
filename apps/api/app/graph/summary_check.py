@@ -49,7 +49,12 @@ _RELATION_VERB = re.compile(
     re.IGNORECASE,
 )
 _PROVISION = re.compile(r"\b(provision(s|ed|ing)?|creat(es?|ed|ing)|manag(es?|ed|ing))\b", re.I)
-_SAME_IMAGE = re.compile(r"\bsame\s+(?:container\s+|docker\s+)?image\b", re.IGNORECASE)
+# "the same image", or "share(s) ... image / image repositories" within one clause.
+_SAME_IMAGE = re.compile(
+    r"\bsame\s+(?:container\s+|docker\s+|ecr\s+)?(?:image|repositor)|"
+    r"\bshar(?:e|es|ed|ing)\b[^.;:\n]{0,40}?\b(?:images?|repositor(?:y|ies))\b",
+    re.IGNORECASE,
+)
 _MIN_PREFIX = 12  # "groundcrew-checkout-tfstate-..." still names the bucket
 _TRUNCATED = re.compile(r"([\w/-]{" + str(_MIN_PREFIX) + r",})(?:…|\.\.\.)")
 

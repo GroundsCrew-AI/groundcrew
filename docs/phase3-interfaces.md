@@ -57,8 +57,8 @@ about 6k tokens (Nano's reliable range), and says how many were left out.
 
 # Phase 3: what landed (connections, discovery, graph)
 
-For Phase 4 (Deployer) and Phase 5 (Medic). Everything below is in `main` once
-`phase3-discovery` merges. Phase 3 changed no file under `llm/`, `repos/`, `agents/`,
+For Phase 4 (Deployer) and Phase 5 (Medic). Everything below is in `main` (PR #6, with
+follow-ups #7 and #8) and was verified live on the demo stack on 2026-10-09. Phase 3 changed no file under `llm/`, `repos/`, `agents/`,
 `sandbox/`, `targets/`, or `tools/repo_read.py`.
 
 ## The five contracts (final signatures)
@@ -250,8 +250,8 @@ the worker "uses the same image" (it has its own `checkout-worker` image). Witho
   target's type (`pulls_from checkout-worker (ECR image repository)`);
 - checks every summary bullet against the graph (`app.graph.summary_check.check_summary`)
   and drops bullets that name unlinked tooling, claim a kind of resource the app does not
-  have, say services share an image when they do not, relate a resource with no edges, or
-  claim a relationship (calls, reads, uses, deploys, ...) between named resources that no edge
+  have, say services share an image or image repository when they do not, relate a resource
+  with no edges, or claim a relationship (calls, reads, uses, deploys, ...) between named resources that no edge
   connects. Names written as a list ("checkout-api and checkout-worker") are not related to
   each other by the claim; Unicode hyphens are normalised first. A workflow is also named by
   its file (`deploy.yml`), and a bullet saying a workflow provisions, creates, or manages
