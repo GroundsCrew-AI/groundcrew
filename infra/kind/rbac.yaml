@@ -1,0 +1,112 @@
+# The groundcrew-deployer ServiceAccount: what Groundcrew uses to deploy into a cluster.
+# Works on any cluster >= 1.30, not only kind (apply with admission-policy.yaml).
+#
+# RBAC (what it may ask for):
+#   - everywhere: read-only (the built-in `view` role: no Secrets, no RBAC objects)
+#   - cluster: create / delete namespaces, create RoleBindings, and bind ONLY the
+#     gc-namespace-admin ClusterRole (bind with resourceNames)
+#   - inside a gc-* namespace, through the RoleBinding it creates there: gc-namespace-admin
+# The admission policy (admission-policy.yaml) limits those writes to gc-* namespaces, so it
+# can never change anything in groundcrew-system: its own ServiceAccount, token, or bindings.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: groundcrew-system
+  labels:
+    project: groundcrew
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: groundcrew-deployer
+  namespace: groundcrew-system
+  labels:
+    project: groundcrew
+automountServiceAccountToken: false
+---
+# Long-lived token for the kubeconfig (make kind-kubeconfig). Delete it to revoke access;
+# kind-kubeconfig recreates it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: groundcrew-deployer-token
+  namespace: groundcrew-system
+  labels:
+    project: groundcrew
+  annotations:
+    kubernetes.io/service-account.name: groundcrew-deployer
+type: kubernetes.io/service-account-token
+---
+# Granted per namespace (RoleBinding in gc-<app>), never cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gc-namespace-admin
+  labels:
+    project: groundcrew
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: groundcrew-deployer
+  labels:
+    project: groundcrew
+rules:
+  # Names limited to gc-* by the admission policy.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "delete"]
+  # Only in gc-* namespaces and only for gc-namespace-admin (admission policy).
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["bind"]
+    resourceNames: ["gc-namespace-admin"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: groundcrew-deployer
+  labels:
+    project: groundcrew
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: groundcrew-deployer
+subjects:
+  - kind: ServiceAccount
+    name: groundcrew-deployer
+    namespace: groundcrew-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: groundcrew-deployer-view
+  labels:
+    project: groundcrew
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: groundcrew-deployer
+    namespace: groundcrew-system
