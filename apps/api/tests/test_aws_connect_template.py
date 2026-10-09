@@ -33,12 +33,14 @@ REPOS = _sub("ecr:${AWS::Region}:${AWS::AccountId}:repository/groundcrew-*")
 SGS = _sub("ec2:${AWS::Region}:${AWS::AccountId}:security-group/*")
 VPCS = _sub("ec2:${AWS::Region}:${AWS::AccountId}:vpc/*")
 LOGS = _sub("logs:${AWS::Region}:${AWS::AccountId}:log-group:/groundcrew/*")
+SECRETS = _sub("secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:groundcrew/*")
 IN_CLUSTER = {"ArnEquals": {"ecs:cluster": CLUSTER}}
 TAGGED_REQUEST = {"StringEquals": {"aws:RequestTag/project": "groundcrew"}}
 TAGGED_RESOURCE = {"StringEquals": {"aws:ResourceTag/project": "groundcrew"}}
 
 # Every Allow in groundcrew-deploy: action -> (resource, condition). "*" with no condition is
-# only for actions AWS gives no resource-level permissions or condition keys for.
+# only for read actions AWS gives no resource-level permissions or condition keys for; no write
+# action is unscoped (ecs:DeregisterTaskDefinition is not granted for that reason).
 DEPLOY_ACTIONS: dict[str, tuple[Any, Any]] = {
     "ecs:CreateService": (SERVICES, None),
     "ecs:UpdateService": (SERVICES, None),
@@ -51,7 +53,6 @@ DEPLOY_ACTIONS: dict[str, tuple[Any, Any]] = {
     "ecs:StopTask": (TASKS, None),
     "ecs:DescribeTasks": (TASKS, None),
     "ecs:RegisterTaskDefinition": ("*", TAGGED_REQUEST),
-    "ecs:DeregisterTaskDefinition": ("*", None),
     "ecs:DescribeTaskDefinition": ("*", None),
     "ecs:ListTaskDefinitions": ("*", None),
     "ecs:TagResource": (
@@ -115,8 +116,16 @@ DEPLOY_ACTIONS: dict[str, tuple[Any, Any]] = {
         EXECUTION_ROLE,
         {"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}},
     ),
+    "secretsmanager:CreateSecret": (SECRETS, TAGGED_REQUEST),
+    "secretsmanager:PutSecretValue": (SECRETS, None),
+    "secretsmanager:TagResource": (SECRETS, None),
+    "secretsmanager:DeleteSecret": (SECRETS, None),
+    "secretsmanager:DescribeSecret": (SECRETS, None),
     "tag:GetResources": ("*", None),
 }
+
+# Actions that only read: the only ones allowed to be unscoped ("*" with no condition).
+READ_PREFIXES = ("Describe", "List", "Get")
 
 DENY = ["secretsmanager:GetSecretValue", "ssm:GetParameter*", "kms:Decrypt", "s3:GetObject",
         "s3:GetObjectVersion"]  # fmt: skip
@@ -196,6 +205,16 @@ def test_every_deploy_action_has_its_expected_scope() -> None:
     assert not any("*" in a.split(":", 1)[1] for a in found)  # no wildcard actions
 
 
+def test_the_deploy_role_has_no_unscoped_write_action() -> None:
+    for action, (resource, condition) in DEPLOY_ACTIONS.items():
+        unscoped = resource == "*" and condition is None
+        verb = action.split(":", 1)[1]
+        if unscoped:
+            assert verb.startswith(READ_PREFIXES), f"{action} is a write with no scope"
+    assert "ecs:DeregisterTaskDefinition" not in DEPLOY_ACTIONS
+    assert "secretsmanager:GetSecretValue" not in DEPLOY_ACTIONS
+
+
 def test_deploy_role_keeps_the_explicit_deny_on_secret_values() -> None:
     resources = _deploy()["Resources"]
     deny = [s for s in _statements(resources["DeployRole"]) if s["Effect"] == "Deny"]
@@ -204,7 +223,7 @@ def test_deploy_role_keeps_the_explicit_deny_on_secret_values() -> None:
     assert deny[0]["Action"] == DENY and deny[0]["Resource"] == "*"
 
 
-def test_task_execution_role_only_pulls_groundcrew_images_and_writes_groundcrew_logs() -> None:
+def test_task_execution_role_only_pulls_images_writes_logs_and_reads_groundcrew_secrets() -> None:
     role = _deploy()["Resources"]["TaskExecutionRole"]["Properties"]
     (trust,) = role["AssumeRolePolicyDocument"]["Statement"]
     assert trust["Principal"] == {"Service": "ecs-tasks.amazonaws.com"}
@@ -217,6 +236,7 @@ def test_task_execution_role_only_pulls_groundcrew_images_and_writes_groundcrew_
         "ecr:GetDownloadUrlForLayer": REPOS,
         "logs:CreateLogStream": LOGS,
         "logs:PutLogEvents": LOGS,
+        "secretsmanager:GetSecretValue": SECRETS,
     }
 
 
@@ -245,5 +265,7 @@ def test_code_allowlist_matches_the_deploy_policy() -> None:
     }
     assert code == set(DEPLOY_ACTIONS) - registry_only - {"logs:TagLogGroup", "iam:PassRole"}
     assert not AWS_DEPLOY_OPERATIONS & FORBIDDEN_OPERATIONS
-    assert not any(op.startswith(("iam:", "rds:", "secretsmanager:", "s3:", "kms:", "ssm:"))
+    assert not any(op.startswith(("iam:", "rds:", "s3:", "kms:", "ssm:"))
                    for op in AWS_DEPLOY_OPERATIONS)  # fmt: skip
+    assert "secretsmanager:GetSecretValue" not in AWS_DEPLOY_OPERATIONS
+    assert "ecs:DeregisterTaskDefinition" not in AWS_DEPLOY_OPERATIONS

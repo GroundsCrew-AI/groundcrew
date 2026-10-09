@@ -5,8 +5,8 @@ Description: >-
   and metadata; it cannot read secret values, decrypt data, or read objects. Also turns on a
   local Resource Explorer index in this region. Tier=deploy also creates the groundcrew-deploys
   ECS cluster, the groundcrew-task-execution role, and the groundcrew-deploy role, which may
-  only create and change groundcrew-* resources tagged project=groundcrew. Delete this stack to
-  remove all access.
+  only create and change groundcrew-* resources tagged project=groundcrew (and write, never
+  read, groundcrew/* secrets). Delete this stack to remove all access.
 
 Parameters:
   GroundcrewPrincipalArn:
@@ -205,7 +205,7 @@ Resources:
     Condition: IsDeploy
     Properties:
       RoleName: groundcrew-task-execution
-      Description: ECS task execution for Groundcrew deploys (pull groundcrew-* images, write /groundcrew/* logs)
+      Description: ECS task execution for Groundcrew deploys (pull groundcrew-* images, write /groundcrew/* logs, inject groundcrew/* secrets)
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -241,6 +241,12 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/groundcrew/*"
+              # ECS reads a deploy's env secrets (groundcrew/<app>/<VAR>) when a task starts.
+              # Only ECS uses this role; Groundcrew itself can never read a secret value.
+              - Sid: InjectGroundcrewSecrets
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:groundcrew/*"
       Tags:
         - Key: project
           Value: groundcrew
@@ -311,11 +317,12 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:RequestTag/project: groundcrew
-              # No resource-level permissions or tag conditions exist for these.
-              - Sid: EcsTaskDefinitionsUnscoped
+              # Read-only; no resource-level permissions exist for these. Deregistering is not
+              # granted at all: it cannot be scoped, task definitions cost nothing, and a
+              # rollback uses the previous revision.
+              - Sid: EcsReadTaskDefinitions
                 Effect: Allow
                 Action:
-                  - ecs:DeregisterTaskDefinition
                   - ecs:DescribeTaskDefinition
                   - ecs:ListTaskDefinitions
                 Resource: "*"
@@ -422,6 +429,23 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
+              # --- Secrets Manager: a deploy's env secrets, groundcrew/<app>/<VAR> only. Write and
+              # describe, never read the value (the Deny below; ECS injects it at task start).
+              - Sid: SecretsCreateTaggedGroundcrewSecrets
+                Effect: Allow
+                Action: secretsmanager:CreateSecret
+                Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:groundcrew/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/project: groundcrew
+              - Sid: SecretsManageGroundcrewSecrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:PutSecretValue
+                  - secretsmanager:TagResource
+                  - secretsmanager:DeleteSecret
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:groundcrew/*"
               # --- Cleanup finds deploys by tag (make cleanup-deploys)
               - Sid: FindTaggedResources
                 Effect: Allow

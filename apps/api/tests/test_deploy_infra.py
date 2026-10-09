@@ -16,6 +16,7 @@ from app.connectors.deploy_infra import (
     namespace,
     required_tags,
     resolve_subnets,
+    secret_name,
     task_execution_role_arn,
 )
 from tests.aws_fixture import fixture_session
@@ -89,6 +90,13 @@ def test_names_are_prefixed_and_safe() -> None:
     assert len(long) == 63 and long.startswith("gc-")
     with pytest.raises(DeployInfraError):
         namespace(s, "!!!")
+
+
+def test_secret_names() -> None:
+    assert secret_name("Shop API", "DATABASE_URL") == "groundcrew/shop-api/DATABASE_URL"
+    for bad in ("1X", "A-B", "", "A/B"):
+        with pytest.raises(DeployInfraError):
+            secret_name("shop", bad)
 
 
 def test_task_execution_role_arn() -> None:

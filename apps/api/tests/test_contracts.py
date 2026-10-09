@@ -261,8 +261,9 @@ def test_env_provider_deploy_session() -> None:
 
 
 def test_deploy_and_read_sessions_are_guarded_by_their_own_allowlists() -> None:
-    """Real AwsSessions with a stubbed STS: the deploy session may create an ECS service but
-    never touch RDS or IAM or read a secret; the read session may not create anything."""
+    """Real AwsSessions with a stubbed STS: the deploy session may create an ECS service and a
+    secret, but never touch RDS or IAM, read a secret value, or deregister a task definition;
+    the read session may not create anything."""
     from botocore.stub import Stubber
 
     from app.connectors.aws import AWS_DEPLOY_OPERATIONS, AwsSessions, ReadOnlyViolationError
@@ -278,6 +279,10 @@ def test_deploy_and_read_sessions_are_guarded_by_their_own_allowlists() -> None:
     with Stubber(ecs) as stub:
         stub.add_response("create_service", {"service": {"serviceName": "shop"}})
         assert ecs.create_service(cluster="groundcrew-deploys", serviceName="shop")
+    sm = deploy.client("secretsmanager")
+    with Stubber(sm) as stub:
+        stub.add_response("create_secret", {"Name": "groundcrew/shop/DATABASE_URL"})
+        assert sm.create_secret(Name="groundcrew/shop/DATABASE_URL", SecretString="x")
     refused: list[tuple[Any, Callable[[Any], Any]]] = [
         (deploy.client("rds"), lambda c: c.delete_db_instance(DBInstanceIdentifier="x")),
         (
@@ -285,6 +290,7 @@ def test_deploy_and_read_sessions_are_guarded_by_their_own_allowlists() -> None:
             lambda c: c.create_role(RoleName="x", AssumeRolePolicyDocument="{}"),
         ),
         (deploy.client("secretsmanager"), lambda c: c.get_secret_value(SecretId="x")),
+        (deploy.client("ecs"), lambda c: c.deregister_task_definition(taskDefinition="x:1")),
         (read.client("ecs"), lambda c: c.create_service(serviceName="x")),
     ]
     for client, call in refused:

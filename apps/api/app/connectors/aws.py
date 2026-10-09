@@ -77,7 +77,8 @@ AWS_READ_OPERATIONS: frozenset[str] = frozenset(
 # Operations a deploy session (the groundcrew-deploy role, Tier=deploy) may call. The IAM
 # policy in infra/aws-connect.yaml limits them to groundcrew-* resources tagged
 # project=groundcrew; this allowlist keeps code from calling anything else even so (no IAM,
-# no RDS, no secret values). Image pushes go through the registry with the ECR token, not here.
+# no RDS, no secret values, no task definition deregistration). Image pushes go through the
+# registry with the ECR token, not here.
 AWS_DEPLOY_OPERATIONS: frozenset[str] = frozenset(
     {
         "sts:GetCallerIdentity",
@@ -93,7 +94,6 @@ AWS_DEPLOY_OPERATIONS: frozenset[str] = frozenset(
         "ecs:StopTask",
         "ecs:DescribeTasks",
         "ecs:RegisterTaskDefinition",
-        "ecs:DeregisterTaskDefinition",
         "ecs:DescribeTaskDefinition",
         "ecs:ListTaskDefinitions",
         "ecs:TagResource",
@@ -121,6 +121,13 @@ AWS_DEPLOY_OPERATIONS: frozenset[str] = frozenset(
         "logs:TagResource",
         "logs:DescribeLogGroups",
         "logs:FilterLogEvents",
+        # A deploy's env secrets, groundcrew/<app>/<VAR>: write and describe only. Reading a
+        # value (GetSecretValue) stays forbidden; ECS injects it with the task execution role.
+        "secretsmanager:CreateSecret",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:TagResource",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:DescribeSecret",
     }
 )
 
