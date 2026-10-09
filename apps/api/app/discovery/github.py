@@ -86,6 +86,7 @@ def workflow_resource(facts: RepoFacts, workflow: Workflow, owner: str) -> Disco
                     "ecs_deploy": j.ecs_deploy,
                     "ecs_services": j.ecs_services,
                     "vercel": j.vercel,
+                    "provisions_infra": j.provisions_infra,
                     "vercel_env_keys": j.vercel_env_keys,
                 }
                 for j in workflow.jobs

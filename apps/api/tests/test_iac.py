@@ -68,6 +68,8 @@ def test_deploy_workflow_facts() -> None:
     ]
     web = next(j for j in workflow.jobs if j.id == "web")
     assert web.vercel and web.vercel_env_keys == ["API_URL"] and web.needs == ["deploy"]
+    # It deploys services but applies no infrastructure as code.
+    assert not any(j.provisions_infra for j in workflow.jobs)
     assert web.ecs_services == ["${{ vars.ECS_API_SERVICE }}"]
 
 
@@ -134,3 +136,24 @@ def test_web_job_sets_api_url_from_the_api_task_ip() -> None:
     assert web.ecs_services == ["${{ vars.ECS_API_SERVICE }}"]
     services = {j.id: j.ecs_services for j in deploy.jobs if j.ecs_deploy}
     assert services, "the deploy job updates the ECS services"
+
+
+def test_infrastructure_apply_is_recorded() -> None:
+    text = """
+name: infra
+on: [push]
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - run: terraform -chdir=infra/aws plan
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform -chdir=infra/aws apply -auto-approve
+"""
+    workflow = parse_workflow(".github/workflows/infra.yml", text)
+    assert workflow is not None
+    jobs = {j.id: j for j in workflow.jobs}
+    assert not jobs["plan"].provisions_infra and jobs["apply"].provisions_infra

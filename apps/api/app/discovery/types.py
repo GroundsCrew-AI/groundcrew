@@ -105,6 +105,8 @@ class WorkflowJob(BaseModel):
     ecs_deploy: bool = False
     ecs_services: list[str] = Field(default_factory=list)  # names or expressions
     vercel: bool = False  # deploys to or configures Vercel
+    # Runs an infrastructure-as-code apply (terraform / tofu / cdk / pulumi / cloudformation).
+    provisions_infra: bool = False
     vercel_env_keys: list[str] = Field(default_factory=list)  # env vars it sets on Vercel
     # Where a value it sets on Vercel comes from: {"API_URL": "task_ip"} when the step builds
     # it from a running ECS task's IP (ip=$(scripts/api-ip.sh); API_URL="http://$ip:8000" ...).
