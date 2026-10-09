@@ -284,6 +284,7 @@ class _World:
     def __init__(self, *, ours: bool = True) -> None:
         self.log: list[str] = []
         self.secret = ""
+        self.secret_deleted = False
         self.ours = ours
         tags = [
             {"Key": "project", "Value": "groundcrew"},
@@ -294,6 +295,18 @@ class _World:
     def _create_secret(self, **p: Any) -> Any:
         self.secret = p["SecretString"]
         return {"ARN": SECRET_ARN}
+
+    def _describe_secret(self, **_: Any) -> Any:
+        if self.secret_deleted:
+            raise ClientError(
+                {"Error": {"Code": "ResourceNotFoundException", "Message": "gone"}},
+                "DescribeSecret",
+            )
+        return {"Tags": self.tags}
+
+    def _delete_secret(self, **_: Any) -> Any:
+        self.secret_deleted = True
+        return {}
 
     def _logs(self, **_: Any) -> Any:
         digest = hashlib.sha256(self.secret.encode()).hexdigest()[:12]
@@ -342,8 +355,8 @@ class _World:
             "secretsmanager": {
                 "get_secret_value": _refused,
                 "create_secret": self._create_secret,
-                "describe_secret": {"Tags": self.tags},
-                "delete_secret": {},
+                "describe_secret": self._describe_secret,
+                "delete_secret": self._delete_secret,
             },
             "ecs": {
                 "register_task_definition": {"taskDefinition": {"taskDefinitionArn": TASK_DEF_ARN}},
@@ -476,3 +489,21 @@ def test_estimated_cost() -> None:
     # 10 minutes of 0.25 vCPU / 0.5 GB + public IPv4, and a secret kept 10 minutes.
     assert smoke.estimate_cost(600, 600) == pytest.approx(0.00298, abs=0.00005)
     assert smoke.estimate_cost(0, 0) == 0
+
+
+def test_a_force_deleted_secret_is_not_a_leftover() -> None:
+    """Live run 2026-10-09: right after ForceDeleteWithoutRecovery, DescribeSecret still
+    answered (with DeletedDate) for a while; that is not a leftover."""
+    described = {"Name": "groundcrew/smoke/TEST_VAR", "DeletedDate": "2026-10-09T17:00:00Z"}
+    deleting = {**DRY, "secretsmanager:DescribeSecret": described}
+    s = _smoke(fixture_session(deleting), fixture_session(deleting), [])
+    assert s.leftovers() == []
+
+
+def test_cleanup_waits_until_the_secret_is_gone() -> None:
+    world = _World()
+    s = _smoke(world, world, [], dry_run=False)
+    s.created = smoke.Created(secret_arn=SECRET_ARN)
+    s.cleanup()
+    (step,) = s.report.steps
+    assert step.result == "PASS" and step.note.endswith("gone)")

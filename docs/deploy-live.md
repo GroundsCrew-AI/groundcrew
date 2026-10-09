@@ -83,7 +83,9 @@ yourself and does not run it.
 
 Always runs (also after a failure or Ctrl-C), in order: service (scale to 0, delete, wait
 inactive), security group (retried for up to 3 minutes while the task's network interface is
-released), log group, ECR repository (force), secret (no recovery window). Each delete checks
+released), log group, ECR repository (force), secret (no recovery window; AWS removes it
+asynchronously, so cleanup waits up to a minute until `DescribeSecret` says it is gone, and the
+leftover check ignores a secret already marked deleted). Each delete checks
 ownership first: the resource's own tags where AWS returns them (service, security group,
 secret), otherwise that this run created it (repository, log group; the deploy role cannot read
 their tags). A failed delete does not stop the rest; it is listed as NOT CLEANED UP.
@@ -105,6 +107,16 @@ An IAM gap is fixed in `infra/aws-connect.yaml` (and its API copy), checked with
 Access Analyzer `ValidatePolicy`, and `tests/test_aws_connect_template.py`, then republished
 (`make publish-connect-template`) and the stack updated by the account owner, and the smoke run
 again.
+
+### First live run (2026-10-09, demo account 881050425883)
+
+All 25 steps passed: the 7 read-only checks; push, log group, security group (tcp/80 from one
+/32), secret, task definition, service stable in 37 s, HTTP 200, `TEST_VAR` hash matched; AWS
+refused all five negative checks (`AccessDeniedException` for a, b, d; `UnauthorizedOperation`
+for c; `AccessDenied` for e; the code allowlist also refused a and e); cleanup deleted
+everything (the service took 111 s to go inactive). The service ran 163 s; estimated cost
+$0.0008. No IAM gap: the template needed no change. A dry run right after found the
+force-deleted secret still describable for a moment, which led to the wait described above.
 
 ### Cost
 

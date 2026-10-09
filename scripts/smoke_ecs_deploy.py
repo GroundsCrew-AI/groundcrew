@@ -86,6 +86,7 @@ STABLE_TIMEOUT_SECONDS = 600
 HTTP_TIMEOUT_SECONDS = 90
 LOG_TIMEOUT_SECONDS = 90
 SG_DELETE_TIMEOUT_SECONDS = 180
+SECRET_GONE_TIMEOUT_SECONDS = 60
 
 
 # ------------------------------------------------------------------------------- output
@@ -442,8 +443,10 @@ class Smoke:
         if any(g["logGroupName"] == LOG_GROUP for g in groups.get("logGroups", [])):
             found.append(f"log group {LOG_GROUP}")
         try:
-            self.client("secretsmanager").describe_secret(SecretId=SECRET)
-            found.append(f"secret {SECRET}")
+            described = self.client("secretsmanager").describe_secret(SecretId=SECRET)
+            # A force-deleted secret stays describable (with DeletedDate) for up to a minute.
+            if not described.get("DeletedDate"):
+                found.append(f"secret {SECRET}")
         except ClientError as exc:
             if error_code(exc) != "ResourceNotFoundException":
                 raise
@@ -862,7 +865,17 @@ class Smoke:
         if not self.owns({t["Key"]: t["Value"] for t in described.get("Tags", [])}):
             raise NotOursError(f"{SECRET} is not tagged by this run; not deleted")
         sm.delete_secret(SecretId=SECRET, ForceDeleteWithoutRecovery=True)
-        return f"{SECRET} (no recovery)"
+        # Deletion is asynchronous: wait until it is really gone, so the next run starts clean.
+        deadline = time.monotonic() + SECRET_GONE_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                sm.describe_secret(SecretId=SECRET)
+            except ClientError as exc:
+                if error_code(exc) == "ResourceNotFoundException":
+                    return f"{SECRET} (no recovery, gone)"
+                raise
+            time.sleep(5)
+        return f"{SECRET} (no recovery; still being removed by AWS)"
 
 
 # ------------------------------------------------------------------------------ helpers
