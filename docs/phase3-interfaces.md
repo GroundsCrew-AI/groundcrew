@@ -250,8 +250,8 @@ the worker "uses the same image" (it has its own `checkout-worker` image). Witho
   target's type (`pulls_from checkout-worker (ECR image repository)`);
 - checks every summary bullet against the graph (`app.graph.summary_check.check_summary`)
   and drops bullets that name unlinked tooling, claim a kind of resource the app does not
-  have, say services share an image when they do not, relate a resource with no edges, or
-  claim a relationship (calls, reads, uses, deploys, ...) between named resources that no edge
+  have, say services share an image or image repository when they do not, relate a resource
+  with no edges, or claim a relationship (calls, reads, uses, deploys, ...) between named resources that no edge
   connects. Names written as a list ("checkout-api and checkout-worker") are not related to
   each other by the claim; Unicode hyphens are normalised first. A workflow is also named by
   its file (`deploy.yml`), and a bullet saying a workflow provisions, creates, or manages

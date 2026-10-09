@@ -727,3 +727,26 @@ async def test_summary_check_names_workflows_by_file_and_checks_provisioning() -
     ]
     assert "provisions nothing" in checked.dropped[0][1]
     assert "deploys checkout-api and checkout-worker" in checked.text
+
+
+async def test_summary_check_drops_shared_image_repositories() -> None:
+    """Live summary (2026-10-09): each service has its own ECR repository."""
+    from app.graph.summary_check import check_summary
+
+    resources, repos = await demo_inventory()
+    edges = infer_edges(resources, repos).edges
+    shared = (
+        "It shares image repositories **checkout-api** and **checkout-worker**, and each "
+        "service also reads the **checkout/database-url** secret."
+    )
+    text = "\n".join(
+        [
+            f"- {shared}",
+            "- Both services pull their images from separate ECR repositories.",
+            "- checkout-api and checkout-worker share the checkout/database-url secret.",
+        ]
+    )
+    checked = check_summary(text, resources, edges)
+    assert [b for b, _ in checked.dropped] == [shared]
+    assert "different images" in checked.dropped[0][1]
+    assert "separate ECR repositories" in checked.text and "share the checkout" in checked.text
