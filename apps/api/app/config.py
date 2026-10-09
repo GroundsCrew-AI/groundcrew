@@ -136,6 +136,68 @@ class Settings(BaseSettings):
             return [r.strip() for r in value.split(",") if r.strip()]
         return value
 
+    # Deploy infrastructure (Phase 4). The contract: docs/phase4-infra.md. The names and
+    # prefixes must match what infra/aws-connect.yaml (Tier=deploy) and infra/kind/rbac.yaml
+    # allow, so the validators below refuse values the IAM policy or admission policy would deny.
+    gc_aws_region: str = "us-east-2"
+    gc_ecs_cluster: str = "groundcrew-deploys"
+    # Unset = arn:aws:iam::<connection account>:role/groundcrew-task-execution
+    # (app.connectors.deploy_infra.task_execution_role_arn).
+    gc_task_execution_role_arn: str | None = None
+    # Subnets for Fargate tasks (comma separated). Empty = the default VPC's default subnets,
+    # with a public IP (app.connectors.deploy_infra.resolve_subnets).
+    gc_subnet_ids: Annotated[list[str], NoDecode] = []
+    gc_log_group_prefix: str = "/groundcrew/"
+    gc_ecr_prefix: str = "groundcrew-"
+    # Where images for the local kind cluster are pushed; nodes pull the same name through
+    # the registry mirror that `make kind-up` configures.
+    gc_kind_registry: str = "localhost:5001"
+    gc_namespace_prefix: str = "gc-"
+
+    @field_validator("gc_subnet_ids", mode="before")
+    @classmethod
+    def _split_subnets(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [s.strip() for s in value.split(",") if s.strip()]
+        return value
+
+    @field_validator("gc_ecs_cluster", "gc_ecr_prefix")
+    @classmethod
+    def _groundcrew_name(cls, value: str) -> str:
+        if not value.startswith("groundcrew-"):
+            raise ValueError(
+                "must start with groundcrew- (the deploy role only allows those names)"
+            )
+        return value
+
+    @field_validator("gc_log_group_prefix")
+    @classmethod
+    def _log_prefix(cls, value: str) -> str:
+        if not value.startswith("/groundcrew/"):
+            raise ValueError(
+                "must start with /groundcrew/ (the deploy role only allows that prefix)"
+            )
+        return value
+
+    @field_validator("gc_namespace_prefix")
+    @classmethod
+    def _namespace_prefix(cls, value: str) -> str:
+        if not value.startswith("gc-"):
+            raise ValueError(
+                "must start with gc- (the admission policy only allows gc-* namespaces)"
+            )
+        return value
+
+    @field_validator("gc_task_execution_role_arn")
+    @classmethod
+    def _execution_role(cls, value: str | None) -> str | None:
+        if value and not value.endswith(":role/groundcrew-task-execution"):
+            raise ValueError(
+                "must be the groundcrew-task-execution role (the only role the deploy role "
+                "may pass)"
+            )
+        return value
+
     # Spend caps in USD, counted in the llm_usage table. The total cap is the hard stop for the
     # whole hackathon (credits are about $30). Hosted demo: set LLM_DAILY_USD_CAP=0.50.
     llm_run_usd_cap: float = 0.40
