@@ -415,6 +415,17 @@
             "title": "Name",
             "type": "string"
           },
+          "namespaces": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespaces"
+          },
           "preview": {
             "title": "Preview",
             "type": "boolean"
@@ -3029,7 +3040,7 @@
     },
     "/connections/k8s": {
       "post": {
-        "description": "Preview: stores the kubeconfig encrypted, keeps cluster name and server as config.\nLive discovery is not built yet (TODO(k8s-live)).",
+        "description": "Verifies the kubeconfig by listing namespaces with it, then stores it encrypted and\nkeeps the cluster name, server, and namespace count as config. Nothing is stored when the\ncluster cannot be read.",
         "operationId": "k8s_connect_connections_k8s_post",
         "parameters": [
           {

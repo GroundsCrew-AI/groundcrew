@@ -175,8 +175,9 @@ export interface paths {
         put?: never;
         /**
          * K8S Connect
-         * @description Preview: stores the kubeconfig encrypted, keeps cluster name and server as config.
-         *     Live discovery is not built yet (TODO(k8s-live)).
+         * @description Verifies the kubeconfig by listing namespaces with it, then stores it encrypted and
+         *     keeps the cluster name, server, and namespace count as config. Nothing is stored when the
+         *     cluster cannot be read.
          */
         post: operations["k8s_connect_connections_k8s_post"];
         delete?: never;
@@ -660,6 +661,8 @@ export interface components {
             last_discovery?: components["schemas"]["LastDiscovery"] | null;
             /** Name */
             name: string;
+            /** Namespaces */
+            namespaces?: number | null;
             /** Preview */
             preview: boolean;
             /** Repos */

@@ -8,6 +8,7 @@ ARN, the ExternalId, and the account ID.
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlencode
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts import NotFoundError, member_workspace
 from app.config import Settings
+from app.connectors import kubernetes as kube
 from app.connectors.aws import AwsError, get_sessions, new_external_id, parse_role_arn
 from app.connectors.github import GitHubError, check_repo_name, get_github_app
 from app.connectors.kubernetes import kubeconfig_summary
@@ -429,19 +431,29 @@ async def azure_connect(
 async def k8s_connect(
     body: KubernetesConnectIn, user: CurrentUser, session: SessionDep
 ) -> ConnectionOut:
-    """Preview: stores the kubeconfig encrypted, keeps cluster name and server as config.
-    Live discovery is not built yet (TODO(k8s-live))."""
+    """Verifies the kubeconfig by listing namespaces with it, then stores it encrypted and
+    keeps the cluster name, server, and namespace count as config. Nothing is stored when the
+    cluster cannot be read."""
     await _check_member(session, user, body.workspace_id)
     try:
         summary = kubeconfig_summary(body.kubeconfig)
+        reader = kube.live_reader(body.kubeconfig)
+        try:
+            namespaces = await reader.verify()
+        finally:
+            reader.close()
     except ConnectorError as exc:
         raise _unprocessable(str(exc)) from None
     conn = Connection(
         workspace_id=body.workspace_id,
         kind="k8s",
         name=body.name or f"Kubernetes {summary['cluster']}",
-        status="pending",
-        config=summary,
+        status="connected",
+        config={
+            **summary,
+            "namespaces": len(namespaces),
+            "verified_at": datetime.now(UTC).isoformat(),
+        },
         secret_encrypted=_encrypt(body.kubeconfig),
     )
     session.add(conn)
