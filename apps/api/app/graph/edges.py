@@ -19,7 +19,7 @@ Rules (docs/phase3-interfaces.md has the full table):
  6 oidc_deploy        service -> workflow           deployed_by  high
    workflow_ecs       service -> workflow           deployed_by  high / medium
    vercel_job         vercel project -> workflow    deployed_by  high / medium
- 7 env_url            vercel project -> service     calls        high (value matches) / medium
+ 7 env_url            vercel project -> service     calls        high (plain value matches) / medium
 Structural (always high): workflow defined_in its repo, Vercel project deployed_by its latest
 production deployment, k8s ingress/service calls service/workload, and edges a connector
 declares (DiscoveredEdge).
@@ -766,7 +766,6 @@ def _env_by_name(g: _Graph, project: DiscoveredResource, valued: set[str]) -> No
                 f"Vercel env {name} ({item.get('type')}, value not read)",
                 f"{target.name} is deployed from the same repository {repo_name}",
             ]
-            confidence = Confidence.medium
             if repo is not None:
                 readers = _env_readers(repo, name)
                 if readers:
@@ -779,8 +778,8 @@ def _env_by_name(g: _Graph, project: DiscoveredResource, valued: set[str]) -> No
                         if job.vercel_env_sources.get(name) == "task_ip" and _job_names(
                             job.ecs_services, target
                         ):
-                            # The pipeline itself writes this service's task IP into the var.
-                            confidence = Confidence.high
+                            # The pipeline writes this service's task IP into the var. Still
+                            # medium: only a readable value that matches the IP makes it high.
                             parts.append(
                                 f"{wf.path} job {job.id} writes {name} to Vercel from the public "
                                 f"IP of a running {target.name} task (service {services})"
@@ -791,7 +790,7 @@ def _env_by_name(g: _Graph, project: DiscoveredResource, valued: set[str]) -> No
                 project,
                 target,
                 EdgeKind.calls,
-                confidence,
+                Confidence.medium,
                 "env_url",
                 "; ".join(parts) + ".",
                 env_name=name,

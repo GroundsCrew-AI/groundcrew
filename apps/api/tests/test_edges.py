@@ -500,10 +500,10 @@ async def test_demo_graph_has_every_expected_edge_with_evidence() -> None:
     edges = edges_of(resources, repos)
     assert set(edges) >= EXPECTED
     assert all(e.evidence for e in edges.values())
-    # API_URL is encrypted on Vercel (as live), so its value is never read. The edge is still
-    # high: deploy.yml's web job writes API_URL from the public IP of a running api task.
+    # API_URL is encrypted on Vercel (as live), so its value is never read: medium, with the
+    # name, the shared repository, and deploy.yml's web job (it writes the api task IP) as evidence.
     calls = edges[("checkout-demo", "calls", "checkout-api")]
-    assert calls.confidence == Confidence.high and calls.rule == "env_url"
+    assert calls.confidence == Confidence.medium and calls.rule == "env_url"
     assert "API_URL (encrypted, value not read)" in calls.evidence
     assert "same repository GroundsCrew-AI/checkout-demo" in calls.evidence
     assert (
@@ -516,7 +516,7 @@ async def test_demo_graph_has_every_expected_edge_with_evidence() -> None:
     # The running image's commit is evidence on the defined_in edge, with the Terraform file.
     defined = edges[("checkout-api", "defined_in", "GroundsCrew-AI/checkout-demo")]
     assert defined.rule == "terraform" and defined.details["commit"].startswith("cef79e7")
-    for k in EXPECTED:
+    for k in EXPECTED - {("checkout-demo", "calls", "checkout-api")}:
         assert edges[k].confidence == Confidence.high, k
 
 
