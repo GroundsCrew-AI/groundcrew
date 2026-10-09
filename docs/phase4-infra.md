@@ -71,8 +71,10 @@ us-east-2 (`vpc-076ec4ac924fd464d`, three default subnets with public IPs; check
 - `CredentialsProvider.aws_deploy_session(connection_id)`: the `groundcrew-deploy` role. Raises
   a clear error unless the connection's tier is `deploy`. Proposed contract change, documented
   in `docs/phase3-interfaces.md`; it lands with the AWS deploy tier.
-- `CredentialsProvider.kubeconfig(connection_id)`: for kind, the `groundcrew-deployer`
-  ServiceAccount's kubeconfig from `make kind-kubeconfig` (never cluster-admin).
+- `CredentialsProvider.kubeconfig(connection_id)`: a 0600 temp file with the connection's
+  kubeconfig (verified live on kind). For kind that is the `groundcrew-deployer` ServiceAccount
+  (never cluster-admin), registered with the Connections page or `make kind-register`
+  (`docs/kind.md`).
 
 ## Kubernetes namespaces
 

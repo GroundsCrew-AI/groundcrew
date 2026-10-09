@@ -273,7 +273,14 @@ most of the post-check; we would keep the check as a guard.
 - GitHub `app/connectors/github.py`: `GitHubApp.get(installation_id, path)` (GET only).
 - Vercel `app/connectors/vercel.py`: `VercelClient(token, team_id)`; values only for plain
   *_URL / *_HOST.
-- Azure and Kubernetes: fixture readers only (`TODO(azure-live)`, `TODO(k8s-live)`).
+- Kubernetes `app/connectors/kubernetes.py`: `LiveKubeReader(kubeconfig_text)` (official client,
+  loaded from the kubeconfig in memory; raw JSON pages of 500, 20 s per request) lists only
+  namespaces, Deployments, StatefulSets, Services, Ingresses, and Pods (metadata and phase
+  only); Secrets are refused. `POST /connections/k8s` lists namespaces with the kubeconfig before
+  storing it (Fernet-encrypted). `CredentialsProvider.kubeconfig(connection_id)` writes it to a
+  0600 file in a 0700 temp dir, removed on `close()` (checked live on kind,
+  `tests/test_kind_live.py`). Local cluster: `docs/kind.md`.
+- Azure: fixture readers only (`TODO(azure-live)`).
 
 ## Discovery contract
 

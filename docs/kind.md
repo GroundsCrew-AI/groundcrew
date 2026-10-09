@@ -18,6 +18,40 @@ Then add a Kubernetes connection in Groundcrew with `.kind/groundcrew-deployer.k
 `make kind-down` deletes the cluster, the registry, and the kubeconfigs.
 `METRICS=1 make kind-up` also installs metrics-server (for `kubectl top`).
 
+## Register kind as a Kubernetes connection
+
+Groundcrew in Docker Compose reaches the cluster only on the `kind` network, so start (or
+restart) the stack with `KIND=1` first:
+
+```bash
+make kind-up && make kind-kubeconfig
+make dev KIND=1                              # or: make down && make dev KIND=1
+```
+
+Then either:
+
+- **Connections page:** Kubernetes, **Upload kubeconfig**, choose
+  `.kind/groundcrew-deployer.kubeconfig` (not the `.host` one), **Verify and connect**. The API
+  lists namespaces with it before saving; a 401, 403, or unreachable server is shown and nothing
+  is stored.
+- **Command line:** `make kind-register LOGIN=<your GitHub login>`. It posts the same file to
+  `POST /connections/k8s` in the workspace you own (sign in to the web app once first). It signs
+  a 5-minute API token with `INTERNAL_JWT_SECRET` from `.env`, like the web proxy, so it is for
+  your own dev stack only. Already registered? It reuses the connection.
+
+`make kind-register LOGIN=<login> DISCOVER=1` also runs discovery for the connection and checks
+that the cluster's `gc-*` namespaces (and every other non-`kube-*` namespace) are on the Map and
+that no Secret was read. The same check runs as a test:
+`RUN_LIVE_TESTS=1 KIND_LOGIN=<login> uv run --project apps/api pytest apps/api/tests/test_kind_live.py`.
+
+In code, Ahmed's k8s target gets the kubeconfig through
+`CredentialsProvider.kubeconfig(connection_id)`: a 0600 file in a 0700 temp directory, deleted
+when the provider is closed.
+
+Discovery reads namespaces (not `kube-*`), Deployments, StatefulSets, Services, Ingresses, and
+Pods (counted per workload; only their metadata is kept), and links Ingress -> Service ->
+Deployment (`k8s_ingress`, `k8s_selector`). It never lists Secrets.
+
 ## Install on Ubuntu
 
 **Docker** (kind runs the cluster in a container):
@@ -146,9 +180,12 @@ echo -e 'fs.inotify.max_user_watches=524288\nfs.inotify.max_user_instances=512' 
 and host `<name>.localhost`; ingress-nginx takes a few seconds to pick up a new Ingress.
 `curl -H 'Host: <name>.localhost' http://127.0.0.1/` works where `*.localhost` does not resolve.
 
-**Groundcrew in Compose cannot reach the cluster (`groundcrew-control-plane: no such host`).**
-Start the stack with `make dev KIND=1`, after `make kind-up`, and register
-`.kind/groundcrew-deployer.kubeconfig` (not the `.host` one).
+**"Cannot resolve the cluster address https://groundcrew-control-plane:6443".** Groundcrew is
+not on the kind network: restart it with `make down && make dev KIND=1` (after `make kind-up`),
+and register `.kind/groundcrew-deployer.kubeconfig` (not the `.host` one).
+
+**"rejected the kubeconfig's credentials (401)".** The token Secret was deleted or the cluster was
+recreated: `make kind-kubeconfig`, then remove the connection and register it again.
 
 **`ValidatingAdmissionPolicy 'groundcrew-deployer-scope' ... denied request`.** Working as
 intended: the deployer tried to write outside `gc-*`, create a namespace without
