@@ -42,10 +42,27 @@ function useInvalidateWorkspace() {
   };
 }
 
+export type AwsTier = Schemas["AwsTierIn"]["tier"];
+
 export function useAwsStart() {
   return useMutation({
-    mutationFn: async (workspaceId: string) =>
-      unwrap(await api.POST("/connections/aws/start", { body: { workspace_id: workspaceId } })),
+    mutationFn: async ({ workspaceId, tier }: { workspaceId: string; tier: AwsTier }) =>
+      unwrap(await api.POST("/connections/aws/start", { body: { workspace_id: workspaceId, tier } })),
+  });
+}
+
+/** Switch a connected AWS account's tier; deploy verifies the groundcrew-deploy role first. */
+export function useAwsSetTier(workspaceId: string | undefined) {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async ({ connectionId, tier }: { connectionId: string; tier: AwsTier }) =>
+      unwrap(
+        await api.POST("/connections/{connection_id}/aws/tier", {
+          params: { path: { connection_id: connectionId } },
+          body: { tier },
+        }),
+      ),
+    onSettled: () => workspaceId && invalidate(workspaceId),
   });
 }
 

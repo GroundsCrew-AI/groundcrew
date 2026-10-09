@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { type AwsStart, downloadAwsTemplate, useAwsComplete, useAwsStart } from "@/lib/discovery";
+import { type AwsStart, type AwsTier, downloadAwsTemplate, useAwsComplete, useAwsStart } from "@/lib/discovery";
 import { useWorkspace } from "@/lib/workspace";
 
 import { CopyField } from "./copy-field";
@@ -19,6 +19,13 @@ const CREATES = [
   "Read access to configuration and metadata: ECS, ECR, RDS, VPC, Lambda, CloudWatch, IAM, and secret names.",
   "An explicit deny on secret values, SSM parameters, KMS decrypt, and S3 objects.",
   "A Resource Explorer index in this region, so discovery is one search. AWS Config is not turned on.",
+];
+
+export const DEPLOY_CREATES = [
+  "An ECS cluster, groundcrew-deploys (Fargate, no running cost until something is deployed).",
+  "A role, groundcrew-deploy, with the same trust and ExternalId. It may only create and change ECS services in groundcrew-deploys, ECR repositories named groundcrew-*, log groups under /groundcrew/, and security groups tagged project=groundcrew.",
+  "A role, groundcrew-task-execution, that ECS uses to pull groundcrew-* images and write /groundcrew/ logs.",
+  "The same explicit deny on secret values. Nothing else in the account can be changed.",
 ];
 
 /**
@@ -105,11 +112,14 @@ export function AwsConnectDialog({
   open,
   onOpenChange,
   tab,
+  tier = "observe",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** A tab opened by the Connect click; pointed at CloudFormation once the link is ready. */
   tab?: RefObject<Window | null>;
+  /** observe: read-only. deploy: also the deploy role and cluster (Tier=deploy). */
+  tier?: AwsTier;
 }) {
   const { workspace } = useWorkspace();
   const start = useAwsStart();
@@ -134,18 +144,18 @@ export function AwsConnectDialog({
 
   useEffect(() => {
     if (!startRequested || !workspace) return;
-    if (start.data) {
+    if (start.data && start.data.tier === tier) {
       sendTab(start.data); // reopened: the link is already known
       return;
     }
     if (start.isPending) return;
-    start.mutate(workspace.id, {
+    start.mutate({ workspaceId: workspace.id, tier }, {
       onSuccess: (info) => sendTab(info),
       onError: (error) => sendTab(undefined, error),
     });
     // Once per open; the mutation object changes identity on every state change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startRequested, workspace]);
+  }, [startRequested, workspace, tier]);
 
   function close(next: boolean) {
     onOpenChange(next);
@@ -165,7 +175,10 @@ export function AwsConnectDialog({
     if (!start.data) return;
     complete.mutate(
       { connection_id: start.data.connection_id, role_arn: roleArn.trim() },
-      { onSuccess: (conn) => toast.success(`Connected AWS account ${conn.account}`) },
+      {
+        onSuccess: (conn) =>
+          toast.success(`Connected AWS account ${conn.account}${conn.tier === "deploy" ? " with deploys" : ""}`),
+      },
     );
   }
 
@@ -175,10 +188,12 @@ export function AwsConnectDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Connect an AWS account</DialogTitle>
+          <DialogTitle>{tier === "deploy" ? "Connect an AWS account for deploys" : "Connect an AWS account"}</DialogTitle>
           <DialogDescription>
-            You create a read-only role in your account with one CloudFormation stack. Groundcrew never stores AWS
-            keys: only the role ARN, your ExternalId, and the account ID.
+            {tier === "deploy"
+              ? "One CloudFormation stack creates a read-only role plus a deploy role limited to Groundcrew's own resources. "
+              : "You create a read-only role in your account with one CloudFormation stack. "}
+            Groundcrew never stores AWS keys: only the role ARN, your ExternalId, and the account ID.
           </DialogDescription>
         </DialogHeader>
         {done ? (
@@ -188,6 +203,7 @@ export function AwsConnectDialog({
               <span>
                 Connected to account <span className="font-mono">{done.account}</span>. The role was refused
                 without your ExternalId and worked with it, as it should.
+                {done.tier === "deploy" && " So was the deploy role: Groundcrew can deploy into groundcrew-deploys."}
               </span>
             </p>
             <div className="flex justify-end gap-2">
@@ -250,7 +266,7 @@ export function AwsConnectDialog({
             </form>
             <Disclosure title="What the stack creates">
               <ul className="space-y-1 text-[12.5px] text-muted-foreground">
-                {CREATES.map((line) => (
+                {[...CREATES, ...(tier === "deploy" ? DEPLOY_CREATES : [])].map((line) => (
                   <li key={line} className="flex gap-2">
                     <span aria-hidden="true" className="mt-[8px] size-1 shrink-0 rounded-full bg-subtle" />
                     {line}

@@ -27,6 +27,7 @@ vi.mock("@/lib/discovery", () => ({
 function start(overrides: Partial<AwsStart> = {}): AwsStart {
   return {
     connection_id: "conn-1",
+    tier: "observe",
     external_id: "gc-abc123",
     principal_arn: "arn:aws:iam::881050425883:user/groundcrew-platform",
     region: "us-east-2",
@@ -55,8 +56,8 @@ describe("AwsConnectDialog", () => {
     const ok = { current: fakeTab() };
     const okTab = ok.current;
     render(<AwsConnectDialog open onOpenChange={vi.fn()} tab={ok} />);
-    const [workspaceId, callbacks] = state.mutateStart.mock.calls[0];
-    expect(workspaceId).toBe("ws-1");
+    const [variables, callbacks] = state.mutateStart.mock.calls[0];
+    expect(variables).toEqual({ workspaceId: "ws-1", tier: "observe" });
     callbacks.onSuccess(start());
     expect(okTab.location.href).toBe(CONSOLE_URL);
 
@@ -107,5 +108,25 @@ describe("AwsConnectDialog", () => {
       expect.anything(),
     );
     expect(screen.getByRole("alert")).toHaveTextContent("different ExternalId");
+  });
+});
+
+describe("AwsConnectDialog with Tier=deploy", () => {
+  beforeEach(() => {
+    state.start = { data: undefined, error: null, isPending: false };
+    state.complete = { data: undefined, error: null, isPending: false };
+    state.mutateStart.mockReset();
+  });
+
+  it("asks for the deploy tier and lists what the deploy tier creates", async () => {
+    render(<AwsConnectDialog open onOpenChange={vi.fn()} tier="deploy" />);
+    expect(state.mutateStart.mock.calls[0][0]).toEqual({ workspaceId: "ws-1", tier: "deploy" });
+    expect(screen.getByText("Connect an AWS account for deploys")).toBeInTheDocument();
+  });
+
+  it("starts again when the tier changes on a link it already has", () => {
+    state.start.data = start({ tier: "observe" });
+    render(<AwsConnectDialog open onOpenChange={vi.fn()} tier="deploy" />);
+    expect(state.mutateStart).toHaveBeenCalledWith({ workspaceId: "ws-1", tier: "deploy" }, expect.anything());
   });
 });

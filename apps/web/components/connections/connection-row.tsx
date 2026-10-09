@@ -2,13 +2,14 @@
 
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
-import type { CSSProperties } from "react";
+import { type CSSProperties, useState } from "react";
 
 import { ProviderMark } from "@/components/map/resource-meta";
 import { Button } from "@/components/ui/button";
 import type { Connection } from "@/lib/discovery";
 import { formatRelative } from "@/lib/format";
 
+import { AwsTierDialog } from "./aws-tier-dialog";
 import { RemoveConnection } from "./remove-connection";
 
 const STATUS: Record<string, { label: string; color: string }> = {
@@ -60,6 +61,8 @@ export function ConnectionRow({
 }) {
   const status = connectionStatus(connection);
   const last = connection.last_discovery;
+  const [tierOpen, setTierOpen] = useState(false);
+  const awsConnected = connection.kind === "aws" && connection.status === "connected";
   return (
     <li className="flex flex-wrap items-center gap-3 bg-background px-4 py-3.5 sm:flex-nowrap">
       <ProviderMark provider={connection.kind} />
@@ -73,6 +76,11 @@ export function ConnectionRow({
             <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
             {status.label}
           </span>
+          {connection.kind === "aws" && connection.tier && (
+            <span className="rounded-full border px-2 text-[11.5px] text-muted-foreground">
+              {connection.tier === "deploy" ? "Deploy" : "Observe"}
+            </span>
+          )}
         </div>
         <p className="truncate font-mono text-[11.5px] text-muted-foreground" title={detail(connection)}>
           {detail(connection)}
@@ -109,8 +117,14 @@ export function ConnectionRow({
             Refresh
           </Button>
         )}
+        {awsConnected && (
+          <Button size="sm" variant="ghost" onClick={() => setTierOpen(true)}>
+            {connection.tier === "deploy" ? "Turn off deploys" : "Enable deploys"}
+          </Button>
+        )}
         <RemoveConnection connection={connection} />
       </div>
+      {awsConnected && tierOpen && <AwsTierDialog connection={connection} open onOpenChange={setTierOpen} />}
     </li>
   );
 }

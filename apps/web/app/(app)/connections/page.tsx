@@ -17,7 +17,7 @@ import { ProviderMark } from "@/components/map/resource-meta";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { ErrorState, RowsSkeleton } from "@/components/states/states";
 import { Button } from "@/components/ui/button";
-import { type Connection, type ConnectionKind, useConnections, useRefreshConnection } from "@/lib/discovery";
+import { type AwsTier, type Connection, type ConnectionKind, useConnections, useRefreshConnection } from "@/lib/discovery";
 import { useWorkspace } from "@/lib/workspace";
 
 type Provider = {
@@ -30,7 +30,7 @@ type Provider = {
 };
 
 const PROVIDERS: Provider[] = [
-  { kind: "aws", name: "AWS", access: "A read-only role with your ExternalId. No stored keys.", action: "Connect AWS" },
+  { kind: "aws", name: "AWS", access: "A role with your ExternalId. No stored keys. Observe reads; Deploy also deploys into its own cluster.", action: "Connect AWS" },
   { kind: "github", name: "GitHub", access: "The Groundcrew GitHub App on the repositories you pick.", action: "Pick repositories" },
   { kind: "vercel", name: "Vercel", access: "A team token, stored encrypted. Env var names, not values.", action: "Add token" },
   { kind: "azure", name: "Azure", access: "Reader on one resource group, through a service principal.", action: "Connect", preview: true },
@@ -44,6 +44,7 @@ export default function ConnectionsPage() {
   const connections = useConnections(workspace?.id);
   const refresh = useRefreshConnection();
   const [open, setOpen] = useState<ConnectionKind | null>(null);
+  const [awsTier, setAwsTier] = useState<AwsTier>("observe");
   const awsTab = useRef<Window | null>(null);
   const error = workspaceError ?? connections.error;
   const items = connections.data ?? [];
@@ -97,7 +98,10 @@ export default function ConnectionsPage() {
                     connection={connection}
                     onRefresh={onRefresh}
                     refreshing={refresh.isPending && refresh.variables?.id === connection.id}
-                    onResume={() => openDialog("aws")}
+                    onResume={(conn) => {
+                      setAwsTier(conn.tier ?? "observe");
+                      openDialog("aws");
+                    }}
                   />
                 ))}
               </ul>
@@ -120,6 +124,27 @@ export default function ConnectionsPage() {
                     {provider.later && <span className="text-[11.5px] text-subtle">Later</span>}
                   </div>
                   <p className="mt-0.5 text-[12.5px] text-muted-foreground">{provider.access}</p>
+                  {provider.kind === "aws" && (
+                    <fieldset className="mt-3 flex gap-1 rounded-md border p-0.5 text-[12px]">
+                      <legend className="sr-only">AWS access</legend>
+                      {(["observe", "deploy"] as const).map((tier) => (
+                        <label
+                          key={tier}
+                          className={`flex-1 cursor-pointer rounded px-2 py-1 text-center ${awsTier === tier ? "bg-muted font-medium" : "text-muted-foreground"}`}
+                        >
+                          <input
+                            type="radio"
+                            name="aws-tier"
+                            value={tier}
+                            checked={awsTier === tier}
+                            onChange={() => setAwsTier(tier)}
+                            className="sr-only"
+                          />
+                          {tier === "observe" ? "Observe" : "Deploy"}
+                        </label>
+                      ))}
+                    </fieldset>
+                  )}
                   {!provider.later && (
                     <Button
                       size="sm"
@@ -137,7 +162,7 @@ export default function ConnectionsPage() {
           </ul>
         </section>
       </PageBody>
-      <AwsConnectDialog {...dialog("aws")} tab={awsTab} />
+      <AwsConnectDialog {...dialog("aws")} tab={awsTab} tier={awsTier} />
       <GitHubConnectDialog {...dialog("github")} />
       <VercelConnectDialog {...dialog("vercel")} />
       <AzureConnectDialog {...dialog("azure")} />
