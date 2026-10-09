@@ -467,7 +467,10 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   - [ ] Infra (`phase4-infra`, PR #9): deploy contract (`docs/phase4-infra.md`, `GC_*` settings,
         `app/connectors/deploy_infra.py`); local kind cluster with registry, ingress, and the `groundcrew-deployer`
         ServiceAccount limited to `gc-*` namespaces (RBAC + ValidatingAdmissionPolicy, `docs/kind.md`); Kubernetes
-        connections live (`TODO(k8s-live)` done). Next: AWS deploy tier, cleanup, CI, live runbook
+        connections live (`TODO(k8s-live)` done); `make kind-register` (dev only, `APP_ENV=dev`); AWS deploy tier
+        (`Tier=observe|deploy` in `infra/aws-connect.yaml`, `groundcrew-deploy` role scoped to `groundcrew-*` and
+        `project=groundcrew`, `aws_deploy_session()`, Observe / Deploy on the Connections page; not published).
+        Next: cleanup, CI, live runbook
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission

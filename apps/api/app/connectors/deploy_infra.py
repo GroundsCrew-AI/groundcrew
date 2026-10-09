@@ -86,6 +86,31 @@ def ecs_service(app: str) -> str:
     return _fit("", app, 255)
 
 
+def task_family(app: str) -> str:
+    """Task definition family for an app: groundcrew-<app>. The deploy role may only run task
+    definitions whose family starts with groundcrew-."""
+    return _fit("groundcrew-", app, 255)
+
+
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def secret_name(app: str, var: str) -> str:
+    """Secrets Manager name for one env secret of an app: groundcrew/<app>/<VAR>. The deploy
+    role may create, update, and delete only groundcrew/* secrets (never read them); the task
+    execution role reads them when ECS starts a task."""
+    if not _ENV_NAME.fullmatch(var):
+        raise DeployInfraError(f"{var!r} is not an environment variable name.")
+    return f"groundcrew/{slug(app)}/{var}"
+
+
+def deploy_role_arn(account_id: str) -> str:
+    """The groundcrew-deploy role a Tier=deploy stack creates in that account."""
+    if not re.fullmatch(r"\d{12}", account_id):
+        raise DeployInfraError(f"Not an AWS account id: {account_id!r}.")
+    return f"arn:aws:iam::{account_id}:role/{DEPLOY_ROLE}"
+
+
 def task_execution_role_arn(settings: Settings, account_id: str) -> str:
     """The task execution role ARN: the setting, or the stack's fixed name in that account."""
     if settings.gc_task_execution_role_arn:

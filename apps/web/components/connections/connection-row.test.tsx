@@ -23,6 +23,15 @@ describe("ConnectionRow", () => {
     expect(screen.getByRole("link", { name: "View run" })).toHaveAttribute("href", "/runs/run-1");
   });
 
+  it("shows an AWS connection's tier and offers to switch it", () => {
+    const { rerender } = render(<ConnectionRow connection={connection()} onRefresh={vi.fn()} refreshing={false} />);
+    expect(screen.getByText("Observe")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Enable deploys" })).toBeInTheDocument();
+    rerender(<ConnectionRow connection={connection({ tier: "deploy" })} onRefresh={vi.fn()} refreshing={false} />);
+    expect(screen.getByText("Deploy")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Turn off deploys" })).toBeInTheDocument();
+  });
+
   it("refreshes a connected connection", async () => {
     const onRefresh = vi.fn();
     const conn = connection();

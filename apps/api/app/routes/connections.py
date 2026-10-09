@@ -22,6 +22,7 @@ from app.accounts import NotFoundError, member_workspace
 from app.config import Settings
 from app.connectors import kubernetes as kube
 from app.connectors.aws import AwsError, get_sessions, new_external_id, parse_role_arn
+from app.connectors.deploy_infra import deploy_role_arn
 from app.connectors.github import GitHubError, check_repo_name, get_github_app
 from app.connectors.kubernetes import kubeconfig_summary
 from app.connectors.vercel import VercelClient, VercelError
@@ -33,6 +34,7 @@ from app.routes.discovery_schemas import (
     AwsCompleteIn,
     AwsStartIn,
     AwsStartOut,
+    AwsTierIn,
     AzureConnectIn,
     ConnectionDeleted,
     ConnectionOut,
@@ -123,7 +125,7 @@ async def list_connections(
 # ------------------------------------------------------------------------------- AWS
 
 
-def _console_url(settings: Settings, external_id: str, principal: str) -> str | None:
+def _console_url(settings: Settings, external_id: str, principal: str, tier: str) -> str | None:
     if not settings.aws_connect_template_url:
         return None
     region = settings.discovery_regions[0]
@@ -134,6 +136,7 @@ def _console_url(settings: Settings, external_id: str, principal: str) -> str | 
             "param_GroundcrewPrincipalArn": principal,
             "param_ExternalId": external_id,
             "param_RoleName": ROLE_NAME,
+            "param_Tier": tier,
         },
         quote_via=quote,
     )
@@ -153,7 +156,8 @@ async def aws_template(_user: CurrentUser) -> PlainTextResponse:
 async def aws_start(
     body: AwsStartIn, user: CurrentUser, session: SessionDep, settings: SettingsDep
 ) -> AwsStartOut:
-    """Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link."""
+    """Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link for
+    the chosen tier (stored on the connection; complete verifies the deploy role for deploy)."""
     await _check_member(session, user, body.workspace_id)
     try:
         principal = await asyncio.to_thread(get_sessions().principal_arn)
@@ -173,23 +177,32 @@ async def aws_start(
             kind="aws",
             name="AWS",
             status="pending",
-            config={"external_id": new_external_id(), "principal_arn": principal, "region": region},
+            config={
+                "external_id": new_external_id(),
+                "principal_arn": principal,
+                "region": region,
+                "tier": body.tier,
+            },
         )
         session.add(conn)
         await session.flush()
+    elif conn.config.get("tier") != body.tier:
+        conn.config = {**conn.config, "tier": body.tier}
     external_id = str(conn.config["external_id"])
     await session.commit()
     params = (
         f"ParameterKey=GroundcrewPrincipalArn,ParameterValue={principal} "
-        f"ParameterKey=ExternalId,ParameterValue={external_id}"
+        f"ParameterKey=ExternalId,ParameterValue={external_id} "
+        f"ParameterKey=Tier,ParameterValue={body.tier}"
     )
     return AwsStartOut(
         connection_id=conn.id,
+        tier=body.tier,
         external_id=external_id,
         principal_arn=principal,
         region=region,
         stack_name=STACK_NAME,
-        console_url=_console_url(settings, external_id, principal),
+        console_url=_console_url(settings, external_id, principal, body.tier),
         template_path="/connections/aws/template",
         cli_command=(
             f"aws cloudformation create-stack --region {region} --stack-name {STACK_NAME} "
@@ -208,7 +221,8 @@ async def aws_complete(
     body: AwsCompleteIn, user: CurrentUser, session: SessionDep
 ) -> ConnectionOut:
     """Verify the role (refused without the ExternalId, works with it, right account) and
-    store its ARN. No credentials are stored."""
+    store its ARN; for Tier=deploy, verify the groundcrew-deploy role the same way. No
+    credentials are stored."""
     conn = await member_connection(session, user, body.connection_id, for_update=True)
     if conn.kind != "aws":
         raise _unprocessable("This is not an AWS connection.")
@@ -230,9 +244,15 @@ async def aws_complete(
             status.HTTP_409_CONFLICT, f"AWS account {account} is already connected."
         )
     external_id = str(conn.config["external_id"])
+    tier = str(conn.config.get("tier") or "observe")
     await session.commit()  # no transaction open during the STS calls
     try:
         identity = await asyncio.to_thread(get_sessions().verify, role_arn, external_id)
+        deploy_role = (
+            await asyncio.to_thread(_verify_deploy_role, identity.account, external_id)
+            if tier == "deploy"
+            else None
+        )
     except AwsError as exc:
         conn = await member_connection(session, user, body.connection_id, for_update=True)
         conn.config = {**conn.config, "last_error": str(exc)}
@@ -244,10 +264,53 @@ async def aws_complete(
         "role_arn": role_arn,
         "account_id": identity.account,
         "session_arn": identity.arn,
+        "tier": tier,
+        "deploy_role_arn": deploy_role,
         "last_error": None,
     }
     conn.name = f"AWS {identity.account}"
     conn.status = "connected"
+    await session.commit()
+    return await _out(session, conn)
+
+
+def _verify_deploy_role(account: str, external_id: str) -> str:
+    """The groundcrew-deploy role, verified like the read-only one (ExternalId required)."""
+    role_arn = deploy_role_arn(account)
+    try:
+        get_sessions().verify(role_arn, external_id)
+    except AwsError as exc:
+        raise AwsError(
+            f"The deploy role {role_arn} could not be used: {exc} It exists only when the "
+            "groundcrew-read-only stack has Tier=deploy: change the stack's Tier parameter "
+            "to deploy (docs/phase4-infra.md), then try again."
+        ) from None
+    return role_arn
+
+
+@router.post("/{connection_id}/aws/tier")
+async def aws_set_tier(
+    connection_id: uuid.UUID, body: AwsTierIn, user: CurrentUser, session: SessionDep
+) -> ConnectionOut:
+    """Switch a connected AWS account between observe and deploy after its stack was updated.
+    deploy: verifies the groundcrew-deploy role first (nothing changes if it cannot be used).
+    observe: Groundcrew stops using the deploy role at once; update the stack to Tier=observe
+    to delete it."""
+    conn = await member_connection(session, user, connection_id, for_update=True)
+    if conn.kind != "aws" or conn.status != "connected":
+        raise _unprocessable("Only a connected AWS account has a tier.")
+    account, external_id = str(conn.config["account_id"]), str(conn.config["external_id"])
+    await session.commit()  # no transaction open during the STS calls
+    deploy_role = None
+    if body.tier == "deploy":
+        try:
+            deploy_role = await asyncio.to_thread(_verify_deploy_role, account, external_id)
+        except AwsError as exc:
+            raise _unprocessable(str(exc)) from None
+    else:
+        get_sessions().forget(deploy_role_arn(account), external_id)
+    conn = await member_connection(session, user, connection_id, for_update=True)
+    conn.config = {**conn.config, "tier": body.tier, "deploy_role_arn": deploy_role}
     await session.commit()
     return await _out(session, conn)
 

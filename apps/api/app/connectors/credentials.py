@@ -5,15 +5,19 @@ Contract (docs/phase3-interfaces.md):
     class CredentialsProvider(Protocol):
         def kubeconfig(self, connection_id: uuid.UUID) -> Path: ...
         def aws_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
+        def aws_deploy_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
         def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential: ...
 
 All three block (STS call, file write): call them with `asyncio.to_thread` from async code.
 
 `ConnectionCredentialsProvider` serves stored connections. Secrets stay Fernet-encrypted in
 `connections.secret_encrypted` and are decrypted only inside these calls:
-- aws_session: STS AssumeRole into the customer's role with its ExternalId, from Groundcrew's
-  platform identity (app.connectors.aws). The session expires within an hour, refuses every
-  non-read operation, and is never stored. No AWS keys are ever stored for a customer.
+- aws_session: STS AssumeRole into the customer's read-only role with its ExternalId, from
+  Groundcrew's platform identity (app.connectors.aws). The session expires within an hour,
+  refuses every non-read operation, and is never stored. No AWS keys are ever stored for a
+  customer. Always the read-only role, whatever the connection's tier.
+- aws_deploy_session: the groundcrew-deploy role (Tier=deploy only, else CredentialsError), in
+  GC_AWS_REGION, guarded by AWS_DEPLOY_OPERATIONS. Proposed contract change for Phase 4.
 - kubeconfig: written to a private temp file (0600 in a 0700 dir), deleted by `close()`.
 - azure_credential: a client-secret credential (fixtures only for now, TODO(azure-live)).
 
@@ -34,7 +38,12 @@ from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.connectors.aws import AwsSessions, get_sessions
+from app.connectors.aws import (
+    AWS_DEPLOY_OPERATIONS,
+    DEPLOY_SESSION_NAME,
+    AwsSessions,
+    get_sessions,
+)
 from app.db.models import Connection
 from app.discovery.types import ConnectorError
 from app.security.crypto import decrypt
@@ -70,6 +79,7 @@ class ClientSecretAzureCredential:
 class CredentialsProvider(Protocol):
     def kubeconfig(self, connection_id: uuid.UUID) -> Path: ...
     def aws_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
+    def aws_deploy_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
     def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential: ...
 
 
@@ -136,6 +146,27 @@ class ConnectionCredentialsProvider:
             )
         return (self._sessions or get_sessions()).assume(str(role_arn), str(external_id))
 
+    def aws_deploy_session(self, connection_id: uuid.UUID) -> boto3.Session:
+        conn = self._get(connection_id, "aws")
+        tier = conn.config.get("tier") or "observe"
+        if tier != "deploy":
+            raise CredentialsError(
+                f"{conn.name} is connected with Tier={tier}, which cannot deploy. Update its "
+                "groundcrew-read-only stack with Tier=deploy, then turn on deploys for it on "
+                "the Connections page (docs/phase4-infra.md)."
+            )
+        role_arn, external_id = conn.config.get("deploy_role_arn"), conn.config.get("external_id")
+        if not role_arn or not external_id:
+            raise CredentialsError(f"{conn.name} has no verified deploy role yet.")
+        sessions = self._sessions or get_sessions()
+        return sessions.assume(
+            str(role_arn),
+            str(external_id),
+            operations=AWS_DEPLOY_OPERATIONS,
+            region=sessions.settings.gc_aws_region,
+            session_name=DEPLOY_SESSION_NAME,
+        )
+
     def kubeconfig(self, connection_id: uuid.UUID) -> Path:
         conn = self._get(connection_id, "k8s")
         return self._temp.write(connection_id, self._secret(conn))
@@ -163,6 +194,7 @@ class EnvCredentialsProvider:
     - kubeconfig: KUBECONFIG
     - aws_session: GROUNDCREW_DEV_AWS_ROLE_ARN + GROUNDCREW_DEV_AWS_EXTERNAL_ID, assumed from
       the platform identity like a real connection (never a profile or ~/.aws)
+    - aws_deploy_session: GROUNDCREW_DEV_AWS_DEPLOY_ROLE_ARN + GROUNDCREW_DEV_AWS_EXTERNAL_ID
     - azure_credential: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
     """
 
@@ -187,6 +219,19 @@ class EnvCredentialsProvider:
             "GROUNDCREW_DEV_AWS_ROLE_ARN", "GROUNDCREW_DEV_AWS_EXTERNAL_ID"
         )
         return (self._sessions or get_sessions()).assume(role_arn, external_id)
+
+    def aws_deploy_session(self, connection_id: uuid.UUID) -> boto3.Session:
+        role_arn, external_id = self._need(
+            "GROUNDCREW_DEV_AWS_DEPLOY_ROLE_ARN", "GROUNDCREW_DEV_AWS_EXTERNAL_ID"
+        )
+        sessions = self._sessions or get_sessions()
+        return sessions.assume(
+            role_arn,
+            external_id,
+            operations=AWS_DEPLOY_OPERATIONS,
+            region=sessions.settings.gc_aws_region,
+            session_name=DEPLOY_SESSION_NAME,
+        )
 
     def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential:
         tenant, client, secret = self._need(

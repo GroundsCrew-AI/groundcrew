@@ -49,6 +49,8 @@ class FakeSessions:
     def __init__(self) -> None:
         self.verified: list[tuple[str, str]] = []
         self.fail: str | None = None
+        # Roles that cannot be assumed (a stack without Tier=deploy has no deploy role).
+        self.missing: set[str] = set()
         self.forgotten: list[str] = []
 
     def principal_arn(self) -> str:
@@ -58,6 +60,8 @@ class FakeSessions:
         self.verified.append((role_arn, external_id))
         if self.fail:
             raise AwsError(self.fail)
+        if role_arn in self.missing:
+            raise AwsError(f"Could not assume {role_arn}: AccessDenied")
         return CallerIdentity(
             account="881050425883",
             arn="arn:aws:sts::881050425883:assumed-role/groundcrew-read-only/x",
@@ -181,6 +185,7 @@ async def test_aws_start_console_link_is_prefilled_in_us_east_2(
     )
     assert "templateURL=https%3A%2F%2Fs3.us-east-2.amazonaws.com" in url
     assert "stackName=groundcrew-read-only" in url and "param_RoleName=groundcrew-read-only" in url
+    assert "param_Tier=observe" in url and body["tier"] == "observe"
 
 
 async def test_aws_complete_verifies_and_stores_no_credentials(
@@ -219,10 +224,117 @@ async def test_aws_complete_verifies_and_stores_no_credentials(
             "role_arn",
             "account_id",
             "session_arn",
+            "tier",
+            "deploy_role_arn",
             "last_error",
         }
+        assert conn.config["tier"] == "observe" and conn.config["deploy_role_arn"] is None
+    assert body["tier"] == "observe" and body["deploy_role_arn"] is None
     template = await client.get("/connections/aws/template", headers=alice.headers)
     assert template.status_code == 200 and "sts:ExternalId" in template.text
+
+
+DEPLOY_ROLE = "arn:aws:iam::881050425883:role/groundcrew-deploy"
+
+
+async def _start(client: httpx.AsyncClient, member: Member, tier: str) -> dict[str, Any]:
+    r = await client.post(
+        "/connections/aws/start",
+        json={"workspace_id": str(member.workspace_id), "tier": tier},
+        headers=member.headers,
+    )
+    assert r.status_code == 200, r.text
+    body: dict[str, Any] = r.json()
+    return body
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"aws_connect_template_url": "https://s3.us-east-2.amazonaws.com/gc/aws-connect.yaml"}],
+)
+async def test_aws_deploy_tier_link_and_cli_carry_the_tier(
+    client: httpx.AsyncClient, alice: Member, sessions: FakeSessions
+) -> None:
+    body = await _start(client, alice, "deploy")
+    assert body["tier"] == "deploy" and "param_Tier=deploy" in body["console_url"]
+    assert "ParameterKey=Tier,ParameterValue=deploy" in body["cli_command"]
+    # Resuming the same pending connection with the other tier switches it.
+    again = await _start(client, alice, "observe")
+    assert (
+        again["connection_id"] == body["connection_id"]
+        and "param_Tier=observe" in again["console_url"]
+    )
+
+
+async def test_aws_deploy_tier_verifies_both_roles(
+    client: httpx.AsyncClient,
+    alice: Member,
+    sessions: FakeSessions,
+    session_factory: SessionFactory,
+) -> None:
+    start = await _start(client, alice, "deploy")
+    r = await client.post(
+        "/connections/aws/complete",
+        json={"connection_id": start["connection_id"], "role_arn": ROLE},
+        headers=alice.headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["tier"] == "deploy" and r.json()["deploy_role_arn"] == DEPLOY_ROLE
+    assert sessions.verified == [(ROLE, start["external_id"]), (DEPLOY_ROLE, start["external_id"])]
+    async with session_factory() as s:
+        conn = await s.get(Connection, uuid.UUID(start["connection_id"]))
+        assert conn is not None and conn.secret_encrypted is None
+
+
+async def test_aws_deploy_tier_without_the_deploy_role_stays_pending(
+    client: httpx.AsyncClient, alice: Member, sessions: FakeSessions
+) -> None:
+    sessions.missing.add(DEPLOY_ROLE)
+    start = await _start(client, alice, "deploy")
+    r = await client.post(
+        "/connections/aws/complete",
+        json={"connection_id": start["connection_id"], "role_arn": ROLE},
+        headers=alice.headers,
+    )
+    assert r.status_code == 422 and "Tier=deploy" in r.json()["detail"]
+    conns = (
+        await client.get(
+            "/connections", params={"workspace_id": str(alice.workspace_id)}, headers=alice.headers
+        )
+    ).json()
+    (conn,) = conns
+    assert conn["status"] == "pending" and conn["deploy_role_arn"] is None
+
+
+async def test_aws_tier_switch(
+    client: httpx.AsyncClient, alice: Member, sessions: FakeSessions
+) -> None:
+    start = await _start(client, alice, "observe")
+    cid = start["connection_id"]
+    done = await client.post(
+        "/connections/aws/complete",
+        json={"connection_id": cid, "role_arn": ROLE},
+        headers=alice.headers,
+    )
+    assert done.json()["tier"] == "observe"
+
+    sessions.missing.add(DEPLOY_ROLE)  # the stack was not updated yet
+    refused = await client.post(
+        f"/connections/{cid}/aws/tier", json={"tier": "deploy"}, headers=alice.headers
+    )
+    assert refused.status_code == 422 and "Tier parameter" in refused.json()["detail"]
+
+    sessions.missing.clear()  # now it was
+    on = await client.post(
+        f"/connections/{cid}/aws/tier", json={"tier": "deploy"}, headers=alice.headers
+    )
+    assert on.status_code == 200 and on.json()["deploy_role_arn"] == DEPLOY_ROLE
+
+    off = await client.post(
+        f"/connections/{cid}/aws/tier", json={"tier": "observe"}, headers=alice.headers
+    )
+    assert off.json()["tier"] == "observe" and off.json()["deploy_role_arn"] is None
+    assert DEPLOY_ROLE in sessions.forgotten
 
 
 async def test_aws_complete_errors(

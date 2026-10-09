@@ -53,7 +53,8 @@ export interface paths {
         /**
          * Aws Complete
          * @description Verify the role (refused without the ExternalId, works with it, right account) and
-         *     store its ARN. No credentials are stored.
+         *     store its ARN; for Tier=deploy, verify the groundcrew-deploy role the same way. No
+         *     credentials are stored.
          */
         post: operations["aws_complete_connections_aws_complete_post"];
         delete?: never;
@@ -73,7 +74,8 @@ export interface paths {
         put?: never;
         /**
          * Aws Start
-         * @description Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link.
+         * @description Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link for
+         *     the chosen tier (stored on the connection; complete verifies the deploy role for deploy).
          */
         post: operations["aws_start_connections_aws_start_post"];
         delete?: never;
@@ -222,6 +224,29 @@ export interface paths {
          *     edges). Access on the customer's side is removed by them: see `cleanup`.
          */
         delete: operations["delete_connection_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connection_id}/aws/tier": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aws Set Tier
+         * @description Switch a connected AWS account between observe and deploy after its stack was updated.
+         *     deploy: verifies the groundcrew-deploy role first (nothing changes if it cannot be used).
+         *     observe: Groundcrew stops using the deploy role at once; update the stack to Tier=observe
+         *     to delete it.
+         */
+        post: operations["aws_set_tier_connections__connection_id__aws_tier_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -575,6 +600,12 @@ export interface components {
         /** AwsStartIn */
         AwsStartIn: {
             /**
+             * Tier
+             * @default observe
+             * @enum {string}
+             */
+            tier: "observe" | "deploy";
+            /**
              * Workspace Id
              * Format: uuid
              */
@@ -603,6 +634,19 @@ export interface components {
             stack_name: string;
             /** Template Path */
             template_path: string;
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "observe" | "deploy";
+        };
+        /** AwsTierIn */
+        AwsTierIn: {
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "observe" | "deploy";
         };
         /** AzureConnectIn */
         AzureConnectIn: {
@@ -648,6 +692,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Deploy Role Arn */
+            deploy_role_arn?: string | null;
             /** Error */
             error?: string | null;
             /** External Id */
@@ -685,6 +731,8 @@ export interface components {
             status: "pending" | "connected" | "error";
             /** Team Id */
             team_id?: string | null;
+            /** Tier */
+            tier?: ("observe" | "deploy") | null;
             /**
              * Workspace Id
              * Format: uuid
@@ -1707,6 +1755,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_set_tier_connections__connection_id__aws_tier_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AwsTierIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
                 };
             };
             /** @description Validation Error */

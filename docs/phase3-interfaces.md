@@ -69,13 +69,14 @@ follow-ups #7 and #8) and was verified live on the demo stack on 2026-10-09. Pha
 class CredentialsProvider(Protocol):
     def kubeconfig(self, connection_id: uuid.UUID) -> Path: ...
     def aws_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
+    def aws_deploy_session(self, connection_id: uuid.UUID) -> boto3.Session: ...  # proposed, below
     def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential: ...
 
 class AzureCredential(Protocol):          # azure-identity's TokenCredential shape
     def get_token(self, *scopes: str, **kwargs: Any) -> Any: ...
 ```
 
-All three block: call them with `asyncio.to_thread`. Errors are `CredentialsError` (never
+All of them block: call them with `asyncio.to_thread`. Errors are `CredentialsError` (never
 with a secret in the message).
 
 - `ConnectionCredentialsProvider(connections, *, sessions=None)`, or
@@ -85,7 +86,16 @@ with a secret in the message).
     from Groundcrew's platform identity (`GROUNDCREW_AWS_ACCESS_KEY_ID` /
     `GROUNDCREW_AWS_SECRET_ACCESS_KEY`, else the default chain without profiles or
     `~/.aws`). The session lasts at most an hour, is cached in memory only, and refuses any
-    operation outside `AWS_READ_OPERATIONS`.
+    operation outside `AWS_READ_OPERATIONS`. Always the read-only role, whatever the tier.
+  - `aws_deploy_session` (**proposed contract change, for Ahmed's OK**; built in PR #9): the
+    connection's `groundcrew-deploy` role (`config.deploy_role_arn`, verified when the tier was
+    set), assumed with the same ExternalId, in `GC_AWS_REGION`, session name
+    `groundcrew-deploy`, cached in memory, and guarded by `AWS_DEPLOY_OPERATIONS` (ECS in
+    `groundcrew-deploys`, ECR `groundcrew-*`, tagged security groups, `/groundcrew/*` logs,
+    write-only `groundcrew/*` secrets; no IAM, RDS, secret values, or task definition
+    deregistration even if a policy allowed them). Raises `CredentialsError`
+    ("...is connected with Tier=observe, which cannot deploy...") unless the connection's
+    tier is `deploy`. The role's exact permissions: `docs/phase4-infra.md`.
   - `kubeconfig`: decrypts the stored kubeconfig into a 0600 file in a 0700 temp dir.
   - `azure_credential`: a `ClientSecretAzureCredential` (tenant, client, decrypted secret);
     `get_token` raises until live Azure lands (`TODO(azure-live)`, swap for
@@ -94,7 +104,8 @@ with a secret in the message).
     inside these calls.
 - `EnvCredentialsProvider(env=None)`: the temporary version. Same credentials for every
   connection id: `KUBECONFIG`; `GROUNDCREW_DEV_AWS_ROLE_ARN` + `GROUNDCREW_DEV_AWS_EXTERNAL_ID`
-  (assumed from the platform identity, like a real connection); `AZURE_TENANT_ID`,
+  (assumed from the platform identity, like a real connection); for `aws_deploy_session`,
+  `GROUNDCREW_DEV_AWS_DEPLOY_ROLE_ARN` with the same ExternalId; `AZURE_TENANT_ID`,
   `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`.
 
 ### 2. GitHubAppSource (`app/connectors/github_source.py`), a RepoSource

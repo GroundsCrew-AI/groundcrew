@@ -72,7 +72,8 @@ make down     # stop the stack
 
 ## Connecting your cloud
 
-Groundcrew only ever reads. It never sees secret values or your data, and it never stores AWS keys.
+Groundcrew reads with scoped access. It never sees secret values or your data, and it never stores AWS
+keys. Deploying is opt-in per AWS account (the Deploy tier below).
 Open **Connections** in the sidebar and add what you use. Each one takes a minute or two.
 
 > Screenshot placeholder: the Connections page, with AWS, GitHub, and Vercel cards.
@@ -100,6 +101,14 @@ delete the `groundcrew-read-only` stack in CloudFormation.
 
 If Verify says the ExternalId is different, the stack was made from an older link: delete the stack and
 click **Connect AWS** again.
+
+**Observe or Deploy.** The AWS card has a choice. **Observe** (the default) is the read-only role above.
+**Deploy** also creates an ECS cluster `groundcrew-deploys` and a `groundcrew-deploy` role that may only
+create and change Groundcrew's own resources (named `groundcrew-*`, tagged `project=groundcrew`, logs
+under `/groundcrew/`, secrets under `groundcrew/`). It can write a deploy's secrets but is explicitly
+denied reading any secret value; only ECS reads them, when it starts the app. For an account that is already
+connected, update its stack with `Tier=deploy` and click **Enable deploys**. Exact permissions:
+[docs/phase4-infra.md](docs/phase4-infra.md).
 
 ### GitHub
 

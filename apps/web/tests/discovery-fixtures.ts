@@ -40,6 +40,8 @@ export function connection(overrides: Partial<Connection> = {}): Connection {
     team_id: null,
     resource_group: null,
     server: null,
+    tier: "observe",
+    deploy_role_arn: null,
     error: null,
     resource_count: 21,
     last_discovery: null,
