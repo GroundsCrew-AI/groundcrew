@@ -12,7 +12,11 @@ CONNECT_TEMPLATE_ACCOUNT ?= 881050425883
 CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
-.PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template
+.PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
+	kind-up kind-down kind-kubeconfig kind-check
+
+# KIND=1 joins api and worker to the kind network (make kind-up first).
+COMPOSE := docker compose$(if $(filter 1,$(KIND)), -f docker-compose.yml -f docker-compose.kind.yml)
 
 help:
 	@echo "make install  Install API (uv) and web (npm) dependencies"
@@ -29,6 +33,11 @@ help:
 	@echo "make models   Smoke test Nemotron models on Token Factory (uses credits)"
 	@echo "make api-types  Regenerate the web app's typed API client from FastAPI's OpenAPI schema"
 	@echo "make publish-connect-template  Upload infra/aws-connect.yaml to S3 (your AWS CLI credentials)"
+	@echo "make kind-up  Local kind cluster, registry localhost:5001, ingress, deployer RBAC (METRICS=1 adds metrics-server)"
+	@echo "make kind-down  Delete the kind cluster and its registry"
+	@echo "make kind-kubeconfig  Kubeconfigs for the groundcrew-deployer ServiceAccount (.kind/)"
+	@echo "make kind-check  Check the deployer's RBAC and admission policy on the live cluster"
+	@echo "make dev KIND=1  The dev stack, with api and worker on the kind network"
 
 install:
 	cd $(API) && $(UV) sync
@@ -39,10 +48,10 @@ $(WEB)/node_modules: $(WEB)/package-lock.json
 	@touch $@
 
 dev:
-	docker compose up --build
+	$(COMPOSE) up --build
 
 down:
-	docker compose down
+	$(COMPOSE) down
 
 db:
 	docker compose up -d --wait postgres
@@ -93,3 +102,15 @@ publish-connect-template:
 	aws s3 cp infra/aws-connect.yaml s3://$(CONNECT_TEMPLATE_BUCKET)/aws-connect.yaml \
 	  --region $(CONNECT_TEMPLATE_REGION) --content-type text/yaml
 	@echo "AWS_CONNECT_TEMPLATE_URL=https://$(CONNECT_TEMPLATE_BUCKET).s3.$(CONNECT_TEMPLATE_REGION).amazonaws.com/aws-connect.yaml"
+
+kind-up:
+	scripts/kind/up.sh
+
+kind-down:
+	scripts/kind/down.sh
+
+kind-kubeconfig:
+	scripts/kind/kubeconfig.sh
+
+kind-check:
+	scripts/kind/check.sh
