@@ -89,11 +89,13 @@ subjects: [{kind: ServiceAccount, name: groundcrew-deployer, namespace: groundcr
 ```
 
 This protection needs Kubernetes 1.30 or later (ValidatingAdmissionPolicy is GA from 1.30).
-The kind node image is pinned to a version that has it; customer clusters older than 1.30 do
-not get the namespace restriction. The full setup is in `docs/kind.md`.
+The kind node image is pinned to v1.37; customer clusters older than 1.30 do not get the
+namespace restriction. The namespace needs label `project=groundcrew` (from `k8s_labels`), or
+the admission policy refuses it. Locally, `make kind-up` sets all of this up; register
+`.kind/groundcrew-deployer.kubeconfig` (from `make kind-kubeconfig`) as the Kubernetes
+connection, and push images to `GC_KIND_REGISTRY`. The full setup is in `docs/kind.md`.
 
 ## What lands later in this branch
 
-The AWS deploy tier and `aws_deploy_session` (deliverable 3), kind and its RBAC (deliverable
-2), `make cleanup-deploys` and the cost per live deploy (deliverable 4), and the live runbook
-`docs/deploy-live.md` (deliverable 6).
+The AWS deploy tier and `aws_deploy_session` (deliverable 3), `make cleanup-deploys` and the
+cost per live deploy (deliverable 4), and the live runbook `docs/deploy-live.md` (deliverable 6).
