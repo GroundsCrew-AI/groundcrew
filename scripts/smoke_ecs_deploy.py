@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import hashlib
 import json
 import os
@@ -30,7 +29,6 @@ import secrets
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 import uuid
@@ -39,6 +37,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +55,9 @@ from app.connectors.deploy_infra import (  # noqa: E402
     resolve_subnets,
     task_execution_role_arn,
 )
+from app.sandbox import DockerSandbox, PushTarget  # noqa: E402
+from app.sandbox.registry import ecr_login  # noqa: E402
+from app.sandbox.runner import CommandResult  # noqa: E402
 
 # Fixed names: the deploy role allows exactly these prefixes (docs/phase4-infra.md).
 REPO = "groundcrew-smoke"
@@ -510,22 +512,31 @@ class Smoke:
             self.cleanup()
 
     def _push_image(self) -> str:
-        ecr = self.client("ecr")
-        ecr.create_repository(repositoryName=REPO, tags=self.tags)
+        """The same ECR login and push as Builder (app/sandbox): a temporary DOCKER_CONFIG and
+        `docker login --password-stdin`, with the registry password registered for scrubbing."""
+        self.client("ecr").create_repository(repositoryName=REPO, tags=self.tags)
         self.created.repository = True
-        auth = ecr.get_authorization_token()["authorizationData"][0]
-        self.scrub.register(str(auth["authorizationToken"]))
-        user, password = base64.b64decode(auth["authorizationToken"]).decode().split(":", 1)
-        self.scrub.register(password)
-        registry = str(auth["proxyEndpoint"]).removeprefix("https://")
-        image = f"{registry}/{REPO}:{self.run_id}"
-        with tempfile.TemporaryDirectory(prefix="groundcrew-docker-") as config:
-            env = {"DOCKER_CONFIG": config}
-            self._docker("login", "--username", user, "--password-stdin", registry,
-                         stdin=password, env=env)  # fmt: skip
-            self._docker("tag", SOURCE_IMAGE, image, env=env)
-            self._docker("push", "--quiet", image, env=env)
-        return image
+
+        async def push() -> str:
+            login = await ecr_login(SimpleNamespace(client=self.client))
+            self.scrub.register(login.password.get_secret_value())
+            target = PushTarget(f"{login.registry}/{REPO}:{self.run_id}", login)
+            sandbox = DockerSandbox(self.settings, runner=self._docker_runner)
+            return (await sandbox.push(SOURCE_IMAGE, target)).image
+
+        return asyncio.run(push())
+
+    async def _docker_runner(
+        self,
+        args: list[str],
+        *,
+        timeout: float,
+        stdin: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult:
+        """Adapts this script's docker callable (raises on failure) to the sandbox runner."""
+        result = await asyncio.to_thread(self._docker, *args, stdin=stdin, env=env)
+        return CommandResult(0, str(getattr(result, "stdout", "") or ""), "")
 
     def _log_group(self) -> None:
         logs = self.client("logs")

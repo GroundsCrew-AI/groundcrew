@@ -48,7 +48,7 @@ that the cluster's `gc-*` namespaces (and every other non-`kube-*` namespace) ar
 that no Secret was read. The same check runs as a test:
 `RUN_LIVE_TESTS=1 KIND_LOGIN=<login> uv run --project apps/api pytest apps/api/tests/test_kind_live.py`.
 
-In code, Ahmed's k8s target gets the kubeconfig through
+In code, the k8s target (`app/targets/k8s.py`) gets the kubeconfig through
 `CredentialsProvider.kubeconfig(connection_id)`: a 0600 file in a 0700 temp directory, deleted
 when the provider is closed.
 

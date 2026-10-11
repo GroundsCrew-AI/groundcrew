@@ -1,0 +1,113 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 220B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/python:3.12-slim
+#2 DONE 0.8s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [internal] load build context
+#4 transferring context: 129B done
+#4 DONE 0.0s
+
+#5 [1/5] FROM docker.io/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+#5 resolve docker.io/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 0.0s done
+#5 DONE 0.0s
+
+#6 [2/5] WORKDIR /app
+#6 CACHED
+
+#7 [3/5] COPY requirements.txt .
+#7 DONE 0.0s
+
+#8 [4/5] RUN pip install --no-cache-dir -r requirements.txt
+#8 2.346 Collecting flask==3.0.3 (from -r requirements.txt (line 1))
+#8 2.978   Downloading flask-3.0.3-py3-none-any.whl.metadata (3.2 kB)
+#8 3.219 Collecting gunicorn==23.0.0 (from -r requirements.txt (line 2))
+#8 3.373   Downloading gunicorn-23.0.0-py3-none-any.whl.metadata (4.4 kB)
+#8 3.940 Collecting psycopg2==2.9.9 (from -r requirements.txt (line 3))
+#8 4.090   Downloading psycopg2-2.9.9.tar.gz (384 kB)
+#8 4.688   Installing build dependencies: started
+#8 12.02   Installing build dependencies: finished with status 'done'
+#8 12.02   Getting requirements to build wheel: started
+#8 12.25   Getting requirements to build wheel: finished with status 'error'
+#8 12.25   error: subprocess-exited-with-error
+#8 12.25   
+#8 12.25   × Getting requirements to build wheel did not run successfully.
+#8 12.25   │ exit code: 1
+#8 12.25   ╰─> [34 lines of output]
+#8 12.25       /tmp/pip-build-env-twb0u1cu/overlay/lib/python3.12/site-packages/setuptools/dist.py:765: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+#8 12.25       !!
+#8 12.25       
+#8 12.25               ********************************************************************************
+#8 12.25               Please consider removing the following classifiers in favor of a SPDX license expression:
+#8 12.25       
+#8 12.25               License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)
+#8 12.25       
+#8 12.25               See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+#8 12.25               ********************************************************************************
+#8 12.25       
+#8 12.25       !!
+#8 12.25         self._finalize_license_expression()
+#8 12.25       running egg_info
+#8 12.25       writing psycopg2.egg-info/PKG-INFO
+#8 12.25       writing dependency_links to psycopg2.egg-info/dependency_links.txt
+#8 12.25       writing top-level names to psycopg2.egg-info/top_level.txt
+#8 12.25       
+#8 12.25       Error: pg_config executable not found.
+#8 12.25       
+#8 12.25       pg_config is required to build psycopg2 from source.  Please add the directory
+#8 12.25       containing pg_config to the $PATH or specify the full executable path with the
+#8 12.25       option:
+#8 12.25       
+#8 12.25           python setup.py build_ext --pg-config /path/to/pg_config build ...
+#8 12.25       
+#8 12.25       or with the pg_config option in 'setup.cfg'.
+#8 12.25       
+#8 12.25       If you prefer to avoid building psycopg2 from source, please install the PyPI
+#8 12.25       'psycopg2-binary' package instead.
+#8 12.25       
+#8 12.25       For further information please check the 'doc/src/install.rst' file (also at
+#8 12.25       <https://www.psycopg.org/docs/install.html>).
+#8 12.25       
+#8 12.25       [end of output]
+#8 12.25   
+#8 12.25   note: This error originates from a subprocess, and is likely not a problem with pip.
+#8 12.87 
+#8 12.87 [notice] A new release of pip is available: 25.0.1 -> 26.2.1
+#8 12.87 [notice] To update, run: pip install --upgrade pip
+#8 12.87 error: subprocess-exited-with-error
+#8 12.87 
+#8 12.87 × Getting requirements to build wheel did not run successfully.
+#8 12.87 │ exit code: 1
+#8 12.87 ╰─> See above for output.
+#8 12.87 
+#8 12.87 note: This error originates from a subprocess, and is likely not a problem with pip.
+#8 ERROR: process "/bin/sh -c pip install --no-cache-dir -r requirements.txt" did not complete successfully: exit code: 1
+------
+ > [4/5] RUN pip install --no-cache-dir -r requirements.txt:
+12.87 
+12.87 [notice] A new release of pip is available: 25.0.1 -> 26.2.1
+12.87 [notice] To update, run: pip install --upgrade pip
+12.87 error: subprocess-exited-with-error
+12.87 
+12.87 × Getting requirements to build wheel did not run successfully.
+12.87 │ exit code: 1
+12.87 ╰─> See above for output.
+12.87 
+12.87 note: This error originates from a subprocess, and is likely not a problem with pip.
+------
+Dockerfile:4
+--------------------
+   2 |     WORKDIR /app
+   3 |     COPY requirements.txt .
+   4 | >>> RUN pip install --no-cache-dir -r requirements.txt
+   5 |     COPY . .
+   6 |     EXPOSE 8000
+--------------------
+ERROR: failed to build: failed to solve: process "/bin/sh -c pip install --no-cache-dir -r requirements.txt" did not complete successfully: exit code: 1

@@ -1,0 +1,151 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 220B done
+#1 DONE 0.1s
+
+#2 [internal] load metadata for docker.io/library/python:3.12-slim
+#2 DONE 1.3s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [internal] load build context
+#4 transferring context: 129B done
+#4 DONE 0.0s
+
+#5 [1/5] FROM docker.io/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+#5 resolve docker.io/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 0.1s done
+#5 DONE 0.1s
+
+#6 [2/5] WORKDIR /app
+#6 CACHED
+
+#7 [3/5] COPY requirements.txt .
+#7 DONE 0.0s
+
+#8 [4/5] RUN pip install --no-cache-dir -r requirements.txt
+#8 2.324 Collecting flask==3.0.3 (from -r requirements.txt (line 1))
+#8 3.029   Downloading flask-3.0.3-py3-none-any.whl.metadata (3.2 kB)
+#8 3.250 Collecting gunicorn==23.0.0 (from -r requirements.txt (line 2))
+#8 3.419   Downloading gunicorn-23.0.0-py3-none-any.whl.metadata (4.4 kB)
+#8 3.814 Collecting psycopg2==2.9.9 (from -r requirements.txt (line 3))
+#8 3.963   Downloading psycopg2-2.9.9.tar.gz (384 kB)
+#8 4.593   Installing build dependencies: started
+#8 71.67   Installing build dependencies: still running...
+#8 71.76   Installing build dependencies: finished with status 'error'
+#8 71.77   error: subprocess-exited-with-error
+#8 71.77   
+#8 71.77   × pip subprocess to install build dependencies did not run successfully.
+#8 71.77   │ exit code: 2
+#8 71.77   ╰─> [73 lines of output]
+#8 71.77       Collecting setuptools>=40.8.0
+#8 71.77         Downloading setuptools-84.0.0-py3-none-any.whl.metadata (6.6 kB)
+#8 71.77       Downloading setuptools-84.0.0-py3-none-any.whl (818 kB)
+#8 71.77          ━━━━━━━━━╸                               196.1/818.2 kB ? eta -:--:--
+#8 71.77       ERROR: Exception:
+#8 71.77       Traceback (most recent call last):
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_vendor/urllib3/response.py", line 438, in _error_catcher
+#8 71.77           yield
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_vendor/urllib3/response.py", line 561, in read
+#8 71.77           data = self._fp_read(amt) if not fp_closed else b""
+#8 71.77                  ^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_vendor/urllib3/response.py", line 527, in _fp_read
+#8 71.77           return self._fp.read(amt) if amt is not None else self._fp.read()
+#8 71.77                  ^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_vendor/cachecontrol/filewrapper.py", line 98, in read
+#8 71.77           data: bytes = self.__fp.read(amt)
+#8 71.77                         ^^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/http/client.py", line 494, in read
+#8 71.77           s = self.fp.read(amt)
+#8 71.77               ^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/socket.py", line 720, in readinto
+#8 71.77           return self._sock.recv_into(b)
+#8 71.77                  ^^^^^^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/ssl.py", line 1264, in recv_into
+#8 71.77           return self.read(nbytes, buffer)
+#8 71.77                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/ssl.py", line 1116, in read
+#8 71.77           return self._sslobj.read(len, buffer)
+#8 71.77                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#8 71.77       BrokenPipeError: [Errno 32] Broken pipe
+#8 71.77       
+#8 71.77       During handling of the above exception, another exception occurred:
+#8 71.77       
+#8 71.77       Traceback (most recent call last):
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/cli/base_command.py", line 106, in _run_wrapper
+#8 71.77           status = _inner_run()
+#8 71.77                    ^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/cli/base_command.py", line 97, in _inner_run
+#8 71.77           return self.run(options, args)
+#8 71.77                  ^^^^^^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/cli/req_command.py", line 67, in wrapper
+#8 71.77           return func(self, options, args)
+#8 71.77                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/commands/install.py", line 386, in run
+#8 71.77           requirement_set = resolver.resolve(
+#8 71.77                             ^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/resolver.py", line 179, in resolve
+#8 71.77           self.factory.preparer.prepare_linked_requirements_more(reqs)
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/operations/prepare.py", line 554, in prepare_linked_requirements_more
+#8 71.77           self._complete_partial_requirements(
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/operations/prepare.py", line 469, in _complete_partial_requirements
+#8 71.77           for link, (filepath, _) in batch_download:
+#8 71.77                                      ^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/network/download.py", line 184, in __call__
+#8 71.77           for chunk in chunks:
+#8 71.77                        ^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/cli/progress_bars.py", line 55, in _rich_progress_bar
+#8 71.77           for chunk in iterable:
+#8 71.77                        ^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_internal/network/utils.py", line 65, in response_chunks
+#8 71.77           for chunk in response.raw.stream(
+#8 71.77                        ^^^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_vendor/urllib3/response.py", line 622, in stream
+#8 71.77           data = self.read(amt=amt, decode_content=decode_content)
+#8 71.77                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_vendor/urllib3/response.py", line 560, in read
+#8 71.77           with self._error_catcher():
+#8 71.77                ^^^^^^^^^^^^^^^^^^^^^
+#8 71.77         File "/usr/local/lib/python3.12/contextlib.py", line 158, in __exit__
+#8 71.77           self.gen.throw(value)
+#8 71.77         File "/usr/local/lib/python3.12/site-packages/pip/_vendor/urllib3/response.py", line 455, in _error_catcher
+#8 71.77           raise ProtocolError("Connection broken: %r" % e, e)
+#8 71.77       pip._vendor.urllib3.exceptions.ProtocolError: ("Connection broken: BrokenPipeError(32, 'Broken pipe')", BrokenPipeError(32, 'Broken pipe'))
+#8 71.77       [end of output]
+#8 71.77   
+#8 71.77   note: This error originates from a subprocess, and is likely not a problem with pip.
+#8 72.43 
+#8 72.43 [notice] A new release of pip is available: 25.0.1 -> 26.2.1
+#8 72.43 [notice] To update, run: pip install --upgrade pip
+#8 72.43 error: subprocess-exited-with-error
+#8 72.43 
+#8 72.43 × pip subprocess to install build dependencies did not run successfully.
+#8 72.43 │ exit code: 2
+#8 72.43 ╰─> See above for output.
+#8 72.43 
+#8 72.43 note: This error originates from a subprocess, and is likely not a problem with pip.
+#8 ERROR: process "/bin/sh -c pip install --no-cache-dir -r requirements.txt" did not complete successfully: exit code: 1
+------
+ > [4/5] RUN pip install --no-cache-dir -r requirements.txt:
+72.43 
+72.43 [notice] A new release of pip is available: 25.0.1 -> 26.2.1
+72.43 [notice] To update, run: pip install --upgrade pip
+72.43 error: subprocess-exited-with-error
+72.43 
+72.43 × pip subprocess to install build dependencies did not run successfully.
+72.43 │ exit code: 2
+72.43 ╰─> See above for output.
+72.43 
+72.43 note: This error originates from a subprocess, and is likely not a problem with pip.
+------
+Dockerfile:4
+--------------------
+   2 |     WORKDIR /app
+   3 |     COPY requirements.txt .
+   4 | >>> RUN pip install --no-cache-dir -r requirements.txt
+   5 |     COPY . .
+   6 |     EXPOSE 8000
+--------------------
+ERROR: failed to build: failed to solve: process "/bin/sh -c pip install --no-cache-dir -r requirements.txt" did not complete successfully: exit code: 1
