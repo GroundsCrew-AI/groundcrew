@@ -47,3 +47,6 @@ probe_followup.json
 # kind: downloaded tools and the deployer kubeconfigs (they hold a token)
 .tools/
 .kind/
+
+# make smoke-ecs reports
+.smoke/

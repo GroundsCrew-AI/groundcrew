@@ -13,7 +13,7 @@ CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
 .PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
-	kind-up kind-down kind-kubeconfig kind-check kind-register
+	kind-up kind-down kind-kubeconfig kind-check kind-register smoke-ecs
 
 # KIND=1 joins api and worker to the kind network (make kind-up first).
 COMPOSE := docker compose$(if $(filter 1,$(KIND)), -f docker-compose.yml -f docker-compose.kind.yml)
@@ -39,6 +39,7 @@ help:
 	@echo "make kind-check  Check the deployer's RBAC and admission policy on the live cluster"
 	@echo "make dev KIND=1  The dev stack, with api and worker on the kind network"
 	@echo "make kind-register LOGIN=<github login> [DISCOVER=1]  Register kind as a Kubernetes connection (dev)"
+	@echo "make smoke-ecs CONNECTION=<aws connection id> [DRY_RUN=0] [CLEANUP=1]  Prove the AWS deploy role on real AWS"
 
 install:
 	cd $(API) && $(UV) sync
@@ -122,3 +123,12 @@ kind-register:
 	@test -n "$(LOGIN)" || { echo "Usage: make kind-register LOGIN=<your GitHub login> [DISCOVER=1]"; exit 1; }
 	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/kind_register.py --login $(LOGIN) \
 		$(if $(filter 1,$(DISCOVER)),--discover)
+
+# Smoke test of the AWS deploy tier (docs/deploy-live.md). DRY_RUN=1 (default) only reads and
+# prints the plan; DRY_RUN=0 deploys a tiny app, runs the negative checks, and cleans up;
+# CLEANUP=1 removes leftovers of a failed run. Uses the connection's deploy role only.
+DRY_RUN ?= 1
+smoke-ecs:
+	@test -n "$(CONNECTION)" || { echo "Usage: make smoke-ecs CONNECTION=<aws connection id> [DRY_RUN=0] [CLEANUP=1]"; exit 1; }
+	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/smoke_ecs_deploy.py --connection $(CONNECTION) \
+		$(if $(filter 1,$(CLEANUP)),--cleanup,$(if $(filter 0,$(DRY_RUN)),--real))
