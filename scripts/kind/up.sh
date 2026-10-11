@@ -33,11 +33,14 @@ fi
 if [ "$(docker inspect -f '{{json .NetworkSettings.Networks.kind}}' "$REGISTRY_NAME")" = "null" ]; then
   docker network connect kind "$REGISTRY_NAME"
 fi
-# Nodes pull localhost:$REGISTRY_PORT/<image> from the registry container.
+# Nodes pull localhost:$REGISTRY_PORT/<image> (pushed from this machine) and
+# $REGISTRY_NAME:5000/<image> (pushed from the dind build daemon) from the registry container.
 for node in $(kind get nodes --name "$CLUSTER"); do
-  dir="/etc/containerd/certs.d/localhost:$REGISTRY_PORT"
-  docker exec "$node" mkdir -p "$dir"
-  printf '[host."http://%s:5000"]\n' "$REGISTRY_NAME" | docker exec -i "$node" cp /dev/stdin "$dir/hosts.toml"
+  for name in "localhost:$REGISTRY_PORT" "$REGISTRY_NAME:5000"; do
+    dir="/etc/containerd/certs.d/$name"
+    docker exec "$node" mkdir -p "$dir"
+    printf '[host."http://%s:5000"]\n' "$REGISTRY_NAME" | docker exec -i "$node" cp /dev/stdin "$dir/hosts.toml"
+  done
 done
 kadmin apply -f - >/dev/null <<YAML
 apiVersion: v1

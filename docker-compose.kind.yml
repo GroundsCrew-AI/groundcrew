@@ -1,11 +1,16 @@
-# Joins api and worker to the kind cluster's Docker network, so Groundcrew in Compose reaches
-# the cluster at https://groundcrew-control-plane:6443 (the server in
+# Joins api, worker, and dind to the kind cluster's Docker network, so Groundcrew in Compose
+# reaches the cluster at https://groundcrew-control-plane:6443 (the server in
 # .kind/groundcrew-deployer.kubeconfig) and the registry at kind-registry:5000.
 # Used by `make dev KIND=1` after `make kind-up` (the network exists only once kind has run).
 services:
   api:
     networks: [default, kind]
   worker:
+    networks: [default, kind]
+    environment:
+      # Builds in dind push here; kind nodes pull the same name (make kind-up adds the mirror).
+      GC_KIND_REGISTRY: kind-registry:5000
+  dind:
     networks: [default, kind]
 
 networks:
