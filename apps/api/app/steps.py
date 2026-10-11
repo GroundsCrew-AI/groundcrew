@@ -3,11 +3,12 @@
 import uuid
 from decimal import Decimal
 
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Run, RunStep
-from app.security.redact import summarize
+from app.security.redact import redact_json, summarize
 
 
 async def record_step(
@@ -31,6 +32,7 @@ async def record_step(
     fell_back: bool = False,
     escalated: bool = False,
     reasoning_excerpt: str | None = None,
+    data: BaseModel | None = None,
 ) -> RunStep:
     """Add the next step for this run. One worker runs a run at a time, so max(seq)+1 is safe;
     the (run_id, seq) unique constraint catches it if that ever breaks."""
@@ -58,6 +60,8 @@ async def record_step(
         escalated=escalated,
         # The trace is shown in the UI only: redacted and capped like every summary.
         reasoning_excerpt=summarize(reasoning_excerpt),
+        # Deploy event payload (app.pipeline.events); the producer caps its size.
+        data=redact_json(data.model_dump(mode="json")) if data is not None else None,
     )
     session.add(step)
     await session.flush()
