@@ -13,7 +13,7 @@ CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
 .PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
-	kind-up kind-down kind-kubeconfig kind-check kind-register smoke-ecs
+	kind-up kind-down kind-kubeconfig kind-check kind-register dind-check smoke-ecs
 
 # KIND=1 joins api and worker to the kind network (make kind-up first).
 COMPOSE := docker compose$(if $(filter 1,$(KIND)), -f docker-compose.yml -f docker-compose.kind.yml)
@@ -37,7 +37,8 @@ help:
 	@echo "make kind-down  Delete the kind cluster and its registry"
 	@echo "make kind-kubeconfig  Kubeconfigs for the groundcrew-deployer ServiceAccount (.kind/)"
 	@echo "make kind-check  Check the deployer's RBAC and admission policy on the live cluster"
-	@echo "make dev KIND=1  The dev stack, with api and worker on the kind network"
+	@echo "make dev KIND=1  The dev stack, with api, worker, and dind on the kind network"
+	@echo "make dind-check  From the worker: build a fixture in dind, push to kind-registry:5000, run it in kind"
 	@echo "make kind-register LOGIN=<github login> [DISCOVER=1]  Register kind as a Kubernetes connection (dev)"
 	@echo "make smoke-ecs CONNECTION=<aws connection id> [DRY_RUN=0] [CLEANUP=1]  Prove the AWS deploy role on real AWS"
 
@@ -116,6 +117,10 @@ kind-kubeconfig:
 
 kind-check:
 	scripts/kind/check.sh
+
+# Needs make kind-up, make kind-kubeconfig, and make dev KIND=1 (docs/deploy-live.md).
+dind-check:
+	scripts/kind/dind-check.sh
 
 # Registers .kind/groundcrew-deployer.kubeconfig through the API in LOGIN's workspace (dev only:
 # signs an API token with INTERNAL_JWT_SECRET). DISCOVER=1 also runs discovery and checks the Map.
