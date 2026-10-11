@@ -13,7 +13,7 @@ CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
 .PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
-	kind-up kind-down kind-kubeconfig kind-check kind-register dind-check smoke-ecs
+	kind-up kind-down kind-kubeconfig kind-check kind-register dind-check smoke-ecs cleanup-deploys
 
 # KIND=1 joins api and worker to the kind network (make kind-up first).
 COMPOSE := docker compose$(if $(filter 1,$(KIND)), -f docker-compose.yml -f docker-compose.kind.yml)
@@ -41,6 +41,7 @@ help:
 	@echo "make dind-check  From the worker: build a fixture in dind, push to kind-registry:5000, run it in kind"
 	@echo "make kind-register LOGIN=<github login> [DISCOVER=1]  Register kind as a Kubernetes connection (dev)"
 	@echo "make smoke-ecs CONNECTION=<aws connection id> [DRY_RUN=0] [CLEANUP=1]  Prove the AWS deploy role on real AWS"
+	@echo "make cleanup-deploys HOURS=<n> [APPLY=1] [CONNECTION=<id>]  Delete deploy leftovers older than n hours (dry run by default)"
 
 install:
 	cd $(API) && $(UV) sync
@@ -137,3 +138,10 @@ smoke-ecs:
 	@test -n "$(CONNECTION)" || { echo "Usage: make smoke-ecs CONNECTION=<aws connection id> [DRY_RUN=0] [CLEANUP=1]"; exit 1; }
 	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/smoke_ecs_deploy.py --connection $(CONNECTION) \
 		$(if $(filter 1,$(CLEANUP)),--cleanup,$(if $(filter 0,$(DRY_RUN)),--real))
+
+# Deletes what deploys left behind (project=groundcrew, older than HOURS) on AWS (every
+# deploy-tier connection, or CONNECTION) and in kind. Dry run unless APPLY=1 (docs/phase4-infra.md).
+cleanup-deploys:
+	@test -n "$(HOURS)" || { echo "Usage: make cleanup-deploys HOURS=<n> [APPLY=1] [CONNECTION=<aws connection id>]"; exit 1; }
+	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/cleanup_deploys.py --hours $(HOURS) \
+		$(if $(filter 1,$(APPLY)),--apply) $(if $(CONNECTION),--connection $(CONNECTION))
