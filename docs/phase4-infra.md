@@ -231,7 +231,7 @@ Docker daemon of its own. The worker reaches it over TLS, and **no service mount
 | | |
 |---|---|
 | Worker env | `DOCKER_HOST=tcp://dind:2376`, `DOCKER_TLS_VERIFY=1`, `DOCKER_CERT_PATH=/certs/client`, `SANDBOX_SMOKE_HOST=dind` (a container the Builder starts with `-p`/`-P` answers at `dind:<port>`, not localhost) |
-| TLS | dind generates a CA, its server certificate (for hostname `dind`), and a client certificate on start. Volume `dind-certs-client` holds the client certificate, mounted read-only in the worker; `dind-certs-ca` keeps the CA across restarts. Plain TCP (2375) is refused |
+| TLS | dind generates a CA, its server certificate (for hostname `dind`), and a client certificate on start (into `dind-certs-issued`, key mode 0644, reset on every start). The one-shot `dind-certs` service then copies the client certificate into `dind-certs-client`, owned by the worker's uid 1000, key 0600, directory 0700; the worker mounts it read-only and starts only after the copy succeeded. `dind-certs-ca` keeps the CA across restarts, so the copy stays valid when dind restarts alone. Plain TCP (2375) is refused |
 | Network | `default` only; with `make dev KIND=1` also `kind`, so it can push to `kind-registry:5000`. **No published ports**: nothing outside the Compose network can reach it |
 | Registry | `infra/dind/daemon.json`: `insecure-registries` is only `kind-registry:5000` (plain HTTP, local). ECR pushes use HTTPS and the deploy role's registry token |
 | Limits | `DIND_CPUS` (default 2), `DIND_MEMORY` (default `4g`), 2048 processes |
@@ -244,10 +244,10 @@ name on the nodes (next to `localhost:5001`), so a pod spec uses the exact name 
 pushed. `make dind-check` proves the path live (`docs/deploy-live.md`).
 
 **dind is privileged, and that is acceptable for local dev only.** A privileged container is
-root on the host, and the client certificate controls that daemon. So whoever has the
-worker's `/certs/client` effectively has the host. **Hosted deployments (Phase 6) must run
-builds on a separate build host or in Nebius Sandboxes, never in a privileged container
-beside the API or worker.** The Builder sees only the standard `DOCKER_*` variables and
+root on the host, and the client certificate controls that daemon. So whoever can read the
+worker's `/certs/client` (uid 1000 in the worker, or root) effectively has the host.
+**Hosted deployments (Phase 6) must run builds on a separate build host or in Nebius
+Sandboxes, never in a privileged container beside the API or worker.** The Builder sees only the standard `DOCKER_*` variables and
 `SANDBOX_SMOKE_HOST`, so moving builds out changes configuration, not code.
 
 ## What lands later in this branch

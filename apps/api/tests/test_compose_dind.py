@@ -40,7 +40,9 @@ def test_dind_uses_tls_and_publishes_no_ports() -> None:
     assert dind["hostname"] == "dind"  # the server certificate's name, checked by the worker
     assert "ports" not in dind and "network_mode" not in dind
     assert dind["environment"]["DOCKER_TLS_CERTDIR"] == "/certs"
-    assert "dind-certs-client:/certs/client" in dind["volumes"]
+    # dind's own copy; the worker's is dind-certs-client (dind-certs copies it).
+    assert "dind-certs-issued:/certs/client" in dind["volumes"]
+    assert not any(v.startswith("dind-certs-client:") for v in dind["volumes"])
     assert "dind-data:/var/lib/docker" in dind["volumes"]
     for limit in ("cpus", "mem_limit", "pids_limit"):
         assert limit in dind
@@ -54,7 +56,9 @@ def test_worker_reaches_dind_only_over_tls() -> None:
     assert env["DOCKER_CERT_PATH"] == "/certs/client"
     assert env["SANDBOX_SMOKE_HOST"] == "dind"
     assert "dind-certs-client:/certs/client:ro" in services["worker"]["volumes"]
-    assert services["worker"]["depends_on"]["dind"]["condition"] == "service_healthy"
+    assert services["worker"]["depends_on"]["dind-certs"]["condition"] == (
+        "service_completed_successfully"
+    )
     # The API never builds.
     assert "DOCKER_HOST" not in services["api"]["environment"]
 
@@ -76,3 +80,21 @@ def test_kind_overlay_wires_dind_to_the_registry() -> None:
     # kind nodes pull the name dind pushes (make kind-up writes this mirror).
     up = (ROOT / "scripts" / "kind" / "up.sh").read_text()
     assert '"$REGISTRY_NAME:5000"' in up
+
+
+def test_client_key_is_the_workers_alone() -> None:
+    """dind resets its key.pem to 0644 on every start, so dind-certs copies the client
+    certificate into the worker's volume: owned by the worker's uid, key 0600, dir 0700."""
+    services = _compose("docker-compose.yml")["services"]
+    init = services["dind-certs"]
+    assert re.fullmatch(r"alpine:\d+\.\d+\.\d+", init["image"])
+    assert init["depends_on"]["dind"]["condition"] == "service_healthy"
+    assert "dind-certs-issued:/certs/issued:ro" in init["volumes"]
+    assert "dind-certs-client:/certs/client" in init["volumes"]
+    script = [line.strip() for line in init["command"][-1].splitlines()]
+    uid = re.search(r"--uid (\d+) appuser", (ROOT / "apps" / "api" / "Dockerfile").read_text())
+    assert uid
+    assert f"chown -R {uid.group(1)}:{uid.group(1)} /certs/client" in script
+    assert "chmod 0700 /certs/client" in script
+    assert "chmod 0600 /certs/client/key.pem" in script
+    assert init["command"][:2] == ["sh", "-euc"]  # a failed chmod fails the service

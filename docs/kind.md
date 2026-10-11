@@ -187,7 +187,8 @@ client`.** The cluster was created before the `kind-registry:5000` mirror existe
 **The worker gets `x509: certificate is valid for ..., not dind`, or `cannot connect to the
 Docker daemon`.** Start the stack with `make dev KIND=1` (it starts `dind` before the worker).
 If the certificates are broken, `docker compose down` and `docker volume rm
-groundcrew_dind-certs-ca groundcrew_dind-certs-client`; dind makes new ones on start.
+groundcrew_dind-certs-ca groundcrew_dind-certs-issued groundcrew_dind-certs-client`; dind
+makes new ones on start.
 
 **`http://<name>.localhost` returns 404 from nginx.** The Ingress needs `ingressClassName: nginx`
 and host `<name>.localhost`; ingress-nginx takes a few seconds to pick up a new Ingress.

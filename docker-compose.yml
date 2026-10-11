@@ -63,15 +63,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      dind:
-        condition: service_healthy
+      dind-certs:
+        condition: service_completed_successfully
     # Let the worker finish its current step on `docker compose down`.
     stop_grace_period: 30s
 
   # Docker daemon for sandbox builds (docs/phase4-infra.md, Build daemon). Local dev only:
   # it must be privileged, so a hosted instance builds on a separate build host instead.
   # No published ports: only services on the compose network (the worker) reach it, with the
-  # client certificate dind generates into dind-certs-client.
+  # client certificate in dind-certs-client (copied there by dind-certs).
   dind:
     image: docker:29.7.2-dind
     # dind puts its hostname in the server certificate, which the worker checks against "dind".
@@ -81,7 +81,8 @@ services:
       DOCKER_TLS_CERTDIR: /certs
     volumes:
       - dind-certs-ca:/certs/ca
-      - dind-certs-client:/certs/client
+      # dind writes its client certificate here, key world-readable, on every start.
+      - dind-certs-issued:/certs/client
       # Images and the BuildKit cache, kept across restarts (pruned at 10GB, daemon.json).
       - dind-data:/var/lib/docker
       - ./infra/dind/daemon.json:/etc/docker/daemon.json:ro
@@ -93,6 +94,28 @@ services:
       interval: 2s
       timeout: 5s
       retries: 60
+
+  # One shot, after dind has written the certificates: copies the client certificate into the
+  # worker's volume, owned by its user (appuser, uid 1000), key 0600, directory 0700. A copy,
+  # because dind resets its own key.pem to 0644 whenever it starts. Runs on every `up`.
+  dind-certs:
+    image: alpine:3.22.2
+    command:
+      - sh
+      - -euc
+      - |
+        rm -rf /certs/client/*
+        cp /certs/issued/ca.pem /certs/issued/cert.pem /certs/issued/key.pem /certs/client/
+        chown -R 1000:1000 /certs/client
+        chmod 0700 /certs/client
+        chmod 0644 /certs/client/ca.pem /certs/client/cert.pem
+        chmod 0600 /certs/client/key.pem
+    volumes:
+      - dind-certs-issued:/certs/issued:ro
+      - dind-certs-client:/certs/client
+    depends_on:
+      dind:
+        condition: service_healthy
 
   web:
     build:
@@ -125,5 +148,6 @@ services:
 volumes:
   pgdata:
   dind-certs-ca:
+  dind-certs-issued:
   dind-certs-client:
   dind-data:

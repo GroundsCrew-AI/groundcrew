@@ -45,6 +45,9 @@ env_line=$(w sh -c 'echo "$DOCKER_HOST $DOCKER_TLS_VERIFY $DOCKER_CERT_PATH $SAN
 [ "$env_line" = "tcp://dind:2376 1 /certs/client dind kind-registry:5000" ] \
   || die "unexpected worker env: $env_line"
 ok "DOCKER_HOST=tcp://dind:2376 with TLS, SANDBOX_SMOKE_HOST=dind, GC_KIND_REGISTRY=kind-registry:5000"
+perms=$(w stat -c '%u %a' /certs/client /certs/client/key.pem | tr '\n' ' ')
+[ "$perms" = "1000 700 1000 600 " ] || die "client certs: want uid 1000, dir 0700, key 0600; got $perms"
+ok "client key owned by the worker's uid 1000, mode 0600 (dir 0700)"
 server=$(w docker info --format '{{.Name}} {{.ServerVersion}}') || die "the worker cannot reach dind over TLS"
 host_name=$(docker info --format '{{.Name}}')
 [ "${server%% *}" != "$host_name" ] || die "the worker reached the host's daemon ($host_name), not dind"
