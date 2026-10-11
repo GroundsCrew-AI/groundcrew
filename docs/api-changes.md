@@ -56,9 +56,16 @@ the start of `error`, for example `run_usd_cap: run spent $0.40 (LLM_RUN_USD_CAP
 `run_usd_cap`, `run_token_cap`, `ultra_call_cap`, `incident_ultra_cap`, `daily_usd_cap`, `daily_token_cap`,
 and `total_usd_cap`. The last step of the run has `kind: "budget"` with the same text.
 
-## Coming in later steps
+## Deploy contract (Milestone 1)
 
-- Step 5: `stop_reason: "no_progress"` (Builder repeated the same failing fix). `components/runs/badges.tsx`
-  keys a `Record<StopReason, string>`, so it needs a label when this lands.
-- Step 8: `POST /deploys`, `GET /deploys/{id}`, and the Scout / Builder / Deployer events, documented in
-  `docs/events.md`.
+The full contract is in `docs/deploys-contract.md`; the events are in `docs/events.md`.
+
+- `POST /deploys`, `GET /deploys`, `GET /deploys/{deploy_id}`: typed in OpenAPI (`DeployCreate`,
+  `DeployCreated`, `DeployPage`, `DeployDetail`), returning 501 until Milestone 6.
+- `StopReason` gains `no_progress` (Builder repeated the same fix for the same error).
+  `components/runs/badges.tsx` already had the label; its temporary `KnownStopReason` type is gone.
+- `StepOut.data` (optional in the schema): the typed payload of a deploy step, discriminated by
+  `type`. Null on every other step.
+- New SSE event names for deploy runs: `stage_started`, `stage_finished`, `build_attempt`,
+  `verify_result`, `live_url`, `rollback_offered`, `run_finished`. Each sends a `StepOut`.
+  `approval_requested` for a deploy carries the plan in `step.data` (`type: "deploy_plan"`).

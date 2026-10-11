@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 from app.db.models import (
     Approval,
@@ -24,6 +24,7 @@ from app.db.models import (
     Workspace,
     WorkspaceRole,
 )
+from app.pipeline.events import DeployEventData
 from app.policy.engine import Decision
 from app.security.redact import redact_json
 from app.tools.registry import ToolNotFoundError, registry
@@ -86,7 +87,20 @@ _PHASE4_STEP_FIELDS = (
     "fell_back",
     "escalated",
     "reasoning_excerpt",
+    "data",
 )
+
+_EVENT_DATA: TypeAdapter[DeployEventData] = TypeAdapter(DeployEventData)
+
+
+def _event_data(raw: dict[str, Any] | None) -> DeployEventData | None:
+    if raw is None:
+        return None
+    try:
+        return _EVENT_DATA.validate_python(raw)
+    except ValidationError:
+        # A payload this API version does not know (or a malformed one): keep the step.
+        return None
 
 
 def _tool_policy(tool_name: str | None) -> ToolPolicy | None:
@@ -124,6 +138,8 @@ class StepOut(BaseModel):
     fell_back: bool = False
     escalated: bool = False
     reasoning_excerpt: str | None = None
+    # Deploy steps: the typed event payload, discriminated by `type` (docs/events.md).
+    data: DeployEventData | None = None
     created_at: datetime
 
     @classmethod
@@ -149,6 +165,7 @@ class StepOut(BaseModel):
             fell_back=step.fell_back,
             escalated=step.escalated,
             reasoning_excerpt=step.reasoning_excerpt,
+            data=_event_data(step.data),
             created_at=step.created_at,
         )
 
@@ -348,5 +365,19 @@ class ApprovalStepEvent(BaseModel):
     approval: ApprovalOut | None
 
 
-# Event names on the SSE stream, for the web client.
-SseEventName = Literal["step", "approval_requested", "approval_decided", "status", "done"]
+# Event names on the SSE stream, for the web client. The deploy events (DEPLOY_EVENT_NAMES)
+# carry a StepOut whose `data` has the typed payload.
+SseEventName = Literal[
+    "step",
+    "approval_requested",
+    "approval_decided",
+    "status",
+    "done",
+    "stage_started",
+    "stage_finished",
+    "build_attempt",
+    "verify_result",
+    "live_url",
+    "rollback_offered",
+    "run_finished",
+]

@@ -37,11 +37,7 @@ export function StatusPill({ status, className }: { status: RunStatus; className
   );
 }
 
-// no_progress: Builder stops when retries stop changing anything (Phase 4 Step 5). The API's
-// StopReason gains it with Builder; the label is here so the UI is ready when it does.
-type KnownStopReason = StopReason | "no_progress";
-
-const STOP_REASONS: Record<KnownStopReason, string> = {
+const STOP_REASONS: Record<StopReason, string> = {
   completed: "Completed",
   max_steps: "Hit the step limit",
   budget: "Hit a token budget",
@@ -51,7 +47,7 @@ const STOP_REASONS: Record<KnownStopReason, string> = {
   stopped_by_user: "Stopped by a user",
 };
 
-export function stopReasonLabel(reason: KnownStopReason | null | undefined): string | null {
+export function stopReasonLabel(reason: StopReason | null | undefined): string | null {
   return reason ? (STOP_REASONS[reason] ?? reason) : null;
 }
 

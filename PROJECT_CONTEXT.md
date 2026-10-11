@@ -471,6 +471,18 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         (`Tier=observe|deploy` in `infra/aws-connect.yaml`, `groundcrew-deploy` role scoped to `groundcrew-*` and
         `project=groundcrew`, `aws_deploy_session()`, Observe / Deploy on the Connections page; not published).
         Next: cleanup, CI, live runbook
+  - Ownership (2026-10-11, agreed with Ahmed): Rizwan owns all of Phase 4 (sandbox, targets, Builder,
+    Deployer, pipeline, `/deploys`, Deploy page, Phase 4 E2E); Ahmed works on Phase 5 in parallel
+    (`app/agents/medic/`, telemetry, incidents), which Phase 4 never edits. Done when
+    `GroundsCrew-AI/legacy-flask-app` goes from GitHub to a live URL on kind and AWS ECS in one live run
+    timeline, with at least one automatic build fix and an approval before any infrastructure change.
+    Milestones, one draft PR each: M1 contract, M2 sandbox, M3 targets, M4 Builder, M5 Deployer,
+    M6 pipeline + API, M7 Deploy page, M8 E2E + live evidence.
+    - [x] M1 Deploy API contract: `docs/deploys-contract.md` (final), `docs/events.md`; typed
+          `POST /deploys`, `GET /deploys`, `GET /deploys/{id}` returning 501; deploy events as run steps
+          with a typed `run_steps.data` payload under their own SSE names; `runs.state` with
+          `DeployRecord` for Medic (`app/pipeline/state.py`); `stop_reason = no_progress`; one migration;
+          422s never echo env values
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission

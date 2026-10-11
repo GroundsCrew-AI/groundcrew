@@ -51,7 +51,8 @@ about 6k tokens (Nano's reliable range), and says how many were left out.
 ## Coming with later steps
 
 - `CredentialsProvider` and `ResourceSink`: landed in Phase 3, signatures below.
-- The shape of a finished deployment in `runs.state` (Step 8), which Medic reads for "recent deploys" and rollback.
+- The shape of a finished deployment in `runs.state` (`DeployRecord` in `app/pipeline/state.py`,
+  documented in `docs/deploys-contract.md`), which Medic reads for "recent deploys" and rollback.
 
 ---
 

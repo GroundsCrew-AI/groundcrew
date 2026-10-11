@@ -58,6 +58,8 @@ class StopReason(enum.StrEnum):
     completed = "completed"
     max_steps = "max_steps"
     budget = "budget"
+    # Builder repeated the same kind of fix for the same build error (Phase 4).
+    no_progress = "no_progress"
     waiting_approval = "waiting_approval"
     error = "error"
     stopped_by_user = "stopped_by_user"
@@ -256,6 +258,8 @@ class Run(TimestampMixin, Base):
     stop_reason: Mapped[StopReason | None] = mapped_column(_pg_enum(StopReason, "stop_reason"))
     # Conversation so far, in OpenAI chat format. Lets a run pause and resume.
     messages: Mapped[list[JSON]] = mapped_column(JSONB, default=list, server_default="[]")
+    # Agent state that must survive a pause for approval. Deploy runs: app.pipeline.state.
+    state: Mapped[JSON] = mapped_column(JSONB, default=dict, server_default="{}")
     result: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -282,7 +286,8 @@ class RunStep(TimestampMixin, Base):
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     seq: Mapped[int] = mapped_column(Integer)
     agent: Mapped[str] = mapped_column(String(64))
-    # llm | tool | approval_requested | approval_decided | budget | stopped | error
+    # llm | tool | approval_requested | approval_decided | budget | stopped | error, and the
+    # deploy events in app.pipeline.events (stage_started, build_attempt, ...).
     kind: Mapped[str] = mapped_column(String(32))
     model_tier: Mapped[str | None] = mapped_column(String(16))
     model_id: Mapped[str | None] = mapped_column(String(200))
@@ -306,6 +311,8 @@ class RunStep(TimestampMixin, Base):
     approval_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("approvals.id", ondelete="SET NULL", use_alter=True)
     )
+    # Typed event payload for deploy steps (app.pipeline.events), redacted. Null otherwise.
+    data: Mapped[JSON | None] = mapped_column(JSONB)
 
 
 class Approval(TimestampMixin, Base):
