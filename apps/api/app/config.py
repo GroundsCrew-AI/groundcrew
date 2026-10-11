@@ -158,6 +158,15 @@ class Settings(BaseSettings):
     gc_kind_registry: str = "localhost:5001"
     gc_namespace_prefix: str = "gc-"
 
+    # Build sandbox (app/sandbox). `docker` talks to the daemon in DOCKER_HOST (the dind service
+    # in local dev); `nebius` is TODO(nebius-sandbox). A smoke-test container publishes its port
+    # on the daemon's host, which the worker reaches as SANDBOX_SMOKE_HOST (dind in Compose).
+    sandbox_provider: Literal["docker", "nebius"] = "docker"
+    sandbox_smoke_host: str = "localhost"
+    sandbox_build_timeout_seconds: float = 900.0
+    sandbox_smoke_timeout_seconds: float = 60.0
+    sandbox_push_timeout_seconds: float = 600.0
+
     @field_validator("gc_subnet_ids", mode="before")
     @classmethod
     def _split_subnets(cls, value: object) -> object:
