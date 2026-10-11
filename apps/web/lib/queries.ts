@@ -49,9 +49,10 @@ export function useRuns(workspaceId: string | undefined, limit = 25) {
   });
 }
 
-export function useRunDetail(runId: string) {
+export function useRunDetail(runId: string, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: keys.run(runId),
+    enabled: options.enabled ?? true,
     // The live stream keeps the page current; this is the starting point only.
     staleTime: Infinity,
     refetchOnWindowFocus: false,
