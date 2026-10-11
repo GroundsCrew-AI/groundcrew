@@ -16,7 +16,7 @@ other way is refused by AWS or Kubernetes, and `make cleanup-deploys` never sees
 | `GC_SUBNET_IDS` | unset: the default VPC's default subnets | Subnets for Fargate tasks (comma separated) | `resolve_subnets()`; set it when the account has no default VPC |
 | `GC_LOG_GROUP_PREFIX` | `/groundcrew/` | CloudWatch log group prefix | Fixed; the deploy role may only create `/groundcrew/*` |
 | `GC_ECR_PREFIX` | `groundcrew-` | ECR repository prefix | Fixed; the deploy role may only create `groundcrew-*` |
-| `GC_KIND_REGISTRY` | `localhost:5001` | Where images for the local kind cluster are pushed | `make kind-up` (the nodes pull the same name through a registry mirror) |
+| `GC_KIND_REGISTRY` | `localhost:5001` (host); `kind-registry:5000` for the worker in `make dev KIND=1` | Where images for the local kind cluster are pushed, and the name pod specs use | `make kind-up` (the nodes pull both names from the same registry through containerd mirrors) |
 | `GC_NAMESPACE_PREFIX` | `gc-` | Kubernetes namespace prefix | Fixed; the admission policy only allows the deployer to create `gc-*` |
 
 The validators in `Settings` refuse values the policies would deny: a cluster or ECR prefix
@@ -221,6 +221,34 @@ namespace restriction. The namespace needs label `project=groundcrew` (from `k8s
 the admission policy refuses it. Locally, `make kind-up` sets all of this up; register
 `.kind/groundcrew-deployer.kubeconfig` (from `make kind-kubeconfig`) as the Kubernetes
 connection, and push images to `GC_KIND_REGISTRY`. The full setup is in `docs/kind.md`.
+
+## Build daemon (local dev)
+
+Sandbox builds (Ahmed's Builder) run in the `dind` Compose service (`docker:29.7.2-dind`), a
+Docker daemon of its own. The worker reaches it over TLS, and **no service mounts the host's
+`/var/run/docker.sock`** (`tests/test_compose_dind.py` fails if one does).
+
+| | |
+|---|---|
+| Worker env | `DOCKER_HOST=tcp://dind:2376`, `DOCKER_TLS_VERIFY=1`, `DOCKER_CERT_PATH=/certs/client`, `SANDBOX_SMOKE_HOST=dind` (a container the Builder starts with `-p`/`-P` answers at `dind:<port>`, not localhost) |
+| TLS | dind generates a CA, its server certificate (for hostname `dind`), and a client certificate on start. Volume `dind-certs-client` holds the client certificate, mounted read-only in the worker; `dind-certs-ca` keeps the CA across restarts. Plain TCP (2375) is refused |
+| Network | `default` only; with `make dev KIND=1` also `kind`, so it can push to `kind-registry:5000`. **No published ports**: nothing outside the Compose network can reach it |
+| Registry | `infra/dind/daemon.json`: `insecure-registries` is only `kind-registry:5000` (plain HTTP, local). ECR pushes use HTTPS and the deploy role's registry token |
+| Limits | `DIND_CPUS` (default 2), `DIND_MEMORY` (default `4g`), 2048 processes |
+| Cache | Volume `dind-data` (`/var/lib/docker`): images and the BuildKit cache survive restarts; BuildKit prunes above 10 GB. `docker compose down -v` clears it |
+| CLI | The api image carries the Docker CLI and buildx (same version, `docker:29.7.2-cli`), no daemon. Only the worker gets `DOCKER_HOST` |
+
+Images for kind are tagged `$GC_KIND_REGISTRY/<repo>:<tag>`. In `make dev KIND=1` the worker's
+`GC_KIND_REGISTRY` is `kind-registry:5000`; `make kind-up` adds a containerd mirror for that
+name on the nodes (next to `localhost:5001`), so a pod spec uses the exact name the build
+pushed. `make dind-check` proves the path live (`docs/deploy-live.md`).
+
+**dind is privileged, and that is acceptable for local dev only.** A privileged container is
+root on the host, and the client certificate controls that daemon. So whoever has the
+worker's `/certs/client` effectively has the host. **Hosted deployments (Phase 6) must run
+builds on a separate build host or in Nebius Sandboxes, never in a privileged container
+beside the API or worker.** The Builder sees only the standard `DOCKER_*` variables and
+`SANDBOX_SMOKE_HOST`, so moving builds out changes configuration, not code.
 
 ## What lands later in this branch
 
