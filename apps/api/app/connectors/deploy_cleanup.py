@@ -2,10 +2,12 @@
 
 `find_aws` and `find_kind` list what Groundcrew deploys created and decide, for each resource,
 whether it goes: only resources tagged project=groundcrew (label, for namespaces) and older
-than the cutoff. They only read. `apply_aws` and `apply_kind` delete what was planned, in
-dependency order: ECS services, security groups, log groups, ECR repositories, secrets; then
-gc-* namespaces. Task definitions are never deregistered (the deploy role cannot, they cost
-nothing, and a rollback needs the old revisions); they only serve as evidence of a run's age.
+than the cutoff, and never anything pinned (groundcrew:keep=true on AWS, label
+groundcrew/keep=true in Kubernetes). They only read. `apply_aws` and `apply_kind` delete
+what was planned, in dependency order: ECS services, security groups, log groups, ECR
+repositories, secrets; then gc-* namespaces. Task definitions are never deregistered (the
+deploy role cannot, they cost nothing, and a rollback needs the old revisions); they only
+serve as evidence of a run's age.
 
 Security groups have no creation time in EC2, so one goes only when its run (its
 groundcrew:deploy tag) is provably older than the cutoff, from another resource of the same
@@ -35,7 +37,15 @@ from app.connectors.aws import (
     error_code,
     guard_session,
 )
-from app.connectors.deploy_infra import DEPLOY_TAG, K8S_DEPLOY_LABEL, PROJECT_TAG, PROJECT_VALUE
+from app.connectors.deploy_infra import (
+    DEPLOY_TAG,
+    K8S_DEPLOY_LABEL,
+    K8S_KEEP_LABEL,
+    KEEP_TAG,
+    KEEP_VALUE,
+    PROJECT_TAG,
+    PROJECT_VALUE,
+)
 
 SERVICE, SECURITY_GROUP, LOG_GROUP, REPOSITORY, SECRET, TASK_DEFINITION, NAMESPACE = (
     "ECS service",
@@ -74,6 +84,7 @@ class Resource:
     delete: bool = False
     note: str = ""
     result: str = ""  # apply: PASS, FAIL, or SKIP (left alone after a fresh check)
+    pinned: bool = False  # groundcrew:keep=true / groundcrew/keep=true: never deleted
     seconds: float = 0.0
 
     def age(self, now: datetime) -> str:
@@ -112,6 +123,19 @@ def _ours(tags: dict[str, str]) -> bool:
     return tags.get(PROJECT_TAG) == PROJECT_VALUE
 
 
+def _pinned(tags: dict[str, str], key: str = KEEP_TAG) -> bool:
+    return tags.get(key) == KEEP_VALUE
+
+
+def _mark(r: Resource, tags: dict[str, str], key: str = KEEP_TAG) -> Resource:
+    """Decide what the tags alone decide: not ours, or pinned. Returns r."""
+    if not _ours(tags):
+        r.note = "not tagged project=groundcrew"
+    elif _pinned(tags, key):
+        r.pinned, r.note = True, f"pinned ({key}={KEEP_VALUE})"
+    return r
+
+
 def _chunks(items: list[str], size: int) -> Iterator[list[str]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
@@ -134,7 +158,7 @@ def find_aws(
         + _secrets(session, tagged)
     )
     for r in found:
-        if r.note:  # already decided: not ours, or already being removed
+        if r.note:  # already decided: not ours, pinned, or already being removed
             continue
         if r.created is None:
             r.note = "no creation time"
@@ -146,6 +170,8 @@ def find_aws(
     if groups:
         started = _run_started(session, found, tagged, {g.run_id for g in groups if g.run_id})
         for g in groups:
+            if g.pinned:
+                continue
             _decide_group(g, started, cutoff, hours)
             if g.delete and (count := attached_interfaces(session, g.ident)):
                 g.note += f"; attached now to {count} network interface(s)"
@@ -187,9 +213,7 @@ def _services(session: boto3.Session, settings: Settings) -> list[Resource]:
             tags = _tags(s.get("tags"), "key", "value")
             r = Resource(SERVICE, f"{cluster}/{s['serviceName']}", str(s["serviceName"]),
                          run_id=tags.get(DEPLOY_TAG, ""), created=s.get("createdAt"))  # fmt: skip
-            if not _ours(tags):
-                r.note = "not tagged project=groundcrew"
-            out.append(r)
+            out.append(_mark(r, tags))
     return out
 
 
@@ -205,9 +229,7 @@ def _log_groups(
             tags = tagged.get(str(lg.get("arn", "")).removesuffix(":*"), {})
             created = datetime.fromtimestamp(int(lg["creationTime"]) / 1000, UTC)
             r = Resource(LOG_GROUP, name, name, run_id=tags.get(DEPLOY_TAG, ""), created=created)
-            if not _ours(tags):
-                r.note = "not tagged project=groundcrew"
-            out.append(r)
+            out.append(_mark(r, tags))
     return out
 
 
@@ -230,8 +252,9 @@ def _repositories(
             if error_code(exc) == "RepositoryNotFoundException":
                 continue  # removed since tag:GetResources listed it
             raise
-        out.append(Resource(REPOSITORY, name, name, run_id=tags.get(DEPLOY_TAG, ""),
-                            created=repo.get("createdAt")))  # fmt: skip
+        r = Resource(REPOSITORY, name, name, run_id=tags.get(DEPLOY_TAG, ""),
+                     created=repo.get("createdAt"))  # fmt: skip
+        out.append(_mark(r, tags))
     return out
 
 
@@ -254,9 +277,8 @@ def _secrets(session: boto3.Session, tagged: dict[str, dict[str, str]]) -> list[
         r = Resource(
             SECRET, name, arn, run_id=tags.get(DEPLOY_TAG, ""), created=d.get("CreatedDate")
         )
-        if not _ours(tags):
-            r.note = "not tagged project=groundcrew"
-        elif d.get("DeletedDate"):
+        _mark(r, tags)
+        if not r.note and d.get("DeletedDate"):
             r.note = "already scheduled for deletion"
         out.append(r)
     return out
@@ -275,8 +297,9 @@ def _security_groups(session: boto3.Session) -> list[Resource]:
             if not _ours(tags):
                 continue
             gid = str(g["GroupId"])
-            out.append(Resource(SECURITY_GROUP, f"{gid} ({g.get('GroupName', '')})", gid,
-                                run_id=tags.get(DEPLOY_TAG, "")))  # fmt: skip
+            r = Resource(SECURITY_GROUP, f"{gid} ({g.get('GroupName', '')})", gid,
+                         run_id=tags.get(DEPLOY_TAG, ""))  # fmt: skip
+            out.append(_mark(r, tags))
     return out
 
 
@@ -379,8 +402,9 @@ def _delete_service(session: boto3.Session, settings: Settings, r: Resource) -> 
     live = [s for s in found.get("services", []) if s.get("status") != "INACTIVE"]
     if not live:
         return "already gone"
-    if not _ours(_tags(live[0].get("tags"), "key", "value")):
-        raise LeftAloneError("no longer tagged project=groundcrew")
+    fresh = _tags(live[0].get("tags"), "key", "value")
+    if not _ours(fresh) or _pinned(fresh):
+        raise LeftAloneError("no longer tagged project=groundcrew, or now pinned")
     ecs.update_service(cluster=cluster, service=r.ident, desiredCount=0)
     ecs.delete_service(cluster=cluster, service=r.ident, force=True)
     ecs.get_waiter("services_inactive").wait(
@@ -396,8 +420,9 @@ def _delete_group(
     interface a few minutes after the service is gone, so wait up to 3 minutes."""
     ec2 = session.client("ec2")
     groups = ec2.describe_security_groups(GroupIds=[r.ident])["SecurityGroups"]
-    if not groups or not _ours(_tags(groups[0].get("Tags"))):
-        raise LeftAloneError("no longer tagged project=groundcrew")
+    fresh = _tags(groups[0].get("Tags")) if groups else {}
+    if not _ours(fresh) or _pinned(fresh):
+        raise LeftAloneError("no longer tagged project=groundcrew, or now pinned")
     deadline = clock() + SG_DETACH_TIMEOUT_SECONDS
     while (count := attached_interfaces(session, r.ident)) > 0:
         if clock() > deadline:
@@ -442,8 +467,11 @@ def _delete_secret(
         if error_code(exc) == "ResourceNotFoundException":
             return "already gone"
         raise
-    if not _ours(_tags(d.get("Tags"))) or not str(d["Name"]).startswith(SECRET_PREFIX):
-        raise LeftAloneError("no longer a groundcrew/ secret tagged project=groundcrew")
+    fresh = _tags(d.get("Tags"))
+    if not _ours(fresh) or _pinned(fresh) or not str(d["Name"]).startswith(SECRET_PREFIX):
+        raise LeftAloneError(
+            "no longer a groundcrew/ secret tagged project=groundcrew, or now pinned"
+        )
     sm.delete_secret(SecretId=r.ident, ForceDeleteWithoutRecovery=True)
     # Deletion is asynchronous: wait until it is really gone.
     deadline = clock() + SECRET_GONE_TIMEOUT_SECONDS
@@ -511,6 +539,8 @@ def find_kind(
             r.note = "not labelled project=groundcrew"
         elif not name.startswith(settings.gc_namespace_prefix):
             r.note = f"not {settings.gc_namespace_prefix}*"
+        elif _pinned(labels, K8S_KEEP_LABEL):
+            r.pinned, r.note = True, f"pinned ({K8S_KEEP_LABEL}={KEEP_VALUE})"
         elif ns.get("phase") == "Terminating":
             r.note = "already terminating"
         elif r.created is None or r.created > cutoff:
@@ -533,6 +563,13 @@ def apply_kind(
             continue
         started = clock()
         try:
+            fresh = next((n for n in namespaces.list() if n["name"] == r.ident), None)
+            if fresh is None:
+                r.note, r.result = "already gone", "PASS"
+                continue
+            if _pinned(fresh.get("labels") or {}, K8S_KEEP_LABEL):
+                r.note, r.result = "now pinned; left alone", "SKIP"
+                continue
             namespaces.delete(r.ident)
             deadline = clock() + NAMESPACE_GONE_TIMEOUT_SECONDS
             while any(n["name"] == r.ident for n in namespaces.list()):

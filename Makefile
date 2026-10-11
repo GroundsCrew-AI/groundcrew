@@ -141,7 +141,10 @@ smoke-ecs:
 
 # Deletes what deploys left behind (project=groundcrew, older than HOURS) on AWS (every
 # deploy-tier connection, or CONNECTION) and in kind. Dry run unless APPLY=1 (docs/phase4-infra.md).
+# AWS_ACCOUNT: the run stops unless the platform identity is in it (checked before any AssumeRole).
+AWS_ACCOUNT ?= $(CONNECT_TEMPLATE_ACCOUNT)
 cleanup-deploys:
 	@test -n "$(HOURS)" || { echo "Usage: make cleanup-deploys HOURS=<n> [APPLY=1] [CONNECTION=<aws connection id>]"; exit 1; }
 	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/cleanup_deploys.py --hours $(HOURS) \
+		--account $(AWS_ACCOUNT) \
 		$(if $(filter 1,$(APPLY)),--apply) $(if $(CONNECTION),--connection $(CONNECTION))

@@ -51,6 +51,10 @@ Every resource a deploy creates carries both tags. The IAM conditions and cleanu
 `CreateSecurityGroup`, `tags` on `CreateLogGroup`): the deploy role only allows those calls with
 `project=groundcrew` in the request, and only allows tagging as part of a create.
 
+Optional: `groundcrew:keep=true` (AWS) / `groundcrew/keep=true` (Kubernetes), constants
+`KEEP_TAG` / `K8S_KEEP_LABEL`, pins a resource so `make cleanup-deploys` never deletes it. Like
+the other tags, it can only be set on create.
+
 ## Network
 
 `resolve_subnets(session, settings)` returns the subnets for `awsvpcConfiguration`:
@@ -205,8 +209,10 @@ make cleanup-deploys HOURS=24 CONNECTION=<id>   # one AWS connection (default: e
 ```
 
 It goes through `aws_deploy_session()` for each connection: Groundcrew's platform identity assumes
-`groundcrew-deploy` (never a profile or `~/.aws`). Before anything else it checks that the
-session is that role, in the connection's account and `GC_AWS_REGION`. The dry run, and the
+`groundcrew-deploy` (never a profile or `~/.aws`). Before any role is assumed it checks that the
+platform identity is in `AWS_ACCOUNT` (default `881050425883`, the demo account), and it skips
+connections in any other account. Then it checks that each session is that role, in the
+connection's account and `GC_AWS_REGION`. `HOURS=0` means everything tagged, whatever its age. The dry run, and the
 listing step of `APPLY=1`, use a separate copy of the session that may only call operations in
 both `AWS_DEPLOY_OPERATIONS` and `AWS_READ_OPERATIONS`, so a bug cannot delete anything during
 the listing. kind uses the deployer kubeconfig (`.kind/groundcrew-deployer.host.kubeconfig`),
@@ -222,6 +228,17 @@ never cluster-admin; without it, kind is skipped.
 | ECR repositories `GC_ECR_PREFIX*` | `tag:GetResources`, then `DescribeRepositories` by name | `createdAt` | Delete with its images (force) |
 | Secrets `groundcrew/*` | `tag:GetResources`, then `DescribeSecret` (never the value) | `CreatedDate` | Force delete (no recovery window), then wait until `DescribeSecret` says it is gone |
 | Namespaces `gc-*` in kind | list with label `project=groundcrew` | `creationTimestamp` | Delete, wait until gone |
+
+**Pinned resources are always kept**, whatever their age, and shown as `keep (pinned)`:
+
+| Where | Pin | Who can set it |
+|---|---|---|
+| AWS (service, security group, log group, repository, secret) | tag `groundcrew:keep=true` | The deploy role can tag only when it creates a resource, so a deploy that should stay sets it on create. Pinning an existing resource is done by the account owner (console or `aws ... tag-resource`) |
+| Kubernetes namespace | label `groundcrew/keep=true` | The deploy target on create (the admission policy allows any extra label), or a cluster admin: `kubectl --context kind-groundcrew label namespace <gc-name> groundcrew/keep=true` |
+
+Before each delete, `APPLY=1` checks again and leaves alone anything pinned since the dry run
+(service, security group, secret, namespace). `gc-whoami` in the local kind cluster (a
+`whoami` app from the Phase 3 discovery check) is pinned.
 
 **Security groups** have no creation time in EC2. A group goes only when its
 `groundcrew:deploy` run is provably older than `HOURS`: another resource of the same run (a

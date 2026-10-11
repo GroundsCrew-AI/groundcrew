@@ -19,6 +19,7 @@ NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
 OLD = NOW - timedelta(hours=48)
 NEW = NOW - timedelta(hours=1)
 HOURS = timedelta(hours=24)
+KEEP = {"groundcrew:keep": "true"}
 CLUSTER = "groundcrew-deploys"
 
 
@@ -46,6 +47,7 @@ class World:
             "shop": {"createdAt": OLD, "tags": _tags("run-a"), "status": "ACTIVE"},
             "fresh": {"createdAt": NEW, "tags": _tags("run-b"), "status": "ACTIVE"},
             "legacy": {"createdAt": OLD, "tags": {}, "status": "ACTIVE"},
+            "pinned": {"createdAt": OLD, "tags": {**_tags("run-p"), **KEEP}, "status": "ACTIVE"},
         }
         self.log_groups: dict[str, tuple[datetime, dict[str, str]]] = {
             "/groundcrew/shop": (OLD, _tags("run-a")),
@@ -77,6 +79,7 @@ class World:
             "sg-c": _tags("run-c"),  # only a task definition is left to prove its age
             "sg-d": _tags("run-d"),  # nothing proves its age
             "sg-e": _tags(None),  # no run tag at all
+            "sg-p": {**_tags("run-a"), **KEEP},  # its run is old, but it is pinned
         }
         self.task_definitions = {
             _arn("ecs", "task-definition/groundcrew-c:1"): (OLD, _tags("run-c")),
@@ -224,6 +227,9 @@ def test_only_old_project_tagged_resources_are_planned() -> None:
     # Repositories are found by tag: untagged ones are never even described.
     assert "groundcrew-manual" not in r and "checkout-api" not in r
     assert r["groundcrew/old/X"].note == "already scheduled for deletion"
+    for pinned in (f"{CLUSTER}/pinned", "sg-p (name-sg-p)"):
+        assert r[pinned].pinned and not r[pinned].delete
+        assert r[pinned].note == "pinned (groundcrew:keep=true)"
     assert "checkout/DB_URL" not in r  # tagged, but outside groundcrew/: never described
 
 
@@ -285,10 +291,11 @@ def test_apply_deletes_in_order_and_never_deregisters() -> None:
     ]
     assert "ecs:DeregisterTaskDefinition" not in world.calls
     assert sleeps == [10, 10]  # waited for sg-a to be unattached
-    assert set(world.groups) == {"sg-b", "sg-d", "sg-e"}
+    assert set(world.groups) == {"sg-b", "sg-d", "sg-e", "sg-p"}  # sg-p is pinned
     assert set(world.log_groups) == {"/groundcrew/fresh", "/groundcrew/manual"}
     assert set(world.repos) == {"groundcrew-manual", "checkout-api"}
-    assert world.services["fresh"]["status"] == world.services["legacy"]["status"] == "ACTIVE"
+    for kept in ("fresh", "legacy", "pinned"):
+        assert world.services[kept]["status"] == "ACTIVE"
     secret = next(r for r in found if r.name == "groundcrew/shop/DB_URL")
     assert secret.note == "force deleted (no recovery), gone"
     assert all(r.result == "PASS" for r in found if r.delete)
@@ -298,7 +305,7 @@ def test_apply_leaves_alone_what_a_fresh_check_says_is_not_ours() -> None:
     world = World()
     settings = _settings()
     found = dc.find_aws(world.session(), settings, older_than=HOURS, now=NOW)
-    world.services["shop"]["tags"] = {}  # someone changed the tags since the plan
+    world.services["shop"]["tags"] = {**_tags("run-a"), **KEEP}  # pinned since the plan
     world.attached["sg-a"] = 10**6  # never released
     clock = iter(range(0, 10_000, 30))
     dc.apply_aws(world.session(AWS_DEPLOY_OPERATIONS), settings, found,
@@ -346,6 +353,8 @@ class FakeNamespaces:
              "created": OLD},
             {"name": "gc-fresh", "labels": _tags(None), "created": NEW},
             {"name": "gc-going", "labels": _tags(None), "created": OLD, "phase": "Terminating"},
+            {"name": "gc-whoami", "labels": {**_tags(None), "groundcrew/keep": "true"},
+             "created": OLD},
         ]  # fmt: skip
         self.deleted: list[str] = []
 
@@ -364,7 +373,57 @@ def test_kind_deletes_only_old_gc_namespaces() -> None:
     assert r["groundcrew-system"].note == "not gc-*"
     assert r["gc-fresh"].note == "younger than 24.0 h"
     assert r["gc-going"].note == "already terminating"
+    assert r["gc-whoami"].pinned and r["gc-whoami"].note == "pinned (groundcrew/keep=true)"
     assert r["gc-shop"].run_id == "run-a"
     assert ns.deleted == []  # find only reads
     dc.apply_kind(ns, found, sleep=lambda _s: None)
     assert ns.deleted == ["gc-shop"] and r["gc-shop"].result == "PASS"
+
+
+def test_a_namespace_pinned_after_the_plan_is_left_alone() -> None:
+    ns = FakeNamespaces()
+    found = dc.find_kind(ns, _settings(), older_than=HOURS, now=NOW)
+    ns.items[1]["labels"]["groundcrew/keep"] = "true"  # gc-shop, pinned since the plan
+    dc.apply_kind(ns, found, sleep=lambda _s: None)
+    shop = _by_name(found)["gc-shop"]
+    assert ns.deleted == [] and shop.result == "SKIP" and "pinned" in shop.note
+
+
+def _script() -> Any:
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "scripts" / "cleanup_deploys.py"
+    spec = importlib.util.spec_from_file_location("cleanup_deploys", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["cleanup_deploys"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_output_shows_pinned_resources() -> None:
+    module = _script()
+    found = dc.find_kind(FakeNamespaces(), _settings(), older_than=HOURS, now=NOW)
+    lines = module.render([module.Target("kind", found)], NOW)
+    whoami = next(line for line in lines if "gc-whoami" in line)
+    assert whoami.split()[:2] == ["keep", "(pinned)"]
+
+
+def test_the_wrong_platform_account_stops_before_any_role_is_assumed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import os
+
+    monkeypatch.chdir(os.getcwd())  # main() changes directory; restored after the test
+    module = _script()
+    monkeypatch.setattr(module, "platform_account", lambda _settings: "111122223333")
+
+    def no_sessions(*_args: Any) -> Any:
+        raise AssertionError("assumed a role in the wrong account")
+
+    monkeypatch.setattr(module, "_deploy_sessions", no_sessions)
+    monkeypatch.setattr(module, "get_settings", _settings)
+    assert module.main(["--hours", "1", "--account", ACCOUNT]) == 1
+    assert f"account 111122223333, not {ACCOUNT}" in capsys.readouterr().out

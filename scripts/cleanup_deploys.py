@@ -43,10 +43,21 @@ class Target:
     error: str = ""
 
 
+def platform_account(settings: Settings) -> str:
+    """The account of Groundcrew's platform identity (sts:GetCallerIdentity, home region).
+    Checked before any role is assumed."""
+    from app.connectors.aws import AwsSessions
+
+    sessions = AwsSessions(settings)
+    sts = sessions.base().client("sts", region_name=sessions.home_region)
+    return str(sts.get_caller_identity()["Account"])
+
+
 async def _deploy_sessions(
-    connection_id: uuid.UUID | None,
+    connection_id: uuid.UUID | None, expect_account: str
 ) -> list[tuple[str, str, boto3.Session | None, str]]:
-    """(label, account, deploy session or None, error) per deploy-tier AWS connection."""
+    """(label, account, deploy session or None, error) per deploy-tier AWS connection. A
+    connection in another account than expect_account is never assumed."""
     from sqlalchemy import select
 
     from app.connectors.credentials import ConnectionCredentialsProvider
@@ -66,6 +77,9 @@ async def _deploy_sessions(
             continue
         account = str(conn.config.get("account_id") or "")
         label = f"AWS: {conn.name}" + ("" if account in conn.name else f" ({account})")
+        if expect_account and account != expect_account:
+            out.append((label, account, None, f"skipped: account {account}, not {expect_account}"))
+            continue
         try:
             provider = ConnectionCredentialsProvider([conn])
             session = await asyncio.to_thread(provider.aws_deploy_session, conn.id)
@@ -89,13 +103,16 @@ def _check_identity(session: boto3.Session, account: str, settings: Settings) ->
 
 def _aws(
     connection_id: uuid.UUID | None,
+    expect_account: str,
     settings: Settings,
     older: timedelta,
     now: datetime,
     apply: bool,
 ) -> list[Target]:
     targets = []
-    for label, account, session, error in asyncio.run(_deploy_sessions(connection_id)):
+    for label, account, session, error in asyncio.run(
+        _deploy_sessions(connection_id, expect_account)
+    ):
         target = Target(label, error=error)
         targets.append(target)
         if session is None:
@@ -139,10 +156,10 @@ def render(targets: list[Target], now: datetime) -> list[str]:
         if not t.resources and not t.error:
             lines.append("  nothing tagged project=groundcrew")
         for r in t.resources:
-            action = r.result or ("DELETE" if r.delete else "keep")
+            action = r.result or ("DELETE" if r.delete else "keep (pinned)" if r.pinned else "keep")
             run = r.run_id or "-"
             lines.append(
-                f"  {action:<6} {r.kind:<15} {r.name:<46} {run:<28} {r.age(now):>7}  {r.note}"
+                f"  {action:<13} {r.kind:<15} {r.name:<46} {run:<28} {r.age(now):>7}  {r.note}"
             )
     return lines
 
@@ -154,10 +171,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--connection", type=uuid.UUID, help="one AWS connection (default: all deploy-tier)"
     )
+    parser.add_argument(
+        "--account", default="", help="refuse to run unless the platform identity is in it"
+    )
     parser.add_argument("--kubeconfig", type=Path, default=KUBECONFIG)
     args = parser.parse_args(argv)
-    if args.hours <= 0:
-        parser.error("--hours must be more than 0")
+    if args.hours < 0:
+        parser.error("--hours must be 0 or more")
     os.chdir(REPO_ROOT)  # Settings reads .env from here
     settings = get_settings()
     now = datetime.now(UTC)
@@ -165,7 +185,17 @@ def main(argv: list[str] | None = None) -> int:
     mode = "APPLY (deleting)" if args.apply else "DRY RUN (read only; APPLY=1 deletes)"
     print(f"{mode}: tagged project=groundcrew, older than {dc.format_age(older)}, "
           f"region {settings.gc_aws_region}, cluster {settings.gc_ecs_cluster}")  # fmt: skip
-    targets = _aws(args.connection, settings, older, now, args.apply)
+    if args.account:
+        try:
+            found = platform_account(settings)
+        except Exception as exc:
+            print(f"error: could not check the platform identity: {type(exc).__name__}: {exc}")
+            return 1
+        if found != args.account:
+            print(f"error: the platform identity is in account {found}, not {args.account}.")
+            return 1
+        print(f"Platform identity: account {found} (checked before any role is assumed)")
+    targets = _aws(args.connection, args.account, settings, older, now, args.apply)
     if not targets:
         print("\nNo AWS connection with tier deploy.")
     targets.append(_kind(args.kubeconfig, settings, older, now, args.apply))

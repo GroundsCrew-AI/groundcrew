@@ -44,6 +44,11 @@ def aws_tags(run_id: uuid.UUID | str) -> list[dict[str, str]]:
 
 
 K8S_DEPLOY_LABEL = "groundcrew/deploy"
+# Pinned: `make cleanup-deploys` never deletes a resource tagged groundcrew:keep=true (AWS) or
+# labelled groundcrew/keep=true (Kubernetes), whatever its age.
+KEEP_TAG = "groundcrew:keep"
+K8S_KEEP_LABEL = "groundcrew/keep"
+KEEP_VALUE = "true"
 
 
 def k8s_labels(run_id: uuid.UUID | str) -> dict[str, str]:
