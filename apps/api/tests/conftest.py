@@ -5,7 +5,10 @@ CI: a pgvector service container provides it.
 """
 
 import asyncio
+import functools
 import os
+import shutil
+import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -37,6 +40,34 @@ os.environ["INTERNAL_JWT_SECRET"] = "test-internal-jwt-secret-0123456789abcdef" 
 
 from app.db.models import Base, User, Workspace  # noqa: E402
 from app.db.session import SessionFactory  # noqa: E402
+
+
+@functools.cache
+def docker_available() -> bool:
+    """True when a Docker daemon answers (`docker info`), checked once per session."""
+    if not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],  # noqa: S607
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """`live` tests run only with RUN_LIVE_TESTS=1; `docker` tests only with a daemon."""
+    live = os.environ.get("RUN_LIVE_TESTS") == "1"
+    for item in items:
+        if "live" in item.keywords and not live:
+            item.add_marker(pytest.mark.skip(reason="live test: set RUN_LIVE_TESTS=1"))
+        elif "docker" in item.keywords and not docker_available():
+            item.add_marker(pytest.mark.skip(reason="no Docker daemon (docker info failed)"))
+
 
 API_DIR = Path(__file__).resolve().parents[1]
 

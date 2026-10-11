@@ -11,7 +11,8 @@ with Docker 29.
 make kind-up            # cluster, registry, ingress, deployer RBAC (about 3 minutes the first time)
 make kind-kubeconfig    # .kind/groundcrew-deployer*.kubeconfig
 make kind-check         # proves what the deployer can and cannot do
-make dev KIND=1         # the dev stack, with api and worker on the kind network
+make dev KIND=1         # the dev stack, with api, worker, and dind on the kind network
+make dind-check         # from the worker: build in dind, push to kind-registry:5000, run in kind
 ```
 
 Then add a Kubernetes connection in Groundcrew with `.kind/groundcrew-deployer.kubeconfig`.
@@ -90,7 +91,7 @@ Only linux/amd64 has pinned checksums; on arm64 install both tools yourself firs
 | Piece | Details |
 |---|---|
 | Cluster | `infra/kind/cluster.yaml`: one node, Kubernetes v1.37.0 pinned by digest, API server on `127.0.0.1`, kubectl context `kind-groundcrew` |
-| Registry | Container `kind-registry` (`registry:3.0.0`), `localhost:5001` on this machine, `kind-registry:5000` on the `kind` Docker network. Nodes pull `localhost:5001/<image>` through a containerd mirror, so the same image name works for `docker push` here and in a pod spec. `GC_KIND_REGISTRY=localhost:5001` |
+| Registry | Container `kind-registry` (`registry:3.0.0`), `localhost:5001` on this machine, `kind-registry:5000` on the `kind` Docker network. Nodes pull `localhost:5001/<image>` and `kind-registry:5000/<image>` through containerd mirrors, so the name you push is the name a pod spec uses: `localhost:5001` from this machine, `kind-registry:5000` from the `dind` build daemon. `GC_KIND_REGISTRY=localhost:5001` on the host; `make dev KIND=1` sets `kind-registry:5000` for the worker |
 | Ingress | ingress-nginx v1.15.1 (kind manifest, checksummed), IngressClass `nginx`, ports 80 / 443 on `127.0.0.1`. `*.localhost` resolves to 127.0.0.1, so an Ingress host `shop.localhost` is `http://shop.localhost` with no `/etc/hosts` change |
 | Deployer | `infra/kind/rbac.yaml` and `infra/kind/admission-policy.yaml` (below) |
 
@@ -178,6 +179,16 @@ echo -e 'fs.inotify.max_user_watches=524288\nfs.inotify.max_user_instances=512' 
 **`ErrImagePull` for `localhost:5001/...`.** The image was not pushed
 (`curl -s localhost:5001/v2/_catalog`), or the registry is not on the kind network:
 `docker network connect kind kind-registry`, or run `make kind-up` again (it fixes both).
+
+**`ErrImagePull` for `kind-registry:5000/...`, or `http: server gave HTTP response to HTTPS
+client`.** The cluster was created before the `kind-registry:5000` mirror existed: run
+`make kind-up` again (it rewrites both mirrors on the running node, no restart needed).
+
+**The worker gets `x509: certificate is valid for ..., not dind`, or `cannot connect to the
+Docker daemon`.** Start the stack with `make dev KIND=1` (it starts `dind` before the worker).
+If the certificates are broken, `docker compose down` and `docker volume rm
+groundcrew_dind-certs-ca groundcrew_dind-certs-issued groundcrew_dind-certs-client`; dind
+makes new ones on start.
 
 **`http://<name>.localhost` returns 404 from nginx.** The Ingress needs `ingressClassName: nginx`
 and host `<name>.localhost`; ingress-nginx takes a few seconds to pick up a new Ingress.

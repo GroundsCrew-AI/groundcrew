@@ -1,0 +1,11 @@
+{
+  "insecure-registries": ["kind-registry:5000"],
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "defaultKeepStorage": "10GB"
+    }
+  },
+  "log-driver": "json-file",
+  "log-opts": {"max-size": "10m", "max-file": "3"}
+}

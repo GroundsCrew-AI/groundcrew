@@ -503,10 +503,12 @@ class _Http:
 
 
 def fixture_session(
-    responses: dict[str, Any] | None = None, calls: list[str] | None = None
+    responses: dict[str, Any] | None = None,
+    calls: list[str] | None = None,
+    allowed: frozenset[str] = AWS_READ_OPERATIONS,
 ) -> boto3.Session:
-    """A guarded session answering from `responses` (default FIXTURE). Records every
-    operation it is asked for in `calls`."""
+    """A session guarded by `allowed` (default: the read-only allowlist), answering from
+    `responses` (default FIXTURE). Records every operation it is asked for in `calls`."""
     table = FIXTURE if responses is None else responses
     seen = calls if calls is not None else []
     session = guard_session(
@@ -516,7 +518,7 @@ def fixture_session(
             aws_session_token="fake",  # noqa: S106
             region_name=REGION,
         ),
-        AWS_READ_OPERATIONS,
+        allowed,
     )
 
     def keep_params(params: dict[str, Any], context: dict[str, Any], **_: Any) -> None:

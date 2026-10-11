@@ -16,7 +16,7 @@ other way is refused by AWS or Kubernetes, and `make cleanup-deploys` never sees
 | `GC_SUBNET_IDS` | unset: the default VPC's default subnets | Subnets for Fargate tasks (comma separated) | `resolve_subnets()`; set it when the account has no default VPC |
 | `GC_LOG_GROUP_PREFIX` | `/groundcrew/` | CloudWatch log group prefix | Fixed; the deploy role may only create `/groundcrew/*` |
 | `GC_ECR_PREFIX` | `groundcrew-` | ECR repository prefix | Fixed; the deploy role may only create `groundcrew-*` |
-| `GC_KIND_REGISTRY` | `localhost:5001` | Where images for the local kind cluster are pushed | `make kind-up` (the nodes pull the same name through a registry mirror) |
+| `GC_KIND_REGISTRY` | `localhost:5001` (host); `kind-registry:5000` for the worker in `make dev KIND=1` | Where images for the local kind cluster are pushed, and the name pod specs use | `make kind-up` (the nodes pull both names from the same registry through containerd mirrors) |
 | `GC_NAMESPACE_PREFIX` | `gc-` | Kubernetes namespace prefix | Fixed; the admission policy only allows the deployer to create `gc-*` |
 
 The validators in `Settings` refuse values the policies would deny: a cluster or ECR prefix
@@ -50,6 +50,10 @@ Every resource a deploy creates carries both tags. The IAM conditions and cleanu
 `CreateService` / `RegisterTaskDefinition` / `CreateRepository`, `TagSpecifications` on
 `CreateSecurityGroup`, `tags` on `CreateLogGroup`): the deploy role only allows those calls with
 `project=groundcrew` in the request, and only allows tagging as part of a create.
+
+Optional: `groundcrew:keep=true` (AWS) / `groundcrew/keep=true` (Kubernetes), constants
+`KEEP_TAG` / `K8S_KEEP_LABEL`, pins a resource so `make cleanup-deploys` never deletes it. Like
+the other tags, it can only be set on create.
 
 ## Network
 
@@ -193,13 +197,100 @@ policy; `SimulateCustomPolicy`:
 `PutSecretValue`, and references it in the task definition's `secrets` (`valueFrom` = the ARN);
 ECS reads it with the task execution role. `deploy_role_arn(account)` gives the role ARN.
 
-### Cleanup plan (deliverable 4)
+### Cleanup (`make cleanup-deploys`)
 
-`make cleanup-deploys` deletes services, security groups, log groups, ECR repositories, and
-`groundcrew/*` secrets tagged `project=groundcrew`. It **does not deregister task definitions**:
-the deploy role cannot (see above), they cost nothing, and leaving them keeps every revision
-available for a rollback. Deleted secrets use Secrets Manager's recovery window (default 7 days)
-unless cleanup is told otherwise.
+Deletes what deploys left behind (`app/connectors/deploy_cleanup.py`,
+`scripts/cleanup_deploys.py`). **Dry run by default**; nothing is deleted without `APPLY=1`.
+
+```bash
+make cleanup-deploys HOURS=24                   # dry run: what would go, and why the rest stays
+make cleanup-deploys HOURS=24 APPLY=1           # delete it
+make cleanup-deploys HOURS=24 CONNECTION=<id>   # one AWS connection (default: every deploy-tier one)
+```
+
+It goes through `aws_deploy_session()` for each connection: Groundcrew's platform identity assumes
+`groundcrew-deploy` (never a profile or `~/.aws`). Before any role is assumed it checks that the
+platform identity is in `AWS_ACCOUNT` (default `881050425883`, the demo account), and it skips
+connections in any other account. Then it checks that each session is that role, in the
+connection's account and `GC_AWS_REGION`. `HOURS=0` means everything tagged, whatever its age. The dry run, and the
+listing step of `APPLY=1`, use a separate copy of the session that may only call operations in
+both `AWS_DEPLOY_OPERATIONS` and `AWS_READ_OPERATIONS`, so a bug cannot delete anything during
+the listing. kind uses the deployer kubeconfig (`.kind/groundcrew-deployer.host.kubeconfig`),
+never cluster-admin; without it, kind is skipped.
+
+**Only resources tagged `project=groundcrew` and older than `HOURS`:**
+
+| What | Found by | Age from | Delete |
+|---|---|---|---|
+| ECS services in `GC_ECS_CLUSTER` | `ListServices`, `DescribeServices` (tags) | `createdAt` | Scale to 0, delete, wait until inactive |
+| Security groups | `DescribeSecurityGroups` filtered on `tag:project=groundcrew` | **their run**, see below | Only once no network interface uses it (waits up to 3 minutes after the services go) |
+| Log groups under `GC_LOG_GROUP_PREFIX` | `DescribeLogGroups`, tags from `tag:GetResources` | `creationTime` | Delete |
+| ECR repositories `GC_ECR_PREFIX*` | `tag:GetResources`, then `DescribeRepositories` by name | `createdAt` | Delete with its images (force) |
+| Secrets `groundcrew/*` | `tag:GetResources`, then `DescribeSecret` (never the value) | `CreatedDate` | Force delete (no recovery window), then wait until `DescribeSecret` says it is gone |
+| Namespaces `gc-*` in kind | list with label `project=groundcrew` | `creationTimestamp` | Delete, wait until gone |
+
+**Pinned resources are always kept**, whatever their age, and shown as `keep (pinned)`:
+
+| Where | Pin | Who can set it |
+|---|---|---|
+| AWS (service, security group, log group, repository, secret) | tag `groundcrew:keep=true` | The deploy role can tag only when it creates a resource, so a deploy that should stay sets it on create. Pinning an existing resource is done by the account owner (console or `aws ... tag-resource`) |
+| Kubernetes namespace | label `groundcrew/keep=true` | The deploy target on create (the admission policy allows any extra label), or a cluster admin: `kubectl --context kind-groundcrew label namespace <gc-name> groundcrew/keep=true` |
+
+Before each delete, `APPLY=1` checks again and leaves alone anything pinned since the dry run
+(service, security group, secret, namespace). `gc-whoami` in the local kind cluster (a
+`whoami` app from the Phase 3 discovery check) is pinned.
+
+**Security groups** have no creation time in EC2. A group goes only when its
+`groundcrew:deploy` run is provably older than `HOURS`: another resource of the same run (a
+service, log group, repository, secret, or task definition) was created before the cutoff.
+A group with no run tag, or whose run has nothing left to prove its age, stays and the dry run
+says why. A group without `project=groundcrew` is never even listed.
+
+**Task definitions are never deregistered:** the deploy role cannot (see above), they cost
+nothing, and every revision stays available for a rollback. Cleanup lists the `groundcrew-*`
+ones as `keep` and uses them as evidence of a run's age.
+
+Before each delete, `APPLY=1` checks again (the service's and secret's own tags, the group's
+attachments). If the resource is no longer ours or still in use, it is left alone (`SKIP`). A
+failed delete (`FAIL`) does not stop the rest, and the exit code is non-zero.
+
+The dry run found, and the code fixed, two IAM scopes: listing every ECR repository is
+`repository/*`, and describing a tagged secret outside `groundcrew/` is refused. Cleanup
+describes only `groundcrew-*` repositories and `groundcrew/*` secrets by name. The demo's
+`checkout-*` task definitions and security groups are tagged `project=groundcrew` as well.
+Their names and the missing `groundcrew:deploy` tag keep them out of cleanup.
+
+### Cost of a live deploy
+
+us-east-2 on-demand list prices from the AWS Price List API (offer files published
+2026-09-11 for ECS, ECR and Secrets Manager; 2026-09-17 for VPC; 2026-10-07 for CloudWatch;
+read 2026-10-11). Totals are estimates: real bills round per second (Fargate, with a 1-minute
+minimum) and add data transfer.
+
+| Item | Price | Notes |
+|---|---|---|
+| Fargate vCPU | $0.04048 per vCPU-hour | Linux/x86 |
+| Fargate memory | $0.004445 per GB-hour | |
+| Fargate ephemeral storage | $0.000111 per GB-hour above the free 20 GB | |
+| Fargate Spot | **not confirmed:** variable, not in the price list | AWS advertises up to 70% off; the cluster offers it, deploys do not use it yet |
+| Public IPv4 address | $0.005 per hour (in use or idle) | One per task with `assignPublicIp=ENABLED` |
+| Secrets Manager | $0.40 per secret-month (prorated), $0.05 per 10,000 API calls | |
+| ECR storage | $0.10 per GB-month | |
+| CloudWatch Logs | $0.50 per GB ingested, $0.03 per GB-month stored | |
+| ECS cluster, security groups, task definitions, IAM roles | $0 | |
+| Data transfer out | **not confirmed here:** see AWS's EC2 data transfer pricing | Small for a smoke test |
+
+Examples (estimates):
+
+| Deploy | Per hour | Per day | Per 30 days |
+|---|---|---|---|
+| 0.25 vCPU / 0.5 GB, public IP (the smoke test's task) | $0.0173 | $0.42 | $12.49 |
+| 0.5 vCPU / 1 GB, public IP | $0.0297 | $0.71 | $21.37 |
+| 1 vCPU / 2 GB, public IP | $0.0544 | $1.30 | $39.15 |
+| Plus per deploy, while it exists | 1 secret: $0.40/month; a 200 MB image: $0.02/month; logs: $0.50/GB | | |
+
+A deploy someone forgets costs about $12 a month at the smallest size. That is why
+`make cleanup-deploys` exists. The smoke test's 163-second run cost about $0.0008.
 
 ## Kubernetes namespaces
 
@@ -222,8 +313,34 @@ the admission policy refuses it. Locally, `make kind-up` sets all of this up; re
 `.kind/groundcrew-deployer.kubeconfig` (from `make kind-kubeconfig`) as the Kubernetes
 connection, and push images to `GC_KIND_REGISTRY`. The full setup is in `docs/kind.md`.
 
+## Build daemon (local dev)
+
+Sandbox builds (Ahmed's Builder) run in the `dind` Compose service (`docker:29.7.2-dind`), a
+Docker daemon of its own. The worker reaches it over TLS, and **no service mounts the host's
+`/var/run/docker.sock`** (`tests/test_compose_dind.py` fails if one does).
+
+| | |
+|---|---|
+| Worker env | `DOCKER_HOST=tcp://dind:2376`, `DOCKER_TLS_VERIFY=1`, `DOCKER_CERT_PATH=/certs/client`, `SANDBOX_SMOKE_HOST=dind` (a container the Builder starts with `-p`/`-P` answers at `dind:<port>`, not localhost) |
+| TLS | dind generates a CA, its server certificate (for hostname `dind`), and a client certificate on start (into `dind-certs-issued`, key mode 0644, reset on every start). The one-shot `dind-certs` service then copies the client certificate into `dind-certs-client`, owned by the worker's uid 1000, key 0600, directory 0700; the worker mounts it read-only and starts only after the copy succeeded. `dind-certs-ca` keeps the CA across restarts, so the copy stays valid when dind restarts alone. Plain TCP (2375) is refused |
+| Network | `default` only; with `make dev KIND=1` also `kind`, so it can push to `kind-registry:5000`. **No published ports**: nothing outside the Compose network can reach it |
+| Registry | `infra/dind/daemon.json`: `insecure-registries` is only `kind-registry:5000` (plain HTTP, local). ECR pushes use HTTPS and the deploy role's registry token |
+| Limits | `DIND_CPUS` (default 2), `DIND_MEMORY` (default `4g`), 2048 processes |
+| Cache | Volume `dind-data` (`/var/lib/docker`): images and the BuildKit cache survive restarts; BuildKit prunes above 10 GB. `docker compose down -v` clears it |
+| CLI | The api image carries the Docker CLI and buildx (same version, `docker:29.7.2-cli`), no daemon. Only the worker gets `DOCKER_HOST` |
+
+Images for kind are tagged `$GC_KIND_REGISTRY/<repo>:<tag>`. In `make dev KIND=1` the worker's
+`GC_KIND_REGISTRY` is `kind-registry:5000`; `make kind-up` adds a containerd mirror for that
+name on the nodes (next to `localhost:5001`), so a pod spec uses the exact name the build
+pushed. `make dind-check` proves the path live (`docs/deploy-live.md`).
+
+**dind is privileged, and that is acceptable for local dev only.** A privileged container is
+root on the host, and the client certificate controls that daemon. So whoever can read the
+worker's `/certs/client` (uid 1000 in the worker, or root) effectively has the host.
+**Hosted deployments (Phase 6) must run builds on a separate build host or in Nebius
+Sandboxes, never in a privileged container beside the API or worker.** The Builder sees only the standard `DOCKER_*` variables and
+`SANDBOX_SMOKE_HOST`, so moving builds out changes configuration, not code.
+
 ## What lands later in this branch
 
-`make cleanup-deploys` and the cost per live deploy (deliverable 4), CI (deliverable 5), and the
-live runbook `docs/deploy-live.md` (deliverable 6). The deploy tier is written and tested
-offline; no stack has been created or updated with it yet.
+CI (deliverable 5) and the kind runbook in `docs/deploy-live.md` (deliverable 6).

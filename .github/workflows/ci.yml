@@ -32,12 +32,18 @@ jobs:
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
-    # No secrets: tests fake the LLM and never call Token Factory.
+    # No secrets: tests fake the LLM and never call Token Factory. Live tests (marker `live`:
+    # kind, AWS, GitHub) run only with RUN_LIVE_TESTS=1, which CI never sets.
     env:
       DATABASE_URL: postgresql+asyncpg://groundcrew:groundcrew@localhost:5432/groundcrew_test
       TEST_DATABASE_URL: postgresql+asyncpg://groundcrew:groundcrew@localhost:5432/groundcrew_test
+      RUN_LIVE_TESTS: "0"
     steps:
       - uses: actions/checkout@v4
+      # The runner's Docker daemon runs the `docker` tests (dind config, compose files).
+      - name: Docker
+        run: docker info --format 'Docker {{.ServerVersion}}, {{.OperatingSystem}}, {{.NCPU}} CPUs'
+
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -46,8 +52,21 @@ jobs:
       - run: uv run ruff check . ../../scripts
       - run: uv run ruff format --check . ../../scripts
       - run: uv run mypy app tests ../../scripts
+      - name: Alembic has one head
+        run: |
+          heads=$(uv run alembic heads)
+          echo "$heads"
+          if [ "$(printf '%s\n' "$heads" | grep -c .)" -ne 1 ]; then
+            echo "::error::alembic heads lists more than one head. Merge the migrations first."
+            exit 1
+          fi
       - name: Run migrations
         run: uv run alembic upgrade head
+      - name: Infra checks (compose and dind, kind manifests, connect template, cleanup)
+        run: >-
+          uv run pytest -q tests/test_compose_dind.py tests/test_docker_infra.py
+          tests/test_kind_manifests.py tests/test_aws_connect_template.py
+          tests/test_deploy_cleanup.py tests/test_migrations_head.py
       - run: uv run pytest
       - name: Web client types match the API
         run: |
