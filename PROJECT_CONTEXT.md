@@ -490,6 +490,13 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
           `aws_deploy_session()`, temp `DOCKER_CONFIG`, `--password-stdin`); `NebiusSandbox` stub
           (`TODO(nebius-sandbox)`). Live: `legacy-flask-app` naive build fails on `pg_config`, fixed build
           passes smoke and pushes to kind
+    - [x] M7 Deploy page (`apps/web`): source picker (GitHub connection, repo, ref), target picker (kind / AWS
+          deploy tier; observe tier disabled with "Turn on deploys"), env rows with a secret toggle,
+          allow_missing_env; live view at `/deploy/[id]` on the shared run timeline (stage strip, build
+          attempts with diff / error / model badge / tokens / cost, plan approval card with secrets masked and
+          approve blocked on a failed preflight, verify, live URL with "View on Map", rollback card); deploys
+          list. Runs on the M1 types; while `/deploys` answers 501, `lib/deploys-fake.ts` (deleted in M6)
+          simulates the run in the browser behind a "Preview" banner
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission
