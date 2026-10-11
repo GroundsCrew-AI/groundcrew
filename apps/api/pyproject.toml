@@ -63,3 +63,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# An unknown marker is an error, so a typo cannot turn a gated test into an ungated one.
+addopts = ["--strict-markers"]
+markers = [
+    "docker: needs a Docker daemon; skipped when `docker info` fails (tests/conftest.py)",
+    "live: talks to real infrastructure (kind, AWS, GitHub); skipped unless RUN_LIVE_TESTS=1",
+]

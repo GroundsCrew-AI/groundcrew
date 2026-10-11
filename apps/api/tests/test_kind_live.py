@@ -31,12 +31,7 @@ ROOT = Path(__file__).resolve().parents[3]
 HOST_KUBECONFIG = ROOT / ".kind" / "groundcrew-deployer.host.kubeconfig"
 KUBECTL = ROOT / ".tools" / "bin" / "kubectl"
 
-pytestmark = [
-    pytest.mark.skipif(
-        os.environ.get("RUN_LIVE_TESTS") != "1", reason="live test: set RUN_LIVE_TESTS=1"
-    ),
-    pytest.mark.anyio,
-]
+pytestmark = [pytest.mark.live, pytest.mark.anyio]
 
 
 @pytest.fixture
