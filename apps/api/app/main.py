@@ -6,9 +6,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -16,7 +19,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
-from app.routes import approvals, connections, graph, runs, workspaces
+from app.routes import approvals, connections, deploys, graph, runs, workspaces
 from app.routes.schemas import ApprovalStepEvent, RunStatusEvent, StepOut
 
 VERSION = "0.1.0"
@@ -90,12 +93,30 @@ app.add_middleware(
 )
 app.add_middleware(RequestIdMiddleware)
 
+# Request fields whose raw input must never come back in a 422 (POST /deploys env values).
+_SECRET_INPUT_FIELDS = frozenset({"env"})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's default 422, minus the echoed input for secret fields: a too-long or
+    duplicated env var would otherwise send its value back through the web proxy."""
+    errors = []
+    for error in exc.errors():
+        loc = error.get("loc", ())
+        if len(loc) > 1 and loc[0] == "body" and loc[1] in _SECRET_INPUT_FIELDS:
+            error = {k: v for k, v in error.items() if k not in ("input", "ctx")}
+        errors.append(error)
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 # Every route except /health and the SSE stream requires the signed-in user (CurrentUser).
 app.include_router(workspaces.router)
 app.include_router(runs.router)
 app.include_router(approvals.router)
 app.include_router(connections.router)
 app.include_router(graph.router)
+app.include_router(deploys.router)
 
 
 def _openapi() -> dict[str, Any]:

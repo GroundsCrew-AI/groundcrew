@@ -35,6 +35,7 @@ from app.db.models import (
     User,
 )
 from app.db.session import SessionFactory
+from app.pipeline.events import DEPLOY_EVENT_NAMES
 from app.routes.deps import CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
 from app.routes.schemas import (
     ApprovalOut,
@@ -203,6 +204,8 @@ async def _step_event(session: AsyncSession, run: Run, step: RunStep) -> str:
                 approval_out = ApprovalOut.build(row[0], run, row[1])
         payload = ApprovalStepEvent(step=StepOut.build(step), approval=approval_out)
         return _sse(step.kind, payload, step.seq)
+    if step.kind in DEPLOY_EVENT_NAMES:
+        return _sse(step.kind, StepOut.build(step), step.seq)
     return _sse("step", StepOut.build(step), step.seq)
 
 
@@ -272,8 +275,10 @@ async def run_events(
 ) -> StreamingResponse:
     """SSE: existing steps, then new ones and status changes until the run ends.
 
-    Events: `step`, `approval_requested`, `approval_decided` (id = step seq), `status`,
-    and a final `done`. A heartbeat comment every 15 s keeps proxies from closing the
+    Events: `step`, `approval_requested`, `approval_decided`, the deploy events
+    (`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,
+    `rollback_offered`, `run_finished`; id = step seq), `status`, and a final `done`.
+    See docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the
     connection. Reconnects with Last-Event-ID (or ?after=) continue after that step.
 
     No request-scoped session here: FastAPI closes it only after the stream ends, which

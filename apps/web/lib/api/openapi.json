@@ -170,6 +170,71 @@
         "title": "ApprovalStepEvent",
         "type": "object"
       },
+      "AttemptModelCall": {
+        "description": "The model call that wrote this attempt's Dockerfile. Its own `llm` step is in the\ntimeline too; this copy lets the attempt card show the badge without a lookup.",
+        "properties": {
+          "completion_tokens": {
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "escalated": {
+            "title": "Escalated",
+            "type": "boolean"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "model_tier": {
+            "title": "Model Tier",
+            "type": "string"
+          },
+          "prompt_tokens": {
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "reasoning_mode": {
+            "title": "Reasoning Mode",
+            "type": "string"
+          },
+          "step_seq": {
+            "title": "Step Seq",
+            "type": "integer"
+          },
+          "task": {
+            "enum": [
+              "write_dockerfile",
+              "fix_build"
+            ],
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "model_tier",
+          "model_id",
+          "reasoning_mode",
+          "escalated",
+          "prompt_tokens",
+          "completion_tokens",
+          "cost_usd",
+          "step_seq"
+        ],
+        "title": "AttemptModelCall",
+        "type": "object"
+      },
       "AwsCompleteIn": {
         "properties": {
           "connection_id": {
@@ -373,6 +438,128 @@
           "resource_group"
         ],
         "title": "AzureConnectIn",
+        "type": "object"
+      },
+      "BuildAttempt": {
+        "properties": {
+          "attempt": {
+            "maximum": 5,
+            "minimum": 1,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "dockerfile_diff": {
+            "title": "Dockerfile Diff",
+            "type": "string"
+          },
+          "dockerfile_source": {
+            "enum": [
+              "repo",
+              "generated",
+              "fixed"
+            ],
+            "title": "Dockerfile Source",
+            "type": "string"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "error_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error Summary"
+          },
+          "failing_step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Failing Step"
+          },
+          "image_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Image Ref"
+          },
+          "log_tail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Log Tail"
+          },
+          "max_attempts": {
+            "default": 5,
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "model_call": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AttemptModelCall"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          },
+          "type": {
+            "const": "build_attempt",
+            "default": "build_attempt",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt",
+          "dockerfile_source",
+          "dockerfile_diff",
+          "ok",
+          "duration_ms"
+        ],
+        "title": "BuildAttempt",
         "type": "object"
       },
       "ConnectionDeleted": {
@@ -619,6 +806,339 @@
         "title": "Decision",
         "type": "string"
       },
+      "DeployCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/EnvVarIn"
+            },
+            "maxItems": 100,
+            "title": "Env",
+            "type": "array"
+          },
+          "options": {
+            "$ref": "#/components/schemas/DeployOptions"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GitHubRepoSource"
+              },
+              {
+                "$ref": "#/components/schemas/FixtureSource"
+              }
+            ],
+            "title": "Repo"
+          },
+          "target_connection_id": {
+            "format": "uuid",
+            "title": "Target Connection Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "repo",
+          "target_connection_id"
+        ],
+        "title": "DeployCreate",
+        "type": "object"
+      },
+      "DeployCreated": {
+        "properties": {
+          "deploy_id": {
+            "format": "uuid",
+            "title": "Deploy Id",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "deploy_id",
+          "run_id"
+        ],
+        "title": "DeployCreated",
+        "type": "object"
+      },
+      "DeployDetail": {
+        "properties": {
+          "allow_missing_env": {
+            "title": "Allow Missing Env",
+            "type": "boolean"
+          },
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App"
+          },
+          "automatic_fix": {
+            "title": "Automatic Fix",
+            "type": "boolean"
+          },
+          "build_attempts": {
+            "title": "Build Attempts",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "deploy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeployRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/EnvVarView"
+            },
+            "title": "Env",
+            "type": "array"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "live_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Url"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeployPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "source": {
+            "$ref": "#/components/schemas/DeploySourceOut"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scout",
+                  "build",
+                  "smoke",
+                  "push",
+                  "plan",
+                  "preflight",
+                  "approval",
+                  "apply",
+                  "verify",
+                  "rollback"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageOut"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_approval",
+              "live",
+              "failed",
+              "rolled_back",
+              "stopped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/DeployTargetOut"
+          },
+          "ultra_equiv_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ultra Equiv Usd"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "workspace_id",
+          "status",
+          "run_status",
+          "stop_reason",
+          "stage",
+          "app",
+          "source",
+          "target",
+          "live_url",
+          "build_attempts",
+          "automatic_fix",
+          "cost_usd",
+          "ultra_equiv_usd",
+          "error",
+          "created_by",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "duration_ms",
+          "env",
+          "allow_missing_env",
+          "stages",
+          "plan",
+          "deploy"
+        ],
+        "title": "DeployDetail",
+        "type": "object"
+      },
+      "DeployOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_missing_env": {
+            "default": false,
+            "title": "Allow Missing Env",
+            "type": "boolean"
+          }
+        },
+        "title": "DeployOptions",
+        "type": "object"
+      },
       "DeployOut": {
         "properties": {
           "at": {
@@ -692,6 +1212,597 @@
         "title": "DeployOut",
         "type": "object"
       },
+      "DeployPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeploySummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "DeployPage",
+        "type": "object"
+      },
+      "DeployPlan": {
+        "description": "What the approval card shows: the exact plan that runs after approval.",
+        "properties": {
+          "allow_missing_env": {
+            "title": "Allow Missing Env",
+            "type": "boolean"
+          },
+          "app": {
+            "title": "App",
+            "type": "string"
+          },
+          "cpu": {
+            "examples": [
+              "250m",
+              "256"
+            ],
+            "title": "Cpu",
+            "type": "string"
+          },
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/EnvVarView"
+            },
+            "title": "Env",
+            "type": "array"
+          },
+          "expected_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Url"
+          },
+          "health_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Path"
+          },
+          "image": {
+            "title": "Image",
+            "type": "string"
+          },
+          "memory": {
+            "examples": [
+              "512Mi",
+              "512"
+            ],
+            "title": "Memory",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "preflight": {
+            "items": {
+              "$ref": "#/components/schemas/PreflightCheck"
+            },
+            "title": "Preflight",
+            "type": "array"
+          },
+          "rendered": {
+            "title": "Rendered",
+            "type": "string"
+          },
+          "rendered_format": {
+            "enum": [
+              "yaml",
+              "json"
+            ],
+            "title": "Rendered Format",
+            "type": "string"
+          },
+          "replicas": {
+            "title": "Replicas",
+            "type": "integer"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/PlannedResource"
+            },
+            "title": "Resources",
+            "type": "array"
+          },
+          "rollback_to_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rollback To Revision"
+          },
+          "target": {
+            "enum": [
+              "k8s",
+              "aws_ecs"
+            ],
+            "title": "Target",
+            "type": "string"
+          },
+          "target_connection_id": {
+            "format": "uuid",
+            "title": "Target Connection Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "deploy_plan",
+            "default": "deploy_plan",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "target_connection_id",
+          "app",
+          "image",
+          "port",
+          "health_path",
+          "replicas",
+          "cpu",
+          "memory",
+          "env",
+          "resources",
+          "preflight",
+          "allow_missing_env",
+          "rendered",
+          "rendered_format"
+        ],
+        "title": "DeployPlan",
+        "type": "object"
+      },
+      "DeployRecord": {
+        "description": "runs.state[\"deploy\"]: one finished deployment.",
+        "properties": {
+          "app": {
+            "title": "App",
+            "type": "string"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "image": {
+            "title": "Image",
+            "type": "string"
+          },
+          "live_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Url"
+          },
+          "plan_summary": {
+            "title": "Plan Summary",
+            "type": "string"
+          },
+          "previous_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Revision"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "live",
+              "failed",
+              "rolled_back"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "enum": [
+              "k8s",
+              "aws_ecs"
+            ],
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "connection_id",
+          "app",
+          "image",
+          "commit",
+          "repo",
+          "plan_summary",
+          "live_url",
+          "revision",
+          "previous_revision",
+          "started_at",
+          "finished_at",
+          "status"
+        ],
+        "title": "DeployRecord",
+        "type": "object"
+      },
+      "DeploySourceOut": {
+        "properties": {
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "connection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Id"
+          },
+          "kind": {
+            "enum": [
+              "github",
+              "fixture"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "repo",
+          "ref",
+          "connection_id",
+          "commit"
+        ],
+        "title": "DeploySourceOut",
+        "type": "object"
+      },
+      "DeploySummary": {
+        "description": "One row of the deploys list.",
+        "properties": {
+          "app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App"
+          },
+          "automatic_fix": {
+            "title": "Automatic Fix",
+            "type": "boolean"
+          },
+          "build_attempts": {
+            "title": "Build Attempts",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "live_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Url"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "source": {
+            "$ref": "#/components/schemas/DeploySourceOut"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scout",
+                  "build",
+                  "smoke",
+                  "push",
+                  "plan",
+                  "preflight",
+                  "approval",
+                  "apply",
+                  "verify",
+                  "rollback"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_approval",
+              "live",
+              "failed",
+              "rolled_back",
+              "stopped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/DeployTargetOut"
+          },
+          "ultra_equiv_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ultra Equiv Usd"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "workspace_id",
+          "status",
+          "run_status",
+          "stop_reason",
+          "stage",
+          "app",
+          "source",
+          "target",
+          "live_url",
+          "build_attempts",
+          "automatic_fix",
+          "cost_usd",
+          "ultra_equiv_usd",
+          "error",
+          "created_by",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "duration_ms"
+        ],
+        "title": "DeploySummary",
+        "type": "object"
+      },
+      "DeployTargetOut": {
+        "properties": {
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "k8s",
+              "aws_ecs"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection_id",
+          "kind",
+          "name"
+        ],
+        "title": "DeployTargetOut",
+        "type": "object"
+      },
       "EdgeOut": {
         "properties": {
           "confidence": {
@@ -748,6 +1859,97 @@
           "rule"
         ],
         "title": "EdgeOut",
+        "type": "object"
+      },
+      "EnvVarIn": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "examples": [
+              "DATABASE_URL"
+            ],
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "title": "Secret",
+            "type": "boolean"
+          },
+          "value": {
+            "format": "password",
+            "maxLength": 16384,
+            "title": "Value",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "title": "EnvVarIn",
+        "type": "object"
+      },
+      "EnvVarView": {
+        "description": "An env var as shown on the approval card and in the deploy detail. A secret's value is\nnever shown; `value` is null for secrets and for missing values.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provided": {
+            "title": "Provided",
+            "type": "boolean"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "secret": {
+            "title": "Secret",
+            "type": "boolean"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name",
+          "secret",
+          "required",
+          "provided"
+        ],
+        "title": "EnvVarView",
+        "type": "object"
+      },
+      "FixtureSource": {
+        "additionalProperties": false,
+        "description": "A repo under demo/fixtures/ (tests and local dev; refused when APP_ENV is not dev).",
+        "properties": {
+          "fixture": {
+            "examples": [
+              "py-build-trap"
+            ],
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+            "title": "Fixture",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fixture"
+        ],
+        "title": "FixtureSource",
         "type": "object"
       },
       "GitHubInstallationOut": {
@@ -882,6 +2084,42 @@
           "linked"
         ],
         "title": "GitHubRepoOut",
+        "type": "object"
+      },
+      "GitHubRepoSource": {
+        "additionalProperties": false,
+        "description": "A repository the workspace's GitHub connection can read.",
+        "properties": {
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "ref": {
+            "examples": [
+              "main"
+            ],
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[^\\s~^:?*\\[\\\\]+$",
+            "title": "Ref",
+            "type": "string"
+          },
+          "repo": {
+            "examples": [
+              "GroundsCrew-AI/legacy-flask-app"
+            ],
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$",
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection_id",
+          "repo",
+          "ref"
+        ],
+        "title": "GitHubRepoSource",
         "type": "object"
       },
       "GraphOut": {
@@ -1117,6 +2355,52 @@
         "title": "LastDiscovery",
         "type": "object"
       },
+      "LiveUrl": {
+        "properties": {
+          "app": {
+            "title": "App",
+            "type": "string"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resource Id"
+          },
+          "target": {
+            "enum": [
+              "k8s",
+              "aws_ecs"
+            ],
+            "title": "Target",
+            "type": "string"
+          },
+          "type": {
+            "const": "live_url",
+            "default": "live_url",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "target",
+          "app"
+        ],
+        "title": "LiveUrl",
+        "type": "object"
+      },
       "MeOut": {
         "properties": {
           "user": {
@@ -1164,6 +2448,92 @@
           "provider"
         ],
         "title": "Neighbor",
+        "type": "object"
+      },
+      "PlannedResource": {
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "update",
+              "unchanged",
+              "delete"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "kind": {
+            "examples": [
+              "Deployment",
+              "ecs:Service"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "action"
+        ],
+        "title": "PlannedResource",
+        "type": "object"
+      },
+      "PreflightCheck": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "name": {
+            "enum": [
+              "image",
+              "env",
+              "port",
+              "name_collision",
+              "quota",
+              "other"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "overridden": {
+            "default": false,
+            "title": "Overridden",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "warn",
+              "fail"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "detail"
+        ],
+        "title": "PreflightCheck",
         "type": "object"
       },
       "ResourceDetail": {
@@ -1561,6 +2931,48 @@
         "title": "ResourceOut",
         "type": "object"
       },
+      "RollbackOffered": {
+        "properties": {
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "from_revision": {
+            "title": "From Revision",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "to_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Revision"
+          },
+          "type": {
+            "const": "rollback_offered",
+            "default": "rollback_offered",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "reason",
+          "from_revision",
+          "to_revision"
+        ],
+        "title": "RollbackOffered",
+        "type": "object"
+      },
       "RunCreate": {
         "properties": {
           "agent": {
@@ -1778,6 +3190,106 @@
           "approvals"
         ],
         "title": "RunDetail",
+        "type": "object"
+      },
+      "RunFinished": {
+        "description": "Last event of a deploy run, before the generic `done`.",
+        "properties": {
+          "automatic_fix": {
+            "title": "Automatic Fix",
+            "type": "boolean"
+          },
+          "build_attempts": {
+            "title": "Build Attempts",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "live_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Live Url"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "const": "run_finished",
+            "default": "run_finished",
+            "title": "Type",
+            "type": "string"
+          },
+          "ultra_equiv_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ultra Equiv Usd"
+          }
+        },
+        "required": [
+          "status",
+          "stop_reason",
+          "build_attempts",
+          "automatic_fix",
+          "duration_ms",
+          "cost_usd"
+        ],
+        "title": "RunFinished",
         "type": "object"
       },
       "RunOut": {
@@ -2084,6 +3596,198 @@
         "title": "RunStatusEvent",
         "type": "object"
       },
+      "StageFinished": {
+        "properties": {
+          "agent": {
+            "enum": [
+              "scout",
+              "builder",
+              "deployer"
+            ],
+            "title": "Agent",
+            "type": "string"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "stage": {
+            "enum": [
+              "scout",
+              "build",
+              "smoke",
+              "push",
+              "plan",
+              "preflight",
+              "approval",
+              "apply",
+              "verify",
+              "rollback"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Summary"
+          },
+          "type": {
+            "const": "stage_finished",
+            "default": "stage_finished",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "agent",
+          "status",
+          "duration_ms"
+        ],
+        "title": "StageFinished",
+        "type": "object"
+      },
+      "StageOut": {
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "stage": {
+            "enum": [
+              "scout",
+              "build",
+              "smoke",
+              "push",
+              "plan",
+              "preflight",
+              "approval",
+              "apply",
+              "verify",
+              "rollback"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "running",
+                  "waiting_approval"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "succeeded",
+                  "failed",
+                  "skipped"
+                ],
+                "type": "string"
+              }
+            ],
+            "default": "pending",
+            "title": "Status"
+          }
+        },
+        "required": [
+          "stage"
+        ],
+        "title": "StageOut",
+        "type": "object"
+      },
+      "StageStarted": {
+        "properties": {
+          "agent": {
+            "enum": [
+              "scout",
+              "builder",
+              "deployer"
+            ],
+            "title": "Agent",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "scout",
+              "build",
+              "smoke",
+              "push",
+              "plan",
+              "preflight",
+              "approval",
+              "apply",
+              "verify",
+              "rollback"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "type": {
+            "const": "stage_started",
+            "default": "stage_started",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "agent"
+        ],
+        "title": "StageStarted",
+        "type": "object"
+      },
       "StepOut": {
         "properties": {
           "agent": {
@@ -2128,6 +3832,55 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "build_attempt": "#/components/schemas/BuildAttempt",
+                    "deploy_plan": "#/components/schemas/DeployPlan",
+                    "live_url": "#/components/schemas/LiveUrl",
+                    "rollback_offered": "#/components/schemas/RollbackOffered",
+                    "run_finished": "#/components/schemas/RunFinished",
+                    "stage_finished": "#/components/schemas/StageFinished",
+                    "stage_started": "#/components/schemas/StageStarted",
+                    "verify_result": "#/components/schemas/VerifyResult"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/StageStarted"
+                  },
+                  {
+                    "$ref": "#/components/schemas/StageFinished"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BuildAttempt"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DeployPlan"
+                  },
+                  {
+                    "$ref": "#/components/schemas/VerifyResult"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LiveUrl"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RollbackOffered"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RunFinished"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
           },
           "escalated": {
             "title": "Escalated",
@@ -2297,6 +4050,7 @@
           "completed",
           "max_steps",
           "budget",
+          "no_progress",
           "waiting_approval",
           "error",
           "stopped_by_user"
@@ -2530,6 +4284,115 @@
           "token"
         ],
         "title": "VercelConnectIn",
+        "type": "object"
+      },
+      "VerifyCheck": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Latency Ms"
+          },
+          "name": {
+            "enum": [
+              "rollout",
+              "health",
+              "root",
+              "other"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Code"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          }
+        },
+        "required": [
+          "name",
+          "ok",
+          "detail"
+        ],
+        "title": "VerifyCheck",
+        "type": "object"
+      },
+      "VerifyResult": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/VerifyCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "logs_tail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Logs Tail"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "type": {
+            "const": "verify_result",
+            "default": "verify_result",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "checks",
+          "duration_ms"
+        ],
+        "title": "VerifyResult",
         "type": "object"
       },
       "WorkspaceOut": {
@@ -3483,6 +5346,224 @@
         ]
       }
     },
+    "/deploys": {
+      "get": {
+        "description": "Newest first. Pass next_cursor back as ?cursor= for the next page.",
+        "operationId": "list_deploys_deploys_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "description": "The deploy pipeline is not wired up yet."
+          }
+        },
+        "summary": "List Deploys",
+        "tags": [
+          "deploys"
+        ]
+      },
+      "post": {
+        "description": "Start a deploy run. Returns at once; follow the run's event stream for progress.\n\nNothing touches infrastructure before a workspace member approves the rendered plan.",
+        "operationId": "create_deploy_deploys_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "Target is AWS observe tier, or the source is not GitHub."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "description": "The deploy pipeline is not wired up yet."
+          }
+        },
+        "summary": "Create Deploy",
+        "tags": [
+          "deploys"
+        ]
+      }
+    },
+    "/deploys/{deploy_id}": {
+      "get": {
+        "description": "A deploy with its stages, plan (secrets masked), and final deploy record.",
+        "operationId": "get_deploy_deploys__deploy_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "description": "The deploy pipeline is not wired up yet."
+          }
+        },
+        "summary": "Get Deploy",
+        "tags": [
+          "deploys"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "operationId": "health_health_get",
@@ -3729,7 +5810,7 @@
     },
     "/runs/{run_id}/events": {
       "get": {
-        "description": "SSE: existing steps, then new ones and status changes until the run ends.\n\nEvents: `step`, `approval_requested`, `approval_decided` (id = step seq), `status`,\nand a final `done`. A heartbeat comment every 15 s keeps proxies from closing the\nconnection. Reconnects with Last-Event-ID (or ?after=) continue after that step.\n\nNo request-scoped session here: FastAPI closes it only after the stream ends, which\nwould hold a pooled connection idle in transaction for every open stream. Each poll\nuses its own short session instead.",
+        "description": "SSE: existing steps, then new ones and status changes until the run ends.\n\nEvents: `step`, `approval_requested`, `approval_decided`, the deploy events\n(`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,\n`rollback_offered`, `run_finished`; id = step seq), `status`, and a final `done`.\nSee docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the\nconnection. Reconnects with Last-Event-ID (or ?after=) continue after that step.\n\nNo request-scoped session here: FastAPI closes it only after the stream ends, which\nwould hold a pooled connection idle in transaction for every open stream. Each poll\nuses its own short session instead.",
         "operationId": "run_events_runs__run_id__events_get",
         "parameters": [
           {

@@ -289,6 +289,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deploys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Deploys
+         * @description Newest first. Pass next_cursor back as ?cursor= for the next page.
+         */
+        get: operations["list_deploys_deploys_get"];
+        put?: never;
+        /**
+         * Create Deploy
+         * @description Start a deploy run. Returns at once; follow the run's event stream for progress.
+         *
+         *     Nothing touches infrastructure before a workspace member approves the rendered plan.
+         */
+        post: operations["create_deploy_deploys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deploys/{deploy_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Deploy
+         * @description A deploy with its stages, plan (secrets masked), and final deploy record.
+         */
+        get: operations["get_deploy_deploys__deploy_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -385,8 +431,10 @@ export interface paths {
          * Run Events
          * @description SSE: existing steps, then new ones and status changes until the run ends.
          *
-         *     Events: `step`, `approval_requested`, `approval_decided` (id = step seq), `status`,
-         *     and a final `done`. A heartbeat comment every 15 s keeps proxies from closing the
+         *     Events: `step`, `approval_requested`, `approval_decided`, the deploy events
+         *     (`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,
+         *     `rollback_offered`, `run_finished`; id = step seq), `status`, and a final `done`.
+         *     See docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the
          *     connection. Reconnects with Last-Event-ID (or ?after=) continue after that step.
          *
          *     No request-scoped session here: FastAPI closes it only after the stream ends, which
@@ -607,6 +655,34 @@ export interface components {
             approval: components["schemas"]["ApprovalOut"] | null;
             step: components["schemas"]["StepOut"];
         };
+        /**
+         * AttemptModelCall
+         * @description The model call that wrote this attempt's Dockerfile. Its own `llm` step is in the
+         *     timeline too; this copy lets the attempt card show the badge without a lookup.
+         */
+        AttemptModelCall: {
+            /** Completion Tokens */
+            completion_tokens: number;
+            /** Cost Usd */
+            cost_usd: number | null;
+            /** Escalated */
+            escalated: boolean;
+            /** Model Id */
+            model_id: string;
+            /** Model Tier */
+            model_tier: string;
+            /** Prompt Tokens */
+            prompt_tokens: number;
+            /** Reasoning Mode */
+            reasoning_mode: string;
+            /** Step Seq */
+            step_seq: number;
+            /**
+             * Task
+             * @enum {string}
+             */
+            task: "write_dockerfile" | "fix_build";
+        };
         /** AwsCompleteIn */
         AwsCompleteIn: {
             /**
@@ -693,6 +769,59 @@ export interface components {
              */
             workspace_id: string;
         };
+        /** BuildAttempt */
+        BuildAttempt: {
+            /** Attempt */
+            attempt: number;
+            /** Dockerfile Diff */
+            dockerfile_diff: string;
+            /**
+             * Dockerfile Source
+             * @enum {string}
+             */
+            dockerfile_source: "repo" | "generated" | "fixed";
+            /** Duration Ms */
+            duration_ms: number;
+            /**
+             * Error Summary
+             * @default null
+             */
+            error_summary: string | null;
+            /**
+             * Failing Step
+             * @default null
+             */
+            failing_step: string | null;
+            /**
+             * Image Ref
+             * @default null
+             */
+            image_ref: string | null;
+            /**
+             * Log Tail
+             * @default null
+             */
+            log_tail: string | null;
+            /**
+             * Max Attempts
+             * @default 5
+             */
+            max_attempts: number;
+            /** @default null */
+            model_call: components["schemas"]["AttemptModelCall"] | null;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Rationale
+             * @default null
+             */
+            rationale: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "build_attempt";
+        };
         /** ConnectionDeleted */
         ConnectionDeleted: {
             /** Cleanup */
@@ -775,6 +904,109 @@ export interface components {
          * @enum {string}
          */
         Decision: "approve" | "reject";
+        /** DeployCreate */
+        DeployCreate: {
+            /** Env */
+            env?: components["schemas"]["EnvVarIn"][];
+            options?: components["schemas"]["DeployOptions"];
+            /** Repo */
+            repo: components["schemas"]["GitHubRepoSource"] | components["schemas"]["FixtureSource"];
+            /**
+             * Target Connection Id
+             * Format: uuid
+             */
+            target_connection_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** DeployCreated */
+        DeployCreated: {
+            /**
+             * Deploy Id
+             * Format: uuid
+             */
+            deploy_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+        };
+        /** DeployDetail */
+        DeployDetail: {
+            /** Allow Missing Env */
+            allow_missing_env: boolean;
+            /** App */
+            app: string | null;
+            /** Automatic Fix */
+            automatic_fix: boolean;
+            /** Build Attempts */
+            build_attempts: number;
+            /** Cost Usd */
+            cost_usd: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string | null;
+            deploy: components["schemas"]["DeployRecord"] | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Env */
+            env: components["schemas"]["EnvVarView"][];
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Live Url */
+            live_url: string | null;
+            plan: components["schemas"]["DeployPlan"] | null;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            run_status: components["schemas"]["RunStatus"];
+            source: components["schemas"]["DeploySourceOut"];
+            /** Stage */
+            stage: ("scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback") | null;
+            /** Stages */
+            stages: components["schemas"]["StageOut"][];
+            /** Started At */
+            started_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "waiting_approval" | "live" | "failed" | "rolled_back" | "stopped";
+            stop_reason: components["schemas"]["StopReason"] | null;
+            target: components["schemas"]["DeployTargetOut"];
+            /** Ultra Equiv Usd */
+            ultra_equiv_usd: number | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** DeployOptions */
+        DeployOptions: {
+            /**
+             * Allow Missing Env
+             * @default false
+             */
+            allow_missing_env: boolean;
+        };
         /** DeployOut */
         DeployOut: {
             /** At */
@@ -789,6 +1021,218 @@ export interface components {
             title: string | null;
             /** Url */
             url: string | null;
+        };
+        /** DeployPage */
+        DeployPage: {
+            /** Items */
+            items: components["schemas"]["DeploySummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * DeployPlan
+         * @description What the approval card shows: the exact plan that runs after approval.
+         */
+        DeployPlan: {
+            /** Allow Missing Env */
+            allow_missing_env: boolean;
+            /** App */
+            app: string;
+            /**
+             * Cpu
+             * @example 250m
+             * @example 256
+             */
+            cpu: string;
+            /** Env */
+            env: components["schemas"]["EnvVarView"][];
+            /**
+             * Expected Url
+             * @default null
+             */
+            expected_url: string | null;
+            /** Health Path */
+            health_path: string | null;
+            /** Image */
+            image: string;
+            /**
+             * Memory
+             * @example 512Mi
+             * @example 512
+             */
+            memory: string;
+            /** Port */
+            port: number;
+            /** Preflight */
+            preflight: components["schemas"]["PreflightCheck"][];
+            /** Rendered */
+            rendered: string;
+            /**
+             * Rendered Format
+             * @enum {string}
+             */
+            rendered_format: "yaml" | "json";
+            /** Replicas */
+            replicas: number;
+            /** Resources */
+            resources: components["schemas"]["PlannedResource"][];
+            /**
+             * Rollback To Revision
+             * @default null
+             */
+            rollback_to_revision: string | null;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "k8s" | "aws_ecs";
+            /**
+             * Target Connection Id
+             * Format: uuid
+             */
+            target_connection_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "deploy_plan";
+        };
+        /**
+         * DeployRecord
+         * @description runs.state["deploy"]: one finished deployment.
+         */
+        DeployRecord: {
+            /** App */
+            app: string;
+            /** Commit */
+            commit: string | null;
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /**
+             * Finished At
+             * Format: date-time
+             */
+            finished_at: string;
+            /** Image */
+            image: string;
+            /** Live Url */
+            live_url: string | null;
+            /** Plan Summary */
+            plan_summary: string;
+            /** Previous Revision */
+            previous_revision: string | null;
+            /** Repo */
+            repo: string;
+            /** Revision */
+            revision: string | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "live" | "failed" | "rolled_back";
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "k8s" | "aws_ecs";
+        };
+        /** DeploySourceOut */
+        DeploySourceOut: {
+            /** Commit */
+            commit: string | null;
+            /** Connection Id */
+            connection_id: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "github" | "fixture";
+            /** Ref */
+            ref: string | null;
+            /** Repo */
+            repo: string;
+        };
+        /**
+         * DeploySummary
+         * @description One row of the deploys list.
+         */
+        DeploySummary: {
+            /** App */
+            app: string | null;
+            /** Automatic Fix */
+            automatic_fix: boolean;
+            /** Build Attempts */
+            build_attempts: number;
+            /** Cost Usd */
+            cost_usd: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Live Url */
+            live_url: string | null;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            run_status: components["schemas"]["RunStatus"];
+            source: components["schemas"]["DeploySourceOut"];
+            /** Stage */
+            stage: ("scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback") | null;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "waiting_approval" | "live" | "failed" | "rolled_back" | "stopped";
+            stop_reason: components["schemas"]["StopReason"] | null;
+            target: components["schemas"]["DeployTargetOut"];
+            /** Ultra Equiv Usd */
+            ultra_equiv_usd: number | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** DeployTargetOut */
+        DeployTargetOut: {
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "k8s" | "aws_ecs";
+            /** Name */
+            name: string;
         };
         /** EdgeOut */
         EdgeOut: {
@@ -818,6 +1262,55 @@ export interface components {
              * Format: uuid
              */
             to_id: string;
+        };
+        /** EnvVarIn */
+        EnvVarIn: {
+            /**
+             * Name
+             * @example DATABASE_URL
+             */
+            name: string;
+            /**
+             * Secret
+             * @default false
+             */
+            secret: boolean;
+            /**
+             * Value
+             * Format: password
+             */
+            value: string;
+        };
+        /**
+         * EnvVarView
+         * @description An env var as shown on the approval card and in the deploy detail. A secret's value is
+         *     never shown; `value` is null for secrets and for missing values.
+         */
+        EnvVarView: {
+            /** Name */
+            name: string;
+            /** Provided */
+            provided: boolean;
+            /** Required */
+            required: boolean;
+            /** Secret */
+            secret: boolean;
+            /**
+             * Value
+             * @default null
+             */
+            value: string | null;
+        };
+        /**
+         * FixtureSource
+         * @description A repo under demo/fixtures/ (tests and local dev; refused when APP_ENV is not dev).
+         */
+        FixtureSource: {
+            /**
+             * Fixture
+             * @example py-build-trap
+             */
+            fixture: string;
         };
         /** GitHubInstallationOut */
         GitHubInstallationOut: {
@@ -861,6 +1354,27 @@ export interface components {
             linked: boolean;
             /** Private */
             private: boolean;
+        };
+        /**
+         * GitHubRepoSource
+         * @description A repository the workspace's GitHub connection can read.
+         */
+        GitHubRepoSource: {
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /**
+             * Ref
+             * @example main
+             */
+            ref: string;
+            /**
+             * Repo
+             * @example GroundsCrew-AI/legacy-flask-app
+             */
+            repo: string;
         };
         /** GraphOut */
         GraphOut: {
@@ -932,6 +1446,28 @@ export interface components {
              */
             truncated: boolean;
         };
+        /** LiveUrl */
+        LiveUrl: {
+            /** App */
+            app: string;
+            /**
+             * Resource Id
+             * @default null
+             */
+            resource_id: string | null;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "k8s" | "aws_ecs";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "live_url";
+            /** Url */
+            url: string;
+        };
         /** MeOut */
         MeOut: {
             user: components["schemas"]["UserOut"];
@@ -951,6 +1487,47 @@ export interface components {
             provider: string;
             /** Type */
             type: string;
+        };
+        /** PlannedResource */
+        PlannedResource: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "create" | "update" | "unchanged" | "delete";
+            /**
+             * Detail
+             * @default null
+             */
+            detail: string | null;
+            /**
+             * Kind
+             * @example Deployment
+             * @example ecs:Service
+             */
+            kind: string;
+            /** Name */
+            name: string;
+        };
+        /** PreflightCheck */
+        PreflightCheck: {
+            /** Detail */
+            detail: string;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "image" | "env" | "port" | "name_collision" | "quota" | "other";
+            /**
+             * Overridden
+             * @default false
+             */
+            overridden: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pass" | "warn" | "fail";
         };
         /** ResourceDetail */
         ResourceDetail: {
@@ -1083,6 +1660,25 @@ export interface components {
             /** Type */
             type: string;
         };
+        /** RollbackOffered */
+        RollbackOffered: {
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /** From Revision */
+            from_revision: string;
+            /** Reason */
+            reason: string;
+            /** To Revision */
+            to_revision: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "rollback_offered";
+        };
         /** RunCreate */
         RunCreate: {
             /**
@@ -1159,6 +1755,42 @@ export interface components {
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /**
+         * RunFinished
+         * @description Last event of a deploy run, before the generic `done`.
+         */
+        RunFinished: {
+            /** Automatic Fix */
+            automatic_fix: boolean;
+            /** Build Attempts */
+            build_attempts: number;
+            /** Cost Usd */
+            cost_usd: number | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /**
+             * Error
+             * @default null
+             */
+            error: string | null;
+            /**
+             * Live Url
+             * @default null
+             */
+            live_url: string | null;
+            status: components["schemas"]["RunStatus"];
+            stop_reason: components["schemas"]["StopReason"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run_finished";
+            /**
+             * Ultra Equiv Usd
+             * @default null
+             */
+            ultra_equiv_usd: number | null;
         };
         /**
          * RunOut
@@ -1248,6 +1880,73 @@ export interface components {
             /** Ultra Equiv Usd */
             ultra_equiv_usd?: number | null;
         };
+        /** StageFinished */
+        StageFinished: {
+            /**
+             * Agent
+             * @enum {string}
+             */
+            agent: "scout" | "builder" | "deployer";
+            /** Duration Ms */
+            duration_ms: number;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "failed" | "skipped";
+            /**
+             * Summary
+             * @default null
+             */
+            summary: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stage_finished";
+        };
+        /** StageOut */
+        StageOut: {
+            /** Approval Id */
+            approval_id?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * Status
+             * @default pending
+             */
+            status: ("pending" | "running" | "waiting_approval") | ("succeeded" | "failed" | "skipped");
+        };
+        /** StageStarted */
+        StageStarted: {
+            /**
+             * Agent
+             * @enum {string}
+             */
+            agent: "scout" | "builder" | "deployer";
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "stage_started";
+        };
         /** StepOut */
         StepOut: {
             /** Agent */
@@ -1263,6 +1962,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Data */
+            data?: (components["schemas"]["StageStarted"] | components["schemas"]["StageFinished"] | components["schemas"]["BuildAttempt"] | components["schemas"]["DeployPlan"] | components["schemas"]["VerifyResult"] | components["schemas"]["LiveUrl"] | components["schemas"]["RollbackOffered"] | components["schemas"]["RunFinished"]) | null;
             /** Escalated */
             escalated?: boolean;
             /** Fell Back */
@@ -1302,7 +2003,7 @@ export interface components {
          * StopReason
          * @enum {string}
          */
-        StopReason: "completed" | "max_steps" | "budget" | "waiting_approval" | "error" | "stopped_by_user";
+        StopReason: "completed" | "max_steps" | "budget" | "no_progress" | "waiting_approval" | "error" | "stopped_by_user";
         /** StreamToken */
         StreamToken: {
             /**
@@ -1371,6 +2072,52 @@ export interface components {
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /** VerifyCheck */
+        VerifyCheck: {
+            /** Detail */
+            detail: string;
+            /**
+             * Latency Ms
+             * @default null
+             */
+            latency_ms: number | null;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "rollout" | "health" | "root" | "other";
+            /** Ok */
+            ok: boolean;
+            /**
+             * Status Code
+             * @default null
+             */
+            status_code: number | null;
+            /**
+             * Url
+             * @default null
+             */
+            url: string | null;
+        };
+        /** VerifyResult */
+        VerifyResult: {
+            /** Checks */
+            checks: components["schemas"]["VerifyCheck"][];
+            /** Duration Ms */
+            duration_ms: number;
+            /**
+             * Logs Tail
+             * @default null
+             */
+            logs_tail: string | null;
+            /** Ok */
+            ok: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "verify_result";
         };
         /** WorkspaceOut */
         WorkspaceOut: {
@@ -1893,6 +2640,137 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    list_deploys_deploys_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The deploy pipeline is not wired up yet. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_deploy_deploys_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeployCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployCreated"];
+                };
+            };
+            /** @description Target is AWS observe tier, or the source is not GitHub. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The deploy pipeline is not wired up yet. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_deploy_deploys__deploy_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deploy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The deploy pipeline is not wired up yet. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
