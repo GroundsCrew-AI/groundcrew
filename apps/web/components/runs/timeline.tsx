@@ -8,6 +8,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import type { Approval, Decision, RunStatus, Step } from "@/lib/api/client";
 import { agentName, formatCost, formatDuration, formatTimestamp, formatTokens } from "@/lib/format";
 
+import { DeployPlanCard } from "@/components/deploy/plan-card";
+import { DeployStep, deployStepColor, hiddenDeploySteps } from "@/components/deploy/deploy-step";
+
 import { ApprovalCard, DecidedBy } from "./approval-card";
 import { PolicyTag, TierBadge } from "./badges";
 
@@ -18,6 +21,10 @@ const TIER_COLOR: Record<string, string> = {
 };
 
 function nodeColor(step: Step, approval: Approval | undefined): string {
+  if (step.kind !== "approval_requested" && step.kind !== "approval_decided") {
+    const deploy = deployStepColor(step);
+    if (deploy) return deploy;
+  }
   switch (step.kind) {
     case "llm":
       return TIER_COLOR[step.model_tier ?? ""] ?? "var(--subtle)";
@@ -170,8 +177,12 @@ export function Timeline({
   const carded = new Set(
     steps.filter((s) => s.kind === "approval_requested" && s.approval_id).map((s) => s.approval_id),
   );
+  // Deploy runs: a stage's start row is dropped once the stage has finished.
+  const hidden = hiddenDeploySteps(steps);
   const visible = steps.filter(
-    (s) => !(s.kind === "approval_decided" && s.approval_id && carded.has(s.approval_id)),
+    (s) =>
+      !hidden.has(s.seq) &&
+      !(s.kind === "approval_decided" && s.approval_id && carded.has(s.approval_id)),
   );
 
   return (
@@ -187,7 +198,15 @@ export function Timeline({
           >
             <Rail color={nodeColor(step, approval)} last={last} />
             <div className="min-w-0 flex-1">
-              {step.kind === "approval_requested" && approval ? (
+              {step.kind === "approval_requested" && approval && step.data?.type === "deploy_plan" ? (
+                <DeployPlanCard
+                  plan={step.data}
+                  approval={approval}
+                  runEnded={ended}
+                  onDecide={(decision) => onDecide(approval, decision)}
+                  deciding={deciding?.id === approval.id ? deciding.decision : null}
+                />
+              ) : step.kind === "approval_requested" && approval ? (
                 <ApprovalCard
                   approval={approval}
                   runEnded={ended}
@@ -198,6 +217,8 @@ export function Timeline({
                 <div className="pt-px">
                   <DecidedBy approval={approval} />
                 </div>
+              ) : step.data ? (
+                <DeployStep step={step} />
               ) : (
                 <>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
