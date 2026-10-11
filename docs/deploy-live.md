@@ -1,7 +1,76 @@
 # Live deploys: runbook
 
-How to prove the deploy infrastructure works on real targets, and clean up after. The kind
-section comes with deliverable 6; this page starts with the AWS smoke test.
+How to prove the deploy infrastructure works on real targets, and clean up after: the local
+kind cluster first (no cloud, no cost), then AWS ECS. Both end with `make cleanup-deploys`.
+
+## kind: local Kubernetes
+
+Everything here runs on this machine. The setup itself (installing Docker, what `make kind-up`
+creates, the deployer's permissions) is in `docs/kind.md`.
+
+### Run it
+
+```bash
+make kind-up                                  # cluster, registry, ingress, deployer RBAC (~3 min the first time)
+make kind-kubeconfig                          # .kind/groundcrew-deployer{,.host}.kubeconfig
+make kind-check                               # the deployer can do what it must, and nothing else
+make dev KIND=1                               # api, worker, and dind on the kind network (keep it running)
+make kind-register LOGIN=<github login> DISCOVER=1   # kind as a Kubernetes connection, then discovery
+make dind-check                               # build in dind from the worker, push, run in kind
+make cleanup-deploys HOURS=24                 # dry run: what deploys left behind
+```
+
+Already had a cluster before the `dind` service existed? Run `make kind-up` once more: it adds
+the `kind-registry:5000` mirror to the running node (nothing is restarted). Then restart the
+stack with `make dev KIND=1`.
+
+### What each step proves
+
+| Step | Proves | Passes when |
+|---|---|---|
+| `make kind-up` | The cluster, the registry (`localhost:5001` here, `kind-registry:5000` on the `kind` network, both mirrored on the node), ingress-nginx, and the deployer's RBAC and admission policy exist | It prints `Ready` |
+| `make kind-kubeconfig` | The deployer ServiceAccount has a token, and kubeconfigs for Compose (`groundcrew-control-plane:6443`) and the host | Both files exist, mode 600 |
+| `make kind-check` | As the ServiceAccount: read everywhere but no Secrets outside `gc-*`; may create only `gc-*` namespaces labelled `project=groundcrew`; may bind only `gc-namespace-admin`, only in `gc-*`; cannot touch `groundcrew-system` | `All checks passed.` |
+| `make dev KIND=1` | Groundcrew in Compose reaches the cluster and registry by name; the worker reaches dind over TLS only | api, worker, and dind running; `dind-certs` exited 0 |
+| `make kind-register LOGIN=... DISCOVER=1` | The API accepts the deployer kubeconfig (it lists namespaces before saving), discovery reads the cluster, and every `gc-*` namespace is on the Map, without reading a Secret | `Live check passed.` |
+| `make dind-check` | The Builder's path: the worker builds a fixture in dind (not the host daemon, no socket mounted, key 0600), smoke-tests it at `$SANDBOX_SMOKE_HOST`, pushes it to `kind-registry:5000`, and the deployer runs it in a `gc-*` namespace behind ingress-nginx | `PASS`, then cleanup deletes the namespace |
+| `make cleanup-deploys HOURS=N` | What deploys left behind is found by tag and age; pinned namespaces (`groundcrew/keep=true`) stay | The table matches what you expect; `APPLY=1` deletes the `DELETE` rows |
+
+A deploy's app answers at `http://<app>.localhost` (ingress host `<app>.localhost`; `*.localhost`
+resolves to 127.0.0.1). Check its namespace with the host kubeconfig:
+
+```bash
+export PATH="$PWD/.tools/bin:$PATH"
+kubectl --kubeconfig .kind/groundcrew-deployer.host.kubeconfig get ns -l project=groundcrew --show-labels
+kubectl --kubeconfig .kind/groundcrew-deployer.host.kubeconfig -n gc-<app> get rolebinding,deploy,svc,ingress
+curl -i http://<app>.localhost/
+```
+
+### Results (2026-10-11)
+
+| Step | Result |
+|---|---|
+| `make kind-check` | All checks passed |
+| `make kind-register LOGIN=Rizwan-095 DISCOVER=1` | Already registered (reused); discovery succeeded; 13 Kubernetes resources on the Map; `gc-whoami` on the Map; live check passed |
+| `make dind-check` | PASS: TLS only (2375 refused, host daemon not reachable, key 0600 uid 1000); `express-redis` fixture built (31 s cold, 3 s cached); `GET http://dind:<port>/healthz` OK; pushed to `kind-registry:5000`; pod ready in 4 to 5 s; `GET http://dind-check.localhost/healthz` through ingress-nginx OK; cleaned up |
+| `make cleanup-deploys HOURS=24` (dry run) | Platform identity in 881050425883; AWS: only `groundcrew-smoke:1` (task definition, kept); kind: `gc-whoami` kept (pinned), 0 to delete |
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `network kind not found` on `make dev KIND=1` | `make kind-up` first: the network exists only once kind has run |
+| Worker: `x509: certificate is valid for ..., not dind` | dind needs `hostname: dind` (in `docker-compose.yml`); recreate it with `make dev KIND=1` |
+| Worker: `open /certs/client/key.pem: permission denied`, or `dind-certs` exited non-zero | `docker compose logs dind-certs`; it copies the client certificate only after dind is healthy. `docker compose up -d dind-certs` reruns it |
+| `ErrImagePull` for `kind-registry:5000/...`, or `http: server gave HTTP response to HTTPS client` | The node has no mirror for that name: `make kind-up` again |
+| `ErrImagePull` for `localhost:5001/...` | Not pushed (`curl -s localhost:5001/v2/_catalog`), or the registry is off the kind network: `make kind-up` again |
+| `Cannot resolve the cluster address https://groundcrew-control-plane:6443` | Groundcrew is not on the kind network: `make down && make dev KIND=1`; register `.kind/groundcrew-deployer.kubeconfig`, not the `.host` one |
+| `ValidatingAdmissionPolicy 'groundcrew-deployer-scope' ... denied` | Working as intended: a write outside `gc-*`, a namespace without `project=groundcrew`, or a RoleBinding to anything but `gc-namespace-admin` |
+| `http://<app>.localhost` returns 404 from nginx | The Ingress needs `ingressClassName: nginx` and host `<app>.localhost`; give ingress-nginx a few seconds |
+| `cleanup-deploys` shows `kind ... skipped` | No `.kind/groundcrew-deployer.host.kubeconfig` (`make kind-kubeconfig`), or the cluster is down |
+| A namespace you want to keep is listed as `DELETE` | Pin it: `kubectl --context kind-groundcrew label namespace <gc-name> groundcrew/keep=true` |
+
+More (ports in use, inotify limits, a revoked token): `docs/kind.md`, Troubleshooting.
 
 ## AWS: `make smoke-ecs`
 
@@ -125,3 +194,17 @@ $0.004445 per GB-hour, us-east-2 list prices; estimates) plus its public IPv4 ($
 secret kept for minutes ($0.40 per secret-month, prorated). ECR storage and log ingestion for
 one small image and a few lines round to $0. The script prints its own estimate from how long
 the service ran.
+
+## After either: `make cleanup-deploys`
+
+```bash
+make cleanup-deploys HOURS=24              # dry run (read only): AWS, every deploy-tier connection, and kind
+make cleanup-deploys HOURS=24 APPLY=1      # delete the DELETE rows
+make cleanup-deploys HOURS=0 APPLY=1       # everything tagged project=groundcrew, whatever its age
+```
+
+It stops unless Groundcrew's platform identity is in `AWS_ACCOUNT` (default 881050425883), checked
+before any role is assumed. It deletes only resources tagged `project=groundcrew` and older than
+`HOURS`, never anything pinned (`groundcrew:keep=true`, `groundcrew/keep=true`), and never a
+task definition. Security groups go only when unattached and their run is provably old. The rules
+and what each resource needs: `docs/phase4-infra.md`, Cleanup.
