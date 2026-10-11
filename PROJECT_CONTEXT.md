@@ -472,24 +472,32 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
         `project=groundcrew`, `aws_deploy_session()`, Observe / Deploy on the Connections page; not published).
         Next: cleanup, CI, live runbook
   - Ownership (2026-10-11, agreed with Ahmed): Rizwan owns all of Phase 4 (sandbox, targets, Builder,
-    Deployer, pipeline, `/deploys`, Deploy page, Phase 4 E2E); Ahmed works on Phase 5 in parallel
-    (`app/agents/medic/`, telemetry, incidents), which Phase 4 never edits. Done when
+    Deployer, pipeline, `/deploys`, Deploy page, Phase 4 E2E). Ahmed owns Phase 5 and builds it in
+    parallel (`app/agents/medic/`, telemetry, incidents), which Phase 4 never edits. Done when
     `GroundsCrew-AI/legacy-flask-app` goes from GitHub to a live URL on kind and AWS ECS in one live run
     timeline, with at least one automatic build fix and an approval before any infrastructure change.
     Milestones, one draft PR each: M1 contract, M2 sandbox, M3 targets, M4 Builder, M5 Deployer,
-    M6 pipeline + API, M7 Deploy page, M8 E2E + live evidence.
+    M6 pipeline + API, M7 Deploy page, M8 E2E + live evidence. Order: M1, M2, M7 (against the M1
+    types, with one fake response file that M6 deletes), M3, M4, M5, M6, M8.
     - [x] M1 Deploy API contract: `docs/deploys-contract.md` (final), `docs/events.md`; typed
           `POST /deploys`, `GET /deploys`, `GET /deploys/{id}` returning 501; deploy events as run steps
           with a typed `run_steps.data` payload under their own SSE names; `runs.state` with
           `DeployRecord` for Medic (`app/pipeline/state.py`); `stop_reason = no_progress`; one migration;
           422s never echo env values
+    - [x] M2 Sandbox (`app/sandbox/`): `DockerSandbox` build / run_smoke / push / cleanup over the Docker
+          CLI (dind over TLS); smoke containers with no capabilities, no-new-privileges, 1 CPU / 512 MB /
+          256 pids, tmpfs /tmp, env never in argv; pushes to `kind-registry:5000` and ECR (token from
+          `aws_deploy_session()`, temp `DOCKER_CONFIG`, `--password-stdin`); `NebiusSandbox` stub
+          (`TODO(nebius-sandbox)`). Live: `legacy-flask-app` naive build fails on `pg_config`, fixed build
+          passes smoke and pushes to kind
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission
 - [ ] Phase 8 — Judging upkeep
 
-**Current phase:** 4 (Build + deploy agents, in progress); Phase 3 complete 2026-10-09, Phase 5 next
-**Last updated:** 2026-10-09
+**Current phase:** 4 (Build + deploy agents, in progress, Rizwan); Phase 5 (Medic, Ahmed) in parallel;
+Phase 3 complete 2026-10-09
+**Last updated:** 2026-10-11
 **Known issues / blockers:**
 - Phase 0 open items: Tavily API key; budget alerts (AWS $20 / $50, Azure $20).
 - Any member of a workspace can approve. Roles (who may approve write vs emergency actions) come with
@@ -516,7 +524,8 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
   the summary check is rule based and does not catch negative claims (e.g. "does not depend on the ECS
   services" despite a `calls` edge); Medic's log and metric reads (`logs:FilterLogEvents`,
   `cloudwatch:GetMetricData`) are allowed but not yet called live through the connect role.
-- Phase 5 depends on Phase 4 Step 8 (the shape of a finished deployment in `runs.state`).
+- Phase 5 runs in parallel with Phase 4. Medic needs only `Target.rollback()` from Phase 4 (M3); the
+  shape of a finished deployment in `runs.state` is fixed (`DeployRecord`, `docs/deploys-contract.md`).
 - The demo runs locally only; nothing in Phase 1 targets Neon. Run `make migrate DB_URL=<neon url>` when hosting.
 
 ## 15. Decisions log (newest first)

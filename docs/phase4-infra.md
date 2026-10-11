@@ -1,6 +1,7 @@
 # Phase 4 deploy infrastructure: the contract
 
-For Ahmed's Builder, targets, and Deployer. Deploy code reads every name, prefix, and tag
+For the Builder, the targets, and the Deployer (`app/sandbox/`, `app/targets/`,
+`app/agents/builder/`, `app/agents/deployer/`). Deploy code reads every name, prefix, and tag
 below from `Settings` (`app/config.py`) and the helpers in `app/connectors/deploy_infra.py`,
 never from literals. The IAM policy (`infra/aws-connect.yaml`, `Tier=deploy`) and the kind
 admission policy (`infra/kind/`) allow exactly these names, so a resource named or tagged any
@@ -192,7 +193,7 @@ policy; `SimulateCustomPolicy`:
 
 `task_family(app)` gives `groundcrew-<app>` (the only families `ecs:RunTask` allows), next to
 `ecr_repository`, `log_group`, and `ecs_service`. `secret_name(app, var)` gives
-`groundcrew/<app>/<VAR>` for an env secret: Ahmed's ECS target creates it with
+`groundcrew/<app>/<VAR>` for an env secret: the ECS target creates it with
 `CreateSecret` (tags `project=groundcrew` and `groundcrew:deploy=<run_id>`), updates it with
 `PutSecretValue`, and references it in the task definition's `secrets` (`valueFrom` = the ARN);
 ECS reads it with the task execution role. `deploy_role_arn(account)` gives the role ARN.
@@ -315,7 +316,7 @@ connection, and push images to `GC_KIND_REGISTRY`. The full setup is in `docs/ki
 
 ## Build daemon (local dev)
 
-Sandbox builds (Ahmed's Builder) run in the `dind` Compose service (`docker:29.7.2-dind`), a
+Sandbox builds (`app/sandbox/`, used by the Builder) run in the `dind` Compose service (`docker:29.7.2-dind`), a
 Docker daemon of its own. The worker reaches it over TLS, and **no service mounts the host's
 `/var/run/docker.sock`** (`tests/test_compose_dind.py` fails if one does).
 
@@ -341,6 +342,41 @@ worker's `/certs/client` (uid 1000 in the worker, or root) effectively has the h
 Sandboxes, never in a privileged container beside the API or worker.** The Builder sees only the standard `DOCKER_*` variables and
 `SANDBOX_SMOKE_HOST`, so moving builds out changes configuration, not code.
 
-## What lands later in this branch
+## Sandbox (`app/sandbox/`)
 
-CI (deliverable 5) and the kind runbook in `docs/deploy-live.md` (deliverable 6).
+Builder builds, smoke-tests, and pushes only through the `Sandbox` protocol
+(`get_sandbox(settings)`), so moving builds to a separate host or to Nebius is configuration.
+
+| Setting | Default | What it is |
+|---|---|---|
+| `SANDBOX_PROVIDER` | `docker` | `docker` (the CLI against `DOCKER_HOST`), or `nebius` (stub: `TODO(nebius-sandbox)`) |
+| `SANDBOX_SMOKE_HOST` | `localhost` | Where published smoke ports answer: `dind` for the Compose worker |
+| `SANDBOX_BUILD_TIMEOUT_SECONDS` | `900` | Per build; the CLI is killed and BuildKit cancels the build |
+| `SANDBOX_SMOKE_TIMEOUT_SECONDS` | `60` | How long the health path may take to answer 2xx/3xx |
+| `SANDBOX_PUSH_TIMEOUT_SECONDS` | `600` | Per push |
+
+- **build**: `docker build --progress=plain --platform linux/amd64` (Fargate and the kind nodes
+  are x86_64) with labels `groundcrew=1` and `groundcrew.run=<run id>`. `BuildResult` has the
+  last 8,000 characters of the log (redacted), the failing instruction parsed from BuildKit's
+  output (`RUN pip install ...`), and the lines that look like the cause.
+- **run_smoke**: the container gets `--cap-drop ALL`, `--security-opt no-new-privileges`,
+  `--cpus 1`, `--memory 512m`, `--pids-limit 256`, a 64 MB tmpfs on `/tmp`, and is never
+  privileged. Env values reach `docker run` through the CLI's environment (`--env NAME` with no
+  value), never argv. The port is published on the daemon's host and polled at
+  `SANDBOX_SMOKE_HOST`: the health path when Scout found one, else `/`; 2xx or 3xx passes. With
+  a health path, `/` is probed once and recorded but does not decide (APIs often have no `/`;
+  `legacy-flask-app` answers 404 there). On failure the container's last 200 log lines come
+  back with secret values scrubbed. The container is removed on every path.
+- **push**: `kind_target(settings, repo, tag)` (no login) or `ecr_target(session, repo, tag)`
+  with a session from `aws_deploy_session()`. An ECR login goes into a temporary `DOCKER_CONFIG`
+  through `--password-stdin`, the same way `scripts/smoke_ecs_deploy.py` does it, and the
+  password is scrubbed from any error. The ECR repository is created by the ECS target (M3).
+- **cleanup(run_id)**: removes the run's labelled containers and images; the build cache stays.
+
+Live checks (2026-10-11, dind 29.7.2 from the worker): `legacy-flask-app` with a naive
+`python:3.12-slim` Dockerfile fails at `RUN pip install` with `Error: pg_config executable not
+found` (78 s); with `gcc libc6-dev libpq-dev` added it builds (97 s), the smoke test passes
+(`/health` 200, `/` 404 recorded), and the push to `kind-registry:5000` takes under a second.
+One capture failed instead with a PyPI broken pipe while installing build dependencies
+(`tests/fixtures/sandbox/pip-network-flake.log`): Builder must retry such failures without
+spending a fix attempt.

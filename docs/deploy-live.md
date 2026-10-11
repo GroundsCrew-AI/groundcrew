@@ -76,7 +76,7 @@ More (ports in use, inotify limits, a revoked token): `docs/kind.md`, Troublesho
 
 Proves the `groundcrew-deploy` role (connect stack `Tier=deploy`, `docs/phase4-infra.md`) can
 deploy a container end to end, and that AWS itself refuses what it must not do. Run it after
-creating or updating a connect stack, and before Ahmed's ECS target relies on a connection.
+creating or updating a connect stack, and before the ECS target relies on a connection.
 
 ```bash
 make smoke-ecs CONNECTION=<aws connection id>              # dry run: read-only checks + plan
