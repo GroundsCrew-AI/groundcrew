@@ -5,7 +5,6 @@ import { toast } from "sonner";
 
 import { DeployForm } from "@/components/deploy/deploy-form";
 import { DeployList, DeployListHeader } from "@/components/deploy/deploy-list";
-import { PreviewBanner } from "@/components/deploy/preview-banner";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { DeployIllustration } from "@/components/states/illustrations";
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states/states";
@@ -49,7 +48,7 @@ export function DeployHome() {
               onSubmit={(body) =>
                 create.mutate(body, {
                   onSuccess: (created) => {
-                    toast.success(created.preview ? "Preview deploy started" : "Deploy started");
+                    toast.success("Deploy started");
                     router.push(`/deploy/${created.deploy_id}`);
                   },
                   onError: (error) => toast.error(error.message),
@@ -61,7 +60,6 @@ export function DeployHome() {
 
         <section aria-labelledby="deploys" className="space-y-3">
           <h2 id="deploys" className="text-[15px] font-medium">Deploys</h2>
-          {deploys.data?.preview && <PreviewBanner />}
           {deploys.error ? (
             <ErrorState error={deploys.error} onRetry={() => void deploys.refetch()} />
           ) : deploys.isLoading || !workspace ? (

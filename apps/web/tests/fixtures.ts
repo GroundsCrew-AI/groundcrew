@@ -37,6 +37,7 @@ export function approval(overrides: Partial<Approval> = {}): Approval {
     decided_by_login: null,
     decided_by_name: null,
     decided_by_avatar_url: null,
+    decided_via: null,
     decided_at: null,
     executed_at: null,
     created_at: "2026-10-06T12:00:00Z",

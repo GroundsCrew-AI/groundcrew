@@ -19,9 +19,11 @@ export type EnvRow = { key: number; name: string; value: string; secret: boolean
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const SECRET_NAME = /(password|passwd|secret|token|api_?key|private_?key|credential|database_url|dsn)/i;
 
-export type DeploySubmit = DeployCreate & {
-  labels: { repo: string; ref: string | null; targetName: string; targetKind: TargetKind };
-};
+export type DeploySubmit = DeployCreate;
+
+const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+// The Select value that switches to typing owner/name (a repo the connection has not listed).
+const OTHER_REPO = "__other__";
 
 type Target = { connection: Connection; kind: TargetKind; disabled: boolean };
 
@@ -66,6 +68,7 @@ export function DeployForm({
   const [sourceId, setSourceId] = useState<string>(() => github[0]?.id ?? "");
   const source = github.find((c) => c.id === sourceId);
   const [repo, setRepo] = useState("");
+  const [typedRepo, setTypedRepo] = useState("");
   const [ref, setRef] = useState("main");
   const [targetId, setTargetId] = useState<string>(() => targets.find((t) => !t.disabled)?.connection.id ?? "");
   const [rows, setRows] = useState<EnvRow[]>([]);
@@ -74,10 +77,14 @@ export function DeployForm({
   const [attempted, setAttempted] = useState(false);
 
   const repos = source?.repos ?? [];
-  const chosenRepo = repo && repos.includes(repo) ? repo : (repos[0] ?? "");
+  const typing = repo === OTHER_REPO || (Boolean(source) && repos.length === 0);
+  const chosenRepo = typing ? typedRepo.trim() : repo && repos.includes(repo) ? repo : (repos[0] ?? "");
+  const repoInvalid = typing && !REPO_NAME.test(chosenRepo);
   const target = targets.find((t) => t.connection.id === targetId && !t.disabled);
   const errors = envErrors(rows);
-  const ready = Boolean(source && chosenRepo && ref.trim() && target && Object.keys(errors).length === 0);
+  const ready = Boolean(
+    source && chosenRepo && !repoInvalid && ref.trim() && target && Object.keys(errors).length === 0,
+  );
 
   function update(key: number, patch: Partial<EnvRow>) {
     setRows((current) =>
@@ -101,7 +108,6 @@ export function DeployForm({
       target_connection_id: target.connection.id,
       env: rows.map((r) => ({ name: r.name.trim(), value: r.value, secret: r.secret })),
       options: { allow_missing_env: allowMissing },
-      labels: { repo: chosenRepo, ref: ref.trim(), targetName: target.connection.name, targetKind: target.kind },
     });
   }
 
@@ -135,14 +141,28 @@ export function DeployForm({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor={`${id}-repo`}>Repository</Label>
-              <Select value={chosenRepo} onValueChange={setRepo} disabled={repos.length === 0}>
-                <SelectTrigger id={`${id}-repo`} className="w-full">
-                  <SelectValue placeholder="No repositories" />
-                </SelectTrigger>
-                <SelectContent>
-                  {repos.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              {repos.length > 0 && (
+                <Select value={typing ? OTHER_REPO : chosenRepo} onValueChange={setRepo}>
+                  <SelectTrigger id={`${id}-repo`} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {repos.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                    <SelectItem value={OTHER_REPO}>Another repository</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+              {typing && (
+                <Input
+                  id={repos.length > 0 ? `${id}-repo-typed` : `${id}-repo`}
+                  aria-label={repos.length > 0 ? "Repository (owner/name)" : undefined}
+                  placeholder="owner/name"
+                  value={typedRepo}
+                  onChange={(e) => setTypedRepo(e.target.value)}
+                  aria-invalid={attempted && repoInvalid}
+                  className="font-mono text-[12.5px]"
+                />
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor={`${id}-ref`}>Branch, tag, or commit</Label>
