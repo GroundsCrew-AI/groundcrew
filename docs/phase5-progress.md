@@ -7,7 +7,7 @@ Owner: Ahmed. Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-inter
 | Milestone | Branch | PR | State |
 |---|---|---|---|
 | M0 Interfaces | `phase5-m0-interfaces` | #22, #23 | Merged 2026-10-12 |
-| M1 Telemetry readers | `phase5-m1-telemetry` | draft | Done, in review |
+| M1 Telemetry readers | `phase5-m1-telemetry` | #25 (draft) | Done, in review |
 | M2 Detection | | | |
 | M3 Medic agent | | | |
 | M4 Incidents API + wiring | | | |
