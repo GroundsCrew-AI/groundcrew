@@ -1,11 +1,11 @@
 # Phase 5 interfaces (Medic)
 
 The contract between Medic (Ahmed: telemetry, incidents, `app/agents/medic/`, the incidents API)
-and Rizwan (Incidents UI, Operate-tier role, `app/actions/`). Both sides build against this file
+and Rizwan (Incidents UI, the Operate role, `app/actions/`). Both sides build against this file
 and the code it names. M0 lands the types, the 501 routes, and fakes for both sides; nothing here
 talks to AWS or GitHub yet.
 
-Status: **proposed** (M0). Items marked **Ask** need Rizwan's OK before they are final.
+Status: **agreed** with Rizwan on 2026-10-12 (his answers are in [Decisions](#decisions)).
 
 ## How an incident runs
 
@@ -20,6 +20,7 @@ watcher (60 s) or "Report incident" ──▶ POST /incidents ──▶ incident
   apply    open_fix_pr / EmergencyActions.execute with the token      fix_applied
   verify   re-check the signals that opened it, until healthy/timeout verify_result
   remember summary, root cause, fix, embedding on the incident        incident_resolved | incident_failed
+  every status change                                                 incident_updated
 ```
 
 An incident is investigated by a normal run, so the UI reuses what deploys use: the run stream
@@ -39,6 +40,10 @@ async def collect_evidence(
   `vercel:checkout-web`, and `timeline` (everything merged in time order).
 - Values are lines `ISO-timestamp | source | resource | message`, oldest first, redacted, capped
   per source with a `... N more lines` marker (`evidence_line()` in `app/telemetry/evidence.py`).
+- Medic turns the ranked lines into **evidence items** `{id, source, timestamp, resource_id, line}`
+  (`EvidenceItem`, `app/agents/medic/schemas.py`). `id` is stable (`evidence_id()`: `ev-` plus 10
+  hex characters of a hash of source, timestamp, and line), so the model, the stored incident, and
+  the UI all cite the same line by the same id.
 - Read-only: AWS only through `CredentialsProvider.aws_session()` (read-only role,
   `DISCOVERY_REGIONS`), never a secret value, never customer data. Every AWS call it needs is
   already in `AWS_READ_OPERATIONS` and the read-only role (`logs:FilterLogEvents`,
@@ -52,7 +57,7 @@ async def collect_evidence(
 ## 2. Emergency actions (Rizwan implements, Medic calls; `app/actions/`)
 
 Contract: `app/actions/base.py`. Fake with the real approval checks: `app/actions/fake.py`
-(`FakeEmergencyActions`), which Medic uses until the real one lands.
+(`FakeEmergencyActions`), which Medic uses until the real one lands (target Oct 17).
 
 Each action is a read-only plan, then an approved execute (the same split as
 `Target.rollback_plan()` / `rollback()`), so the approval card shows exactly what changes:
@@ -76,23 +81,32 @@ Rules for `execute`:
 1. Call `consume_approved_action(session_factory, token, run_id=run_id, action=plan.action,
    plan_hash=plan.plan_hash())` before the first write. Missing, reused, or mismatched tokens raise
    `PolicyViolationError`.
-2. Re-read the state; if it no longer equals `plan.current`, return `ok=False` ("the state changed
-   since the plan was approved") and write nothing.
+2. Re-read the state; if it no longer equals `plan.current` (for example the service's task
+   definition changed), return `ok=False` ("the state changed since the plan was approved") and
+   write nothing.
 3. Return `ActionResult(ok, summary, details={...ids...}, error)`; do not wait for the service to
    become stable (Medic's verify does that).
 4. AWS only through `CredentialsProvider.aws_operate_session(connection_id)`.
 
 `ActionPlan.plan_hash()` covers action, connection, target, params, current, desired (not the
 wording or the time). `EmergencyActionError` (safe message) when no plan is possible: no previous
-revision, no `AWSPREVIOUS`, connection not Operate tier.
+revision, no `AWSPREVIOUS`, no `operate` capability, or a resource outside the allowed ARNs.
 
-**Ask (Operate tier):** `CredentialsProvider.aws_operate_session(connection_id)`, a `tier=operate`
-connection setting, and a `groundcrew-operate` role allowed exactly: `ecs:DescribeServices`,
-`ecs:ListTaskDefinitions`, `ecs:DescribeTaskDefinition`, `ecs:UpdateService`,
-`secretsmanager:DescribeSecret`, `secretsmanager:UpdateSecretVersionStage`, with the same explicit
-Deny on secret values as the other roles, and guarded at runtime by an `AWS_OPERATE_OPERATIONS`
-allowlist. How it is scoped (every service and secret in the account, or ones named or tagged in
-the stack) is Rizwan's call; the demo needs `service/checkout/*` and `secret:checkout/*`.
+### Operate capability (Rizwan, lands about a day after Phase 4 merges)
+
+- Stack parameter `EnableOperate` (`true` / `false`), independent of `Tier=deploy`: a customer can
+  allow emergency fixes without allowing deploys. A connection stores its capabilities as a set of
+  `observe`, `deploy`, `operate`.
+- Role `groundcrew-operate`, same trust and ExternalId as the others. Stack parameters
+  `OperateServiceArns` (`arn:aws:ecs:...:service/<cluster>/<service>`, wildcards per cluster) and
+  `OperateSecretArns` (prefix wildcards). Demo: `service/checkout/*` and `secret:checkout/*`.
+- Allowed: `ecs:UpdateService`, `ecs:DescribeServices` on `OperateServiceArns`;
+  `secretsmanager:UpdateSecretVersionStage`, `DescribeSecret` on `OperateSecretArns`;
+  `ecs:ListTaskDefinitions`, `DescribeTaskDefinition` on `*` (read-only, not scopable). No
+  `iam:PassRole` (a rollback reuses an existing revision; `force_redeploy` is `UpdateService` with
+  `forceNewDeployment`). Explicit Deny on secret values, like the other roles.
+- `aws_operate_session(connection_id)` has a runtime allowlist and refuses unless the connection
+  has the `operate` capability. Verified live with a smoke test like smoke-ecs.
 
 ## 3. Fix pull requests (Ahmed, `app/tools/github_pr.py`)
 
@@ -102,23 +116,24 @@ class FixPullRequests(Protocol):
 ```
 
 `PullRequestDraft` holds `installation_id, repo, base, branch, title, body, files: dict[path,
-content]` (the prompt's `open_fix_pr(installation_id, repo, branch, files, title, body)` as one
+content]` (the plan's `open_fix_pr(installation_id, repo, branch, files, title, body)` as one
 approvable object). It always opens a new `groundcrew/fix-*` branch from `base` and a PR: never a
 commit to the default branch, never a merge. The approval binds `draft.plan_hash()` (file
-contents included). `FakeFixPullRequests` records PRs with the real approval check. The GitHub
-calls land in M3 in Medic's own module, with a write allowlist of its own (refs under
-`groundcrew/fix-*`, git blobs/trees/commits, pulls); `app/connectors/github.py` stays GET only.
+contents included). `PullRequestRef` is `{repo, number, url, branch, head_sha, state: open |
+closed | merged}`; `state` is refreshed from GitHub when an incident is read.
+`FakeFixPullRequests` records PRs with the real approval check. The GitHub calls land in M3 in
+Medic's own module, with a write allowlist of its own (refs under `groundcrew/fix-*`, git
+blobs/trees/commits, pulls); `app/connectors/github.py` stays GET only.
 
-**Ask (GitHub App):** the App needs **Contents: write** and **Pull requests: write** on the
-checkout-demo installation (it has read today). Who changes the App settings, and does the
-installation need re-approving?
+GitHub App (Rizwan owns it): Contents and Pull requests are Read and write. checkout-demo `main`
+gets branch protection, so a fix PR needs a review before it can merge.
 
 ## 4. Approvals and tokens (`app/policy/actions.py`, small change in this PR)
 
 Medic creates one approval per fix in its run (`tool_call_id = "medic:<incident>:<fix_id>"`,
 `arguments = {"plan_hash": ..., "fix_id": ...}`) and, after approval, gets a token with
-`issue_approved_action(...)`. This PR widens the token's action names (no behaviour change for
-targets):
+`issue_approved_action(...)`. This PR widens the token's action names; each keeps its policy
+level and is bound to plan hash and run (no behaviour change for targets):
 
 | Tool name | Policy | `plan_hash` of |
 |---|---|---|
@@ -127,31 +142,30 @@ targets):
 | `secret_rollback_version` | emergency | `ActionPlan` |
 | `force_redeploy` | emergency | `ActionPlan` |
 
-**Ask:** OK to widen `ApprovedAction.action` (`TargetAction | MedicAction`) in `app/policy/actions.py`?
-
-**Ask (resume):** deciding an approval enqueues `resume_run`, which today always goes to
-`AgentRunner` (the tool loop). Deploys (M6) and Medic both need their own resume. Proposal:
-`resume_run` looks up a handler by `run.agent` (`{"deploy": ..., "medic": ...}`, default
-`AgentRunner`) in `app/agents/base.py` / `app/worker.py`. Who adds it, so M6 and M4 do not collide?
+Resume: Rizwan's Phase 4 M6 makes `resume_run` pick a handler registered by `run.agent` (default
+`AgentRunner`). Medic registers `"medic"` in M4.
 
 ## 5. RootCause (Ahmed, `app/agents/medic/schemas.py`)
 
-Structured output of the `root_cause` task (Ultra/on, Super with `DEV_MODE_NO_ULTRA=true`):
+Structured output of the `root_cause` task (Ultra/on, Super with `DEV_MODE_NO_ULTRA=true`). The
+model sees each evidence line with its id and cites ids:
 
 ```python
 class RootCause(BaseModel):
     summary: str
     root_cause: str
-    triggering_change: TriggeringChange | None   # {kind: commit|secret_change|deploy|config|other, ref, at, description}
+    claims: list[Claim]                          # {text, evidence_ids}
+    triggering_change: TriggeringChange | None   # {kind: commit|secret_change|deploy|config|other, ref, at, description, evidence_ids}
     affected_resources: list[str]
-    evidence: list[EvidenceRef]                  # {source, timestamp, line}
     confidence: Literal["high", "medium", "low", "other"]
     fix_options: list[FixOption]                 # {kind: pull_request|ecs_rollback_service|secret_rollback_version|force_redeploy|other, description, target}
 ```
 
-After the call Medic drops every `evidence` entry whose line is not in the collected evidence, and
-any claim left with nothing cited (listed in `Diagnosis.dropped`). `fix_options` are suggestions:
-Medic builds the concrete PR draft or `ActionPlan` itself and never runs model text as an action.
+After the call Medic removes every id that is not in the incident's evidence items, then drops
+each claim (and the triggering change) left with no id; what it removed is listed in
+`Diagnosis.dropped`. The UI links each claim to its lines through `IncidentDetail.evidence`.
+`fix_options` are suggestions: Medic builds the concrete PR draft or `ActionPlan` itself and never
+runs model text as an action.
 
 ## 6. Incidents API (Ahmed; Rizwan's UI)
 
@@ -160,24 +174,60 @@ Code: `app/routes/incidents.py` (501 until M4, behind auth and membership like `
 
 | Method | Path | Body / query | Response |
 |---|---|---|---|
-| POST | `/incidents` | `IncidentCreate` `{workspace_id, resource_ids (1..20), title?, description?, since?}` | 202 `IncidentCreated` `{incident_id, run_id, deduped}` |
-| GET | `/incidents` | `workspace_id`, `status?`, `limit` (1..100, 25), `cursor` | 200 `IncidentPage`, newest first |
+| POST | `/incidents` | `IncidentCreate` | 202 `IncidentCreated` `{incident_id, run_id, deduped}` |
+| GET | `/incidents` | `workspace_id`; filters `status`, `severity`, `resource` (resource id), `since` (opened at or after), combined with AND; `limit` (1..100, 25), `cursor` | 200 `IncidentPage` `{items, next_cursor}`, newest first |
 | GET | `/incidents/{incident_id}` | | 200 `IncidentDetail` |
 
-- Dedupe: one open incident per group of related resources. Reporting resources an open
-  incident covers returns that incident with `deduped: true`.
-- `IncidentSummary`: `id, workspace_id, title, status, severity, detected_by (watcher|user),
-  affected_resources [{id, name, type, provider}], run_id, window_start, window_end,
-  root_cause_summary, triggering_change, fixes_applied, pull_requests [{repo, number, url, branch,
-  head_sha}], memory_reused, cost_usd, ultra_equiv_usd, created_at, resolved_at,
-  time_to_detect_ms, duration_ms`.
-- `IncidentDetail` adds `signals, root_cause (RootCause), evidence (top lines), similar_incidents,
-  research [{title, url, snippet}], fixes [{fix: ProposedFix, status, applied}], verify
-  (VerifyResult), run_ids, error`.
-- Status: `open`, `investigating`, `waiting_approval`, `applying`, `verifying`, `resolved`, `failed`.
-  Severity: `critical`, `high`, `medium`, `low`.
-- Approve a fix with the existing `POST /approvals/{approval_id}/decide`; it also shows in the
-  approvals inbox (run agent `medic`).
+**Report incident** (`IncidentCreate`, unknown fields are a 422):
+
+```json
+{
+  "workspace_id": "6f0c...",
+  "resource_ids": ["9a7d..."],
+  "title": "Orders stay pending",
+  "description": "New orders do not leave pending since about 10:00",
+  "severity": "high",
+  "since": "2026-10-19T09:30:00Z"
+}
+```
+
+`resource_ids` has 1 to 20 graph resources; `title`, `description`, `severity` (default from the
+signals), and `since` (default 60 minutes before the report) are optional. One open incident per
+group of related resources: reporting resources an open incident covers returns that incident with
+`deduped: true`.
+
+**`IncidentSummary`** (list rows):
+
+| Field | Meaning |
+|---|---|
+| `id`, `workspace_id`, `run_id` | `run_id`: the latest Medic run for it |
+| `title`, `status`, `severity` | status `open`, `investigating`, `waiting_approval`, `applying`, `verifying`, `resolved`, `failed`; severity `critical`, `high`, `medium`, `low` |
+| `detected_by`, `detector_rule` | `watcher` or `user`; the rule that fired first: `health_check`, `ecs_deployment_failed`, `ecs_tasks_stopped`, `log_error_spike`, `rds_cpu_latency`, `user_report`, `other` |
+| `opened_at`, `resolved_at`, `window` | `window` = `{start, end}`; `end` is null while open |
+| `affected_resource_ids`, `affected_resources` | ids for Map deep links; `{id, name, type, provider}` for labels |
+| `root_cause_summary`, `triggering_change` | once diagnosed |
+| `fixes_applied`, `pull_requests` | action names applied; PR refs with URL and state |
+| `memory_reused` | a past incident's diagnosis or fix was reused |
+| `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `ultra_equiv_usd` | over all its Medic runs |
+| `time_to_detect_ms`, `duration_ms` | first signal -> opened; opened -> resolved |
+
+**`IncidentDetail`** adds:
+
+| Field | Meaning |
+|---|---|
+| `signals` | `[{rule, resource_id, resource_name, detail, at}]` |
+| `evidence` | `[EvidenceItem {id, source, timestamp, resource_id, line}]`; claims cite these ids |
+| `changes` | change markers for the timeline chart: `[{kind: deploy \| commit \| secret_change \| config \| other, ref, at, resource_id, label, url}]` |
+| `root_cause` | `RootCause` (section 5), only cited claims |
+| `fixes` | `[FixState {fix: ProposedFix, status, approval_id, pull_request, applied}]`; `fix.kind` is `pr` or `emergency`, `fix.plan_lines` is the plan as `[{what, before, after}]` lines, `pull_request` has the URL and state once opened; status `proposed`, `waiting_approval`, `rejected`, `applying`, `applied`, `failed` |
+| `verify` | the last recovery check (shared `VerifyResult`) |
+| `outcome` | `{result: resolved \| failed, reason, still_failing}` once final |
+| `memory` | `{incident_id, title, similarity, reused: [diagnosis \| fix \| research]}` when a past incident was reused |
+| `research` | Tavily results `[{title, url, snippet}]` (max 3) |
+| `run_ids`, `error` | every Medic run for it, oldest first |
+
+Approve a fix with the existing `POST /approvals/{approval_id}/decide`; it also shows in the
+approvals inbox (run agent `medic`).
 
 ## 7. Run stream events for incidents
 
@@ -187,12 +237,13 @@ the deploy events. `GET /runs/{id}` returns the same steps.
 
 | Event | `data` | Notes |
 |---|---|---|
-| `incident_opened` | `IncidentOpened` `{incident_id, title, severity, detected_by, signals, affected_resources, window_start, window_end}` | First step |
-| `evidence_collected` | `EvidenceCollected` `{sources [{source, lines, truncated}], neighbors, top [EvidenceRef], total_lines}` | |
-| `memory_checked` | `MemoryChecked` `{hits [{incident_id, title, similarity, root_cause, fix_summary, resolved_at}], reused}` | Added to the prompt's list: the memory hit is a demo moment |
+| `incident_opened` | `IncidentOpened` `{incident_id, title, severity, detected_by, detector_rule, signals, affected_resources, window}` | First step |
+| `incident_updated` | `IncidentUpdated` `{incident_id, status, previous_status, at, reason}` | Every status change |
+| `evidence_collected` | `EvidenceCollected` `{sources [{source, lines, truncated}], neighbors, items [EvidenceItem], changes [ChangeMarker], total_lines}` | |
+| `memory_checked` | `MemoryChecked` `{hits [{incident_id, title, similarity, root_cause, fix_summary, resolved_at}], reused_incident_id, reused}` | |
 | `research_done` | `ResearchDone` `{queries, results [{title, url, snippet}] (max 3), skipped_reason}` | Tavily |
 | `diagnosis` | `Diagnosis` `{root_cause: RootCause, dropped}` | The `llm` step before it has model, tokens, cost |
-| `fix_proposed` | `FixProposed` `{fixes [ProposedFix]}` | Ordered; emergency action first when prod is down |
+| `fix_proposed` | `FixProposed` `{fixes [ProposedFix]}` | Ordered; emergency first when prod is down |
 | `approval_requested` | `FixApproval` `{incident_id, fix: ProposedFix}`, plus `approval` | One per fix |
 | `approval_decided` | | As for any run |
 | `fix_applied` | `FixApplied` `{fix_id, kind, ok, action_result, pull_request, error}` | |
@@ -200,22 +251,21 @@ the deploy events. `GET /runs/{id}` returns the same steps.
 | `incident_resolved` | `IncidentResolved` `{incident_id, time_to_detect_ms, duration_ms, fixes_applied, pull_requests, memory_reused, cost_usd, ultra_equiv_usd}` | Before `done` |
 | `incident_failed` | `IncidentFailed` `{incident_id, reason, still_failing, cost_usd}` | Before `done` |
 
-`ProposedFix`: `{fix_id, kind: pull_request|emergency_action, order, title, rationale, action,
-plan (ActionPlan), pull_request {repo, base, branch, title, body, files [{path, diff}]},
-approval_id}`.
+`ProposedFix`: `{fix_id, kind: pr | emergency, order, title, rationale, action, plan (ActionPlan),
+plan_lines [{what, before, after}], pull_request {repo, base, branch, title, body, files [{path,
+diff}]}, approval_id}`.
 
-**Ask (verify checks):** Medic reuses the deploy `VerifyResult` so the UI can share one component.
-Its `VerifyCheck.name` is `rollout | health | root | other`; Medic would use `rollout` (ECS tasks
-running and the deployment stable), `health`, and `other` for error rate and RDS CPU/latency.
-OK to add `errors` and `metric` to that Literal in `app/pipeline/events.py` (additive)?
+Verify checks: Medic uses `rollout` (ECS tasks running, deployment stable), `health`, `errors`
+(log error rate), and `metric` (RDS CPU, latency). Rizwan adds `errors` and `metric` to
+`VerifyCheck.name` in his M6; until then Medic sends `other` for those two.
 
 ## Per scenario (checkout-demo)
 
-| Scenario | Signals that open it | Expected triggering change | Fixes, in order |
+| Scenario | Rules that open it | Expected triggering change | Fixes, in order |
 |---|---|---|---|
-| bad-deploy-oom | worker tasks stopped exit 137 (OutOfMemoryError), deployment failed | commit to `worker/ecs-task.json` (deploy run) | `ecs_rollback_service` (worker), then PR restoring the memory |
-| missing-index | `/orders/search` latency up, RDS CPU spike | commit adding a migration that drops `ix_orders_customer_email` | PR with a forward migration recreating the index concurrently |
-| broken-env | api health check failures, replacement loop, worker `poll failed` | secret `checkout/database-url` changed (no commit) | `secret_rollback_version`, then `force_redeploy` (api, worker); PR only if config is in the repo |
+| bad-deploy-oom | `ecs_tasks_stopped` (exit 137, OutOfMemoryError), `ecs_deployment_failed` | commit to `worker/ecs-task.json` (deploy run) | `ecs_rollback_service` (worker), then PR restoring the memory |
+| missing-index | `log_error_spike` / latency on `/orders/search`, `rds_cpu_latency` | commit adding a migration that drops `ix_orders_customer_email` | PR with a forward migration recreating the index concurrently |
+| broken-env | `health_check`, `ecs_deployment_failed`, worker `poll failed` | secret `checkout/database-url` changed (no commit) | `secret_rollback_version`, then `force_redeploy` (api, worker); PR only if config is in the repo |
 
 ## Files in this PR
 
@@ -226,12 +276,16 @@ Changed (additive): `app/policy/actions.py` (action names), `app/routes/schemas.
 union, SSE names), `app/routes/runs.py` (incident events streamed by name), `app/main.py`
 (router), generated `apps/web/lib/api/`, `docs/events.md`, `docs/api-changes.md`.
 
-## Questions for Rizwan (one place)
+## Decisions
 
-1. Operate tier: role name, scope, `aws_operate_session`, and when it can land (section 2).
-2. Plan + execute split for emergency actions, with the state re-check (section 2): OK?
-3. Widening `ApprovedAction.action` in `app/policy/actions.py` (section 4): OK?
-4. `resume_run` dispatch by `run.agent`: who adds it (section 4)?
-5. GitHub App write permissions for fix PRs (section 3).
-6. `VerifyCheck.name`: add `errors` and `metric` (section 7)?
-7. Incidents UI on the run stream with the events above: anything missing for the screens?
+Agreed with Rizwan, 2026-10-12:
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Operate tier | Scoped: `EnableOperate`, capabilities set, `groundcrew-operate` limited to `OperateServiceArns` / `OperateSecretArns` (section 2). Rizwan, target Oct 17; fakes until then |
+| 2 | Plan then execute | Yes, approval bound to the plan hash, token consumed before the first write, `ok=False` when the state moved |
+| 3 | Widen `ApprovedAction` | Yes, in this PR: additive, each action keeps its policy level, bound to plan hash and run |
+| 4 | Resume dispatch | Rizwan adds handlers by `run.agent` in Phase 4 M6; Medic registers `"medic"` in M4 |
+| 5 | GitHub App | Rizwan owns it; Contents and Pull requests are already read and write; branch protection on checkout-demo `main` |
+| 6 | `VerifyCheck.name` | Rizwan adds `errors` and `metric` in M6 |
+| 7 | Incidents UI | Filters, structured evidence with ids, claims citing ids, change markers, plan lines, PR state, outcome, memory reuse, `incident_updated`: all in sections 5 to 7 |

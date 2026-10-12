@@ -17,13 +17,14 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from app.actions.base import ActionPlan, ActionResult, EmergencyActionName
-from app.agents.medic.schemas import EvidenceRef, RootCause
+from app.agents.medic.schemas import ChangeKind, EvidenceItem, RootCause
 from app.tools.github_pr import PullRequestRef
 
 # Event names an incident run adds to the run stream (besides step, approval_requested,
 # approval_decided, verify_result, status, done).
 MEDIC_EVENT_NAMES = (
     "incident_opened",
+    "incident_updated",
     "evidence_collected",
     "memory_checked",
     "research_done",
@@ -45,7 +46,8 @@ IncidentStatus = Literal[
 ]
 Severity = Literal["critical", "high", "medium", "low"]
 DetectedBy = Literal["watcher", "user"]
-SignalKind = Literal[
+# Detector rules (M2). user_report: POST /incidents from a person.
+DetectorRule = Literal[
     "health_check",  # api health failures (ECS container health or an HTTP check)
     "ecs_deployment_failed",
     "ecs_tasks_stopped",  # tasks stopped non-zero (exit 137 / OOM included)
@@ -56,7 +58,15 @@ SignalKind = Literal[
 ]
 
 
+class TimeWindow(BaseModel):
+    start: datetime
+    # Null while the incident is open: the window runs to now.
+    end: datetime | None = None
+
+
 class ResourceRef(BaseModel):
+    """A graph resource; `id` is what the Map deep-links to."""
+
     id: uuid.UUID
     name: str
     type: str = Field(examples=["ecs:service", "rds:db", "secretsmanager:secret"])
@@ -64,13 +74,25 @@ class ResourceRef(BaseModel):
 
 
 class Signal(BaseModel):
-    """Why an incident was opened, or what verify re-checks."""
+    """A detector rule that fired, or what verify re-checks."""
 
-    kind: SignalKind
+    rule: DetectorRule
     resource_id: uuid.UUID | None = None
     resource_name: str | None = None
     detail: str = Field(examples=["3 tasks stopped with exit code 137 (OutOfMemoryError)"])
     at: datetime
+
+
+class ChangeMarker(BaseModel):
+    """A change in or before the window, for the timeline chart."""
+
+    kind: ChangeKind
+    # Commit SHA, deploy run id or task definition ARN, secret version id.
+    ref: str
+    at: datetime
+    resource_id: uuid.UUID | None = None
+    label: str = Field(examples=["abc1234 Lower worker memory", "checkout/database-url changed"])
+    url: str | None = None
 
 
 class IncidentOpened(BaseModel):
@@ -79,10 +101,22 @@ class IncidentOpened(BaseModel):
     title: str
     severity: Severity
     detected_by: DetectedBy
+    # The detector rule that fired first (user_report for a person's report).
+    detector_rule: DetectorRule
     signals: list[Signal]
     affected_resources: list[ResourceRef]
-    window_start: datetime
-    window_end: datetime | None = None
+    window: TimeWindow
+
+
+class IncidentUpdated(BaseModel):
+    """Every status change, so the UI can update the incident header without a reload."""
+
+    type: Literal["incident_updated"] = "incident_updated"
+    incident_id: uuid.UUID
+    status: IncidentStatus
+    previous_status: IncidentStatus | None
+    at: datetime
+    reason: str | None = None
 
 
 class EvidenceSourceSummary(BaseModel):
@@ -96,8 +130,9 @@ class EvidenceCollected(BaseModel):
     sources: list[EvidenceSourceSummary]
     # Resources added by following graph edges from the affected ones (uses, logs_to, ...).
     neighbors: list[ResourceRef] = Field(default_factory=list)
-    # The most relevant lines after ranking (at most about 12), shown on the card.
-    top: list[EvidenceRef]
+    # The ranked lines the diagnosis may cite (at most about 40), with stable ids.
+    items: list[EvidenceItem]
+    changes: list[ChangeMarker] = Field(default_factory=list)
     total_lines: int
 
 
@@ -110,12 +145,16 @@ class MemoryHit(BaseModel):
     resolved_at: datetime | None
 
 
+MemoryReuse = Literal["diagnosis", "fix", "research"]
+
+
 class MemoryChecked(BaseModel):
     type: Literal["memory_checked"] = "memory_checked"
     hits: list[MemoryHit]
-    # True when a past incident was close enough that Medic reuses its diagnosis and fix
-    # (a faster path; the diagnosis is still checked against this incident's evidence).
-    reused: bool
+    # The hit Medic reused (the closest one above the threshold), and what it reused. The
+    # diagnosis is still checked against this incident's own evidence.
+    reused_incident_id: uuid.UUID | None = None
+    reused: list[MemoryReuse] = Field(default_factory=list)
 
 
 class ResearchResult(BaseModel):
@@ -135,7 +174,8 @@ class ResearchDone(BaseModel):
 
 class Diagnosis(BaseModel):
     type: Literal["diagnosis"] = "diagnosis"
-    # Only cited claims: evidence lines not found in the collected evidence were dropped.
+    # Only cited claims: ids not in the collected evidence were removed, and claims left with
+    # none were dropped.
     root_cause: RootCause
     # What the post-check removed, one line each, so the UI can show "2 uncited claims dropped".
     dropped: list[str] = Field(default_factory=list)
@@ -158,21 +198,30 @@ class PullRequestView(BaseModel):
     files: list[FileChange]
 
 
-FixKindOut = Literal["pull_request", "emergency_action"]
+class PlanLine(BaseModel):
+    """One human-readable line of an ActionPlan: what changes, from what, to what."""
+
+    what: str = Field(examples=["checkout-worker task definition"])
+    before: str | None = Field(examples=["checkout-worker:42"])
+    after: str | None = Field(examples=["checkout-worker:41"])
+
+
+FixKind = Literal["pr", "emergency"]
 FixStatus = Literal["proposed", "waiting_approval", "rejected", "applying", "applied", "failed"]
 
 
 class ProposedFix(BaseModel):
     fix_id: str = Field(examples=["fix-1"])
-    kind: FixKindOut
+    kind: FixKind
     # 1 runs first. An emergency action (production down now) comes before its PR.
     order: int
     title: str
     rationale: str
-    # kind = emergency_action
+    # kind = emergency
     action: EmergencyActionName | None = None
     plan: ActionPlan | None = None
-    # kind = pull_request
+    plan_lines: list[PlanLine] = Field(default_factory=list)
+    # kind = pr
     pull_request: PullRequestView | None = None
     approval_id: uuid.UUID | None = None
 
@@ -193,7 +242,7 @@ class FixApproval(BaseModel):
 class FixApplied(BaseModel):
     type: Literal["fix_applied"] = "fix_applied"
     fix_id: str
-    kind: FixKindOut
+    kind: FixKind
     ok: bool
     action_result: ActionResult | None = None
     pull_request: PullRequestRef | None = None
@@ -224,6 +273,7 @@ class IncidentFailed(BaseModel):
 
 MedicEventData = Annotated[
     IncidentOpened
+    | IncidentUpdated
     | EvidenceCollected
     | MemoryChecked
     | ResearchDone

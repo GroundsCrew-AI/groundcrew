@@ -74,11 +74,11 @@ The full contract is in `docs/deploys-contract.md`; the events are in `docs/even
 
 For the Incidents UI (Rizwan). Contract: `docs/phase5-interfaces.md`.
 
-- New routes `POST /incidents`, `GET /incidents`, `GET /incidents/{incident_id}`: typed, answer 501
-  until Phase 5 M4.
+- New routes `POST /incidents`, `GET /incidents` (filters `status`, `severity`, `resource`,
+  `since`; cursor paging), `GET /incidents/{incident_id}`: typed, answer 501 until Phase 5 M4.
 - `StepOut.data` is now `DeployEventData | MedicEventData`: incident steps carry `IncidentOpened`,
-  `EvidenceCollected`, `MemoryChecked`, `ResearchDone`, `Diagnosis`, `FixProposed`, `FixApproval`,
+  `IncidentUpdated`, `EvidenceCollected`, `MemoryChecked`, `ResearchDone`, `Diagnosis`, `FixProposed`, `FixApproval`,
   `FixApplied`, `IncidentResolved`, or `IncidentFailed`, discriminated by `type`. Existing deploy
   code that narrows on `data.type` is unaffected (web typecheck and tests pass unchanged).
-- `SseEventName` adds `incident_opened`, `evidence_collected`, `memory_checked`, `research_done`,
+- `SseEventName` adds `incident_opened`, `incident_updated`, `evidence_collected`, `memory_checked`, `research_done`,
   `diagnosis`, `fix_proposed`, `fix_applied`, `incident_resolved`, `incident_failed`.

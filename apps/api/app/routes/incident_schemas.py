@@ -8,22 +8,26 @@ working (M4).
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.medic.events import (
+    ChangeMarker,
     DetectedBy,
+    DetectorRule,
     FixApplied,
     FixStatus,
     IncidentStatus,
-    MemoryHit,
+    MemoryReuse,
     ProposedFix,
     ResearchResult,
     ResourceRef,
     Severity,
     Signal,
+    TimeWindow,
 )
-from app.agents.medic.schemas import EvidenceRef, RootCause, TriggeringChange
+from app.agents.medic.schemas import EvidenceItem, RootCause, TriggeringChange
 from app.pipeline.events import VerifyResult
 from app.tools.github_pr import PullRequestRef
 
@@ -43,6 +47,7 @@ class IncidentCreate(BaseModel):
     title: str | None = Field(default=None, max_length=300)
     # What the person sees, in their words. Goes into the investigation as a symptom.
     description: str | None = Field(default=None, max_length=4000)
+    severity: Severity | None = None
     # Start of the window to investigate. Default: 60 minutes before the report.
     since: datetime | None = None
 
@@ -63,25 +68,31 @@ class IncidentSummary(BaseModel):
 
     id: uuid.UUID
     workspace_id: uuid.UUID
+    # The run investigating it now (the latest Medic run for this incident).
+    run_id: uuid.UUID | None
     title: str
     status: IncidentStatus
     severity: Severity
     detected_by: DetectedBy
+    # The detector rule that fired first (user_report for a person's report).
+    detector_rule: DetectorRule
+    opened_at: datetime
+    resolved_at: datetime | None
+    window: TimeWindow
+    # Map deep links: affected_resource_ids, with names and types in affected_resources.
+    affected_resource_ids: list[uuid.UUID]
     affected_resources: list[ResourceRef]
-    # The run investigating it now (the latest Medic run for this incident).
-    run_id: uuid.UUID | None
-    window_start: datetime
-    window_end: datetime | None
     root_cause_summary: str | None
     triggering_change: TriggeringChange | None
     # pull_request, ecs_rollback_service, ... for the fixes that were applied.
     fixes_applied: list[str]
     pull_requests: list[PullRequestRef]
     memory_reused: bool
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
     cost_usd: float | None
     ultra_equiv_usd: float | None = None
-    created_at: datetime
-    resolved_at: datetime | None
     # First signal -> incident opened, and opened -> resolved.
     time_to_detect_ms: int | None
     duration_ms: int | None
@@ -89,26 +100,50 @@ class IncidentSummary(BaseModel):
 
 class IncidentPage(BaseModel):
     items: list[IncidentSummary]
+    # Pass as ?cursor= for the next page. Null when there are no more.
     next_cursor: str | None
 
 
 class FixState(BaseModel):
-    """A proposed fix and what happened to it."""
+    """A proposed fix and what happened to it. `fix.kind` is pr or emergency;
+    `fix.plan_lines` is the plan as from -> to lines; the PR's URL and state are in
+    `pull_request` once opened."""
 
     fix: ProposedFix
     status: FixStatus
+    approval_id: uuid.UUID | None
+    pull_request: PullRequestRef | None = None
     applied: FixApplied | None = None
+
+
+class MemoryUse(BaseModel):
+    incident_id: uuid.UUID
+    title: str
+    similarity: float
+    reused: list[MemoryReuse]
+
+
+class IncidentOutcome(BaseModel):
+    result: Literal["resolved", "failed"]
+    reason: str | None = None
+    # Signals that did not recover (failed only).
+    still_failing: list[str] = Field(default_factory=list)
 
 
 class IncidentDetail(IncidentSummary):
     signals: list[Signal]
+    # The ranked evidence lines; root_cause claims cite them by id.
+    evidence: list[EvidenceItem]
+    # Deploys, commits, and secret changes for the timeline chart.
+    changes: list[ChangeMarker]
     root_cause: RootCause | None
-    # Top ranked evidence lines (the full text stays in the run).
-    evidence: list[EvidenceRef]
-    similar_incidents: list[MemoryHit]
-    research: list[ResearchResult]
     fixes: list[FixState]
+    # The last recovery check (the shared VerifyResult), and the final outcome once there is one.
     verify: VerifyResult | None
+    outcome: IncidentOutcome | None
+    # The past incident that was reused, if any.
+    memory: MemoryUse | None
+    research: list[ResearchResult]
     # Every Medic run for this incident, oldest first (a re-investigation adds one).
     run_ids: list[uuid.UUID]
     error: str | None = None

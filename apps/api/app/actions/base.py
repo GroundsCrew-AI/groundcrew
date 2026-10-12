@@ -1,8 +1,9 @@
 """Emergency actions on a customer's existing resources (docs/phase5-interfaces.md).
 
-Rizwan owns this package and implements `EmergencyActions` on an Operate-tier session
-(`CredentialsProvider.aws_operate_session`). Medic (Phase 5) only calls it. Until the real
-implementation lands, Medic and its tests use `FakeEmergencyActions` (app/actions/fake.py).
+Rizwan owns this package and implements `EmergencyActions` on an Operate session
+(`CredentialsProvider.aws_operate_session`, connection capability `operate`). Medic (Phase 5)
+only calls it. Until the real implementation lands, Medic and its tests use
+`FakeEmergencyActions` (app/actions/fake.py).
 
 Every action is two calls, like `Target.rollback_plan()` / `rollback()`:
 
@@ -89,13 +90,15 @@ class ActionResult(BaseModel):
 
 
 class EmergencyActionError(Exception):
-    """A plan cannot be made (no previous revision, no AWSPREVIOUS version, not Operate tier).
+    """A plan cannot be made (no previous revision, no AWSPREVIOUS version, the connection has no
+    `operate` capability, or the resource is outside OperateServiceArns / OperateSecretArns).
     The message is safe to show and never holds a secret value."""
 
 
 class EmergencyActions(Protocol):
-    """Rizwan implements; Medic calls. All AWS calls go through `aws_operate_session` on a
-    connection with tier=operate, in DISCOVERY_REGIONS."""
+    """Rizwan implements; Medic calls. All AWS calls go through `aws_operate_session`, which
+    refuses unless the connection has the `operate` capability (stack parameter
+    EnableOperate), and only reach OperateServiceArns / OperateSecretArns."""
 
     async def plan_ecs_rollback_service(
         self, connection_id: uuid.UUID, cluster: str, service: str

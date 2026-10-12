@@ -7,12 +7,13 @@ else), and answers 501.
 """
 
 import uuid
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.accounts import NotFoundError, member_workspace
-from app.agents.medic.events import IncidentStatus
+from app.agents.medic.events import IncidentStatus, Severity
 from app.routes.deps import CurrentUser, SessionDep
 from app.routes.incident_schemas import (
     IncidentCreate,
@@ -65,10 +66,16 @@ async def list_incidents(
     session: SessionDep,
     workspace_id: uuid.UUID,
     status_filter: Annotated[IncidentStatus | None, Query(alias="status")] = None,
+    severity: Severity | None = None,
+    resource_id: Annotated[
+        uuid.UUID | None, Query(alias="resource", description="Incidents affecting this resource")
+    ] = None,
+    since: Annotated[datetime | None, Query(description="Opened at or after this time")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     cursor: str | None = None,
 ) -> IncidentPage:
-    """Newest first. Pass next_cursor back as ?cursor= for the next page."""
+    """Newest first. Filters combine with AND. Pass next_cursor back as ?cursor= for the next
+    page."""
     await _check_member(session, user, workspace_id)
     raise _not_implemented()
 

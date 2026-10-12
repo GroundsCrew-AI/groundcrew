@@ -18,11 +18,14 @@ from app.agents.medic.events import (
     Diagnosis,
     FixApproval,
     IncidentOpened,
+    IncidentUpdated,
+    PlanLine,
     ProposedFix,
     ResourceRef,
     Signal,
+    TimeWindow,
 )
-from app.agents.medic.schemas import EvidenceRef, RootCause, TriggeringChange
+from app.agents.medic.schemas import Claim, RootCause, TriggeringChange, evidence_id
 from app.config import get_settings
 from app.db.models import Run, RunStatus, RunStep, Workspace
 from app.db.session import SessionFactory, get_session_factory
@@ -50,6 +53,9 @@ pytestmark = pytest.mark.anyio
 
 CONNECTION = uuid.uuid4()
 NOW = datetime(2026, 10, 19, 10, 0, tzinfo=UTC)
+OOM_ID = evidence_id(
+    "ecs:checkout-worker", NOW.isoformat(), "OutOfMemoryError: Container killed due to memory usage"
+)
 
 
 @pytest.fixture
@@ -105,7 +111,10 @@ async def test_incident_routes_are_501_for_members_and_404_for_others(
     body = _create(workspace_id=str(alice.workspace_id))
     assert (await client.post("/incidents", json=body, headers=alice.headers)).status_code == 501
     assert (await client.post("/incidents", json=body, headers=bob.headers)).status_code == 404
-    listing = f"/incidents?workspace_id={alice.workspace_id}&status=resolved"
+    listing = (
+        f"/incidents?workspace_id={alice.workspace_id}&status=resolved&severity=high"
+        f"&resource={uuid.uuid4()}&since=2026-10-19T00:00:00Z"
+    )
     assert (await client.get(listing, headers=alice.headers)).status_code == 501
     assert (await client.get(listing, headers=bob.headers)).status_code == 404
     detail = await client.get(f"/incidents/{uuid.uuid4()}", headers=alice.headers)
@@ -122,6 +131,9 @@ def test_incident_routes_and_payloads_are_in_openapi() -> None:
         "IncidentPage",
         "IncidentDetail",
         "IncidentOpened",
+        "IncidentUpdated",
+        "EvidenceItem",
+        "ChangeMarker",
         "Diagnosis",
         "FixApproval",
         "FixApplied",
@@ -145,9 +157,10 @@ def _opened(resource_id: uuid.UUID) -> IncidentOpened:
         title="checkout-worker tasks OOM-killed",
         severity="high",
         detected_by="watcher",
+        detector_rule="ecs_tasks_stopped",
         signals=[
             Signal(
-                kind="ecs_tasks_stopped",
+                rule="ecs_tasks_stopped",
                 resource_id=resource_id,
                 resource_name="checkout-worker",
                 detail="3 tasks stopped with exit code 137 (OutOfMemoryError)",
@@ -157,7 +170,7 @@ def _opened(resource_id: uuid.UUID) -> IncidentOpened:
         affected_resources=[
             ResourceRef(id=resource_id, name="checkout-worker", type="ecs:service", provider="aws")
         ],
-        window_start=NOW,
+        window=TimeWindow(start=NOW),
     )
 
 
@@ -165,15 +178,11 @@ def _root_cause() -> RootCause:
     return RootCause(
         summary="Worker tasks are OOM-killed since commit abc123 lowered the memory limit.",
         root_cause="worker/ecs-task.json sets container_memory 24; tasks exit 137.",
-        triggering_change=TriggeringChange(kind="commit", ref="abc123", at=NOW.isoformat()),
+        claims=[Claim(text="Worker tasks exit 137 (OOM).", evidence_ids=[OOM_ID])],
+        triggering_change=TriggeringChange(
+            kind="commit", ref="abc123", at=NOW.isoformat(), evidence_ids=[OOM_ID]
+        ),
         affected_resources=["checkout-worker"],
-        evidence=[
-            EvidenceRef(
-                source="ecs:checkout-worker",
-                timestamp=NOW.isoformat(),
-                line="OutOfMemoryError: Container killed due to memory usage",
-            )
-        ],
         confidence="high",
     )
 
@@ -194,12 +203,19 @@ async def test_incident_events_stream_as_named_events_with_typed_data(
     )
     fix = ProposedFix(
         fix_id="fix-1",
-        kind="emergency_action",
+        kind="emergency",
         order=1,
         title="Roll back checkout-worker",
         rationale="Production is down now.",
         action="ecs_rollback_service",
         plan=plan,
+        plan_lines=[
+            PlanLine(
+                what="checkout-worker task definition",
+                before="checkout-worker:42",
+                after="checkout-worker:41",
+            )
+        ],
     )
     async with session_factory() as session:
         run = Run(workspace_id=alice.workspace_id, agent="medic", goal="g")
@@ -207,6 +223,14 @@ async def test_incident_events_stream_as_named_events_with_typed_data(
         session.add(run)
         await session.flush()
         await record_step(session, run, kind="incident_opened", data=_opened(resource))
+        await record_step(
+            session,
+            run,
+            kind="incident_updated",
+            data=IncidentUpdated(
+                incident_id=uuid.uuid4(), status="investigating", previous_status="open", at=NOW
+            ),
+        )
         await record_step(session, run, kind="diagnosis", data=Diagnosis(root_cause=_root_cause()))
         await record_step(
             session,
@@ -230,10 +254,14 @@ async def test_incident_events_stream_as_named_events_with_typed_data(
     resp = await client.get(await _stream_url(client, alice, run_id))
     events = _parse_sse(resp.text)
     by_name = {name: data for name, data, _ in events}
-    assert by_name["incident_opened"]["data"]["signals"][0]["kind"] == "ecs_tasks_stopped"
-    assert by_name["diagnosis"]["data"]["root_cause"]["triggering_change"]["kind"] == "commit"
+    assert by_name["incident_opened"]["data"]["signals"][0]["rule"] == "ecs_tasks_stopped"
+    assert by_name["incident_updated"]["data"]["status"] == "investigating"
+    root_cause = by_name["diagnosis"]["data"]["root_cause"]
+    assert root_cause["triggering_change"]["kind"] == "commit"
+    assert root_cause["claims"][0]["evidence_ids"] == [OOM_ID]
     approval = by_name["approval_requested"]["step"]["data"]
     assert approval["type"] == "fix_approval" and approval["fix"]["plan"]["current"].endswith(":42")
+    assert approval["fix"]["plan_lines"][0]["after"] == "checkout-worker:41"
     assert by_name["verify_result"]["data"]["ok"] is True
 
     async with session_factory() as session:
@@ -256,6 +284,18 @@ def test_root_cause_needs_confidence_and_known_change_kinds() -> None:
         RootCause.model_validate({"summary": "s", "root_cause": "r"})
     with pytest.raises(ValidationError):
         TriggeringChange.model_validate({"kind": "rumour"})
+
+
+def test_evidence_ids_are_stable_and_distinct() -> None:
+    same = evidence_id(
+        "ecs:checkout-worker",
+        NOW.isoformat(),
+        "OutOfMemoryError: Container killed due to memory usage",
+    )
+    assert same == OOM_ID and OOM_ID.startswith("ev-") and len(OOM_ID) == 13
+    assert evidence_id("ecs:checkout-api", NOW.isoformat(), "x") != evidence_id(
+        "ecs:checkout-worker", NOW.isoformat(), "x"
+    )
 
 
 def test_evidence_lines_are_one_line_each() -> None:
