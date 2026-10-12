@@ -4,9 +4,9 @@ One repository that has never been containerized, `GroundsCrew-AI/legacy-flask-a
 GitHub to a live URL on the local kind cluster and on AWS ECS, with an automatic build fix and an
 approval before anything touches infrastructure. Then the Map shows both deployments.
 
-**Status:** the script below needs the Deploy page (Part B) and Ahmed's pipeline (sandbox,
-Builder, Deployer, `POST /deploys`). Neither exists on main yet (checked 2026-10-11). What it
-can rely on today is under [The repository](#the-repository) and [Before the demo](#before-the-demo).
+**Status:** final (Phase 4 done, 2026-10-12). Every step below ran live through `POST /deploys`
+on 2026-10-12 (`docs/deploy-live.md`, Phase 4 evidence): kind in 2.0 min and ECS in 4.9 min,
+each with 2 build attempts (one automatic psycopg2 fix), about $0.003 of model calls each.
 
 ## The repository
 
@@ -72,9 +72,9 @@ warm dind cache the kind deploy takes about a minute end to end.
 | 0:50 | Approval card: the rendered plan (namespace `gc-legacy-flask-app`, Deployment, Service, Ingress, image `kind-registry:5000/...`, `DATABASE_URL` masked). **Approve** | "Nothing touches infrastructure until a person approves the exact plan. Secrets stay masked." |
 | 1:00 | Deployer: apply, verify passes. Live URL `http://legacy-flask-app.localhost`: click it, `{"status":"ok"}` | "Deployed and verified. That's a live URL on Kubernetes." |
 | 1:10 | Back to Deploy. Same repo, target: `AWS 881050425883` (deploy tier). **Deploy** | "Same repo, now AWS." |
-| 1:20 | Builder reuses the fixed build (one attempt). Approval card: ECS service in `groundcrew-deploys`, Fargate 0.25 vCPU / 0.5 GB, security group on port 8000, log group, ECR repository, the secret by name only. **Approve** | "The plan is different, the guardrails are the same: only groundcrew-named, tagged resources, through a role that can't touch anything else." |
+| 1:20 | Builder fails once on psycopg2 again and fixes it (the run starts from the repository; the cached layers make it quick). Approval card: the push to ECR is the first step after approval, then ECS service in `groundcrew-deploys`, Fargate 0.25 vCPU / 0.5 GB, security group on port 8000, log group, ECR repository, the secret by name only. **Approve** | "The plan is different, the guardrails are the same: only groundcrew-named, tagged resources, through a role that can't touch anything else." |
 | 1:35 | Verify passes; live URL `http://<task IP>:8000/health` answers | "Live on Fargate." |
-| 1:45 | Map: `legacy-flask-app` on kind (namespace, Deployment, Service, Ingress) and on ECS (service, task definition, repository), each with a deployed-by-Groundcrew edge | "And Groundcrew knows what it just deployed: both show up on the Map, linked to the run that made them." |
+| 1:45 | **View on Map** from the live URL card: the `legacy-flask-app` Deployment (kind) and ECS service, each marked actionable with a deployed-by-Groundcrew edge (the rest of each stack appears after the next discovery) | "And Groundcrew knows what it just deployed: both show up on the Map, linked to the run that made them." |
 | 1:55 | Deploys list: two rows, status, target, URL, duration, cost | "Two clouds, one repo, one fix, two approvals. About a cent of AWS." |
 
 ## If something goes wrong on stage
@@ -89,9 +89,13 @@ warm dind cache the kind deploy takes about a minute end to end.
 
 ## After the demo
 
+Roll back the ECS deploy (an emergency approval: on a first deploy the service is deleted),
+then clean up what that run left:
+
 ```bash
-make cleanup-deploys HOURS=0          # dry run first
-make cleanup-deploys HOURS=0 APPLY=1  # AWS writes: only with the account owner's OK
+SELF_APPROVE=1 scripts/live_phase4.sh --rollback <ECS deploy id>   # dev stack only
+make cleanup-deploys HOURS=0 RUN=<ECS run id>                       # dry run first
+make cleanup-deploys HOURS=0 APPLY=1 RUN=<ECS run id>               # AWS writes: owner's OK
 ```
 
 Cost of the AWS part: about $0.003 for 10 minutes at 0.25 vCPU / 0.5 GB with a public IP

@@ -512,6 +512,20 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
           `source_image`, resource action `push`); missing env fixed on the approval card (Set value /
           Continue without it re-runs only preflight, same image; `POST /deploys/{id}/env` lands in M6);
           disabled Approve explains the failing check; full repo name; preview on a simulated clock
+    - [x] M4 Builder, M5 Deployer, M6 pipeline + API, M8 E2E and live (PRs #21, #24, 2026-10-12;
+          details and open issues in `docs/phase4-progress.md`). Builder: write_dockerfile / fix_build
+          (Super; attempt 4+ escalates), max 5 attempts, no_progress, network retries that do not count,
+          BuildAttempt events, smoke test, never pushes. Deployer: plan_deploy (replicas, size, secrets
+          only ever stricter), the approval card from the TargetPlan. Pipeline (`app/pipeline/runner.py`):
+          Scout -> Builder -> Deployer in one run, pauses at approvals and resumes from runs.state,
+          apply with a single-use token, verify, live URL, register_deployment once (actionable), a
+          failed verify offers an emergency rollback; env values only encrypted in the job, purged at the
+          end. Real POST/GET /deploys and POST /deploys/{id}/env; the preview fake is gone. For Phase 5:
+          `register_resume_handler` (resume_run by run.agent) and VerifyCheck `errors` / `metric`.
+          Dev-only self-approve for live scripts; fake pipeline mode for Playwright (4 E2E tests, CI job
+          `e2e`). Live through POST /deploys: kind 2.0 min and ECS 4.9 min, each with one automatic
+          psycopg2 fix, about $0.003 of model calls each; ECS rolled back and cleaned up
+          (`docs/deploy-live.md`). Done-when evidence: one human-approved run from the Deploy page
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission

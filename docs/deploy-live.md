@@ -195,6 +195,32 @@ secret kept for minutes ($0.40 per secret-month, prorated). ECR storage and log 
 one small image and a few lines round to $0. The script prints its own estimate from how long
 the service ran.
 
+## Phase 4 evidence: `POST /deploys` (2026-10-12)
+
+`GroundsCrew-AI/legacy-flask-app` (commit `be9a75d04d07`, never containerized) from GitHub to a
+live URL through the API on the dev stack (`make dev KIND=1`), with `scripts/live_phase4.sh`.
+Each deploy is one run: Scout, Builder (automatic psycopg2 fix), Deployer, an approval before
+anything touched infrastructure, apply with a single-use token (push first), verify, the live
+URL, and registration on the Map. These two runs were approved by the dev-only self-approve
+path (`script:live-phase4 (dev)`); the human-approved run from the Deploy page is the Phase 4
+Done-when evidence.
+
+| Target | Run | Live URL | Health | Build attempts | Automatic fix | Model calls | Cost | Duration | On the Map |
+|---|---|---|---|---|---|---|---|---|---|
+| kind | `1c5f56ee-1f70-4f2b-a589-8736f198c3dd` | http://legacy-flask-app.localhost | /health 200 | 2 | yes | 5 | $0.0035 | 2.0 min | k8s:deployment legacy-flask-app (actionable) |
+| AWS ECS | `a75b5513-48f1-4cfd-bebd-e2c22e183626` | http://18.218.117.206:8000 | /health 200 | 2 | yes | 5 | $0.0031 | 4.9 min | ecs:service legacy-flask-app (actionable) |
+
+The ECS deploy was then rolled back as an emergency action (a first deploy: the service was
+deleted) and `make cleanup-deploys HOURS=0 APPLY=1 RUN=a75b5513-...` deleted its security
+group, log group, ECR repository with the image, and secret (4 of 4). Task definition
+`groundcrew-legacy-flask-app:2` stays by design. AWS cost: about $0.002 (the service ran
+under 3 minutes). The kind deployment stays up for the demo.
+
+Model calls per run: `detect_app_spec` (Nano; it hits its 2,000-token cap on this repo and
+Scout falls back to rules, which are right), `write_dockerfile` and `fix_build` (Super), and
+`plan_deploy` (Super). Build attempt 1 fails on `pg_config executable not found`; the fix adds
+`gcc libc6-dev libpq-dev`.
+
 ## After either: `make cleanup-deploys`
 
 ```bash
