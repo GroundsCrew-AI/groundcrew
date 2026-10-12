@@ -23,9 +23,10 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.config import get_settings
@@ -229,6 +230,7 @@ class Edge(TimestampMixin, Base):
 
 class Incident(TimestampMixin, Base):
     __tablename__ = "incidents"
+    __table_args__ = (Index("ix_incidents_workspace_status", "workspace_id", "status"),)
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
@@ -240,6 +242,28 @@ class Incident(TimestampMixin, Base):
     root_cause: Mapped[str | None] = mapped_column(Text)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(get_settings().embed_dim))
+    # Phase 5 (app.incidents): who opened it and which rule fired first, the window Medic
+    # investigates, what is affected, and the resources whose incidents are deduped into it.
+    detected_by: Mapped[str] = mapped_column(String(16), default="user", server_default="user")
+    detector_rule: Mapped[str] = mapped_column(
+        String(32), default="user_report", server_default="user_report"
+    )
+    window_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_signal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    affected_resource_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(Uuid), default=list, server_default="{}"
+    )
+    # Affected resources plus their graph neighbors (both directions, one hop).
+    group_resource_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(Uuid), default=list, server_default="{}"
+    )
+    # app.agents.medic.events.Signal list, newest last.
+    signals: Mapped[list[JSON]] = mapped_column(JSONB, default=list, server_default="[]")
+    # Medic's results for the API (evidence items, root cause, fixes, memory, outcome).
+    state: Mapped[JSON] = mapped_column(JSONB, default=dict, server_default="{}")
 
 
 class Run(TimestampMixin, Base):

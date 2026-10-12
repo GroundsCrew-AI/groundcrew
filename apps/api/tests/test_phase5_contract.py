@@ -109,7 +109,8 @@ async def test_incident_routes_are_501_for_members_and_404_for_others(
     client: httpx.AsyncClient, alice: Member, bob: Member
 ) -> None:
     body = _create(workspace_id=str(alice.workspace_id))
-    assert (await client.post("/incidents", json=body, headers=alice.headers)).status_code == 501
+    # POST works since M2: a resource that is not in the workspace's graph is a 404.
+    assert (await client.post("/incidents", json=body, headers=alice.headers)).status_code == 404
     assert (await client.post("/incidents", json=body, headers=bob.headers)).status_code == 404
     listing = (
         f"/incidents?workspace_id={alice.workspace_id}&status=resolved&severity=high"

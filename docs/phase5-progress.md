@@ -7,8 +7,8 @@ Owner: Ahmed. Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-inter
 | Milestone | Branch | PR | State |
 |---|---|---|---|
 | M0 Interfaces | `phase5-m0-interfaces` | #22, #23 | Merged 2026-10-12 |
-| M1 Telemetry readers | `phase5-m1-telemetry` | #25 (draft) | Done, in review |
-| M2 Detection | | | |
+| M1 Telemetry readers | `phase5-m1-telemetry` | #25 | Merged 2026-10-12 |
+| M2 Detection | `phase5-m2-detection` | #26 (draft) | Done, in review |
 | M3 Medic agent | | | |
 | M4 Incidents API + wiring | | | |
 | M5 Live verification | | | Needs Rizwan: checkout-demo rebuild, Operate role |
@@ -82,6 +82,47 @@ Open issues:
 - ECS keeps stopped tasks for about an hour; an incident investigated later sees only service
   events for older stops.
 - `make live-evidence` needs the checkout-demo stack up (Rizwan's rebuild).
+
+Spend: $0.
+
+## M2 (2026-10-12)
+
+Done:
+- Migration `9c6e4a1f3d52` (incidents): `detected_by`, `detector_rule`, `window_start` /
+  `window_end`, `first_signal_at`, `affected_resource_ids`, `group_resource_ids`, `signals`,
+  `state`; index on (workspace, status).
+- `app/incidents/store.py`: `open_incident` (per-workspace advisory lock; joins the oldest open
+  incident whose group overlaps, appending signals and resources; otherwise opens the incident,
+  its Medic run with an `incident_opened` step, and an `investigate_incident` job) and
+  `set_status` (records `incident_updated`; resolved/failed set `window_end`).
+- `app/incidents/rules.py`: health_check, ecs_deployment_failed, ecs_tasks_stopped (exit 137 /
+  OOM counted), log_error_spike (5 min vs the 25 before), rds_cpu_latency (CPU and read latency
+  together). Pure functions on API responses plus read-only fetchers.
+- `app/incidents/watcher.py`: one pass over linked ECS services (and their `logs_to` log
+  groups) and RDS databases; failed checks are logged and skipped; signals older than the last
+  closed incident on that resource are dropped; signaled resources whose groups overlap open one
+  incident. Self-rescheduling `watch_incidents` job; at most one queued; the worker starts the
+  chain when `INCIDENT_WATCH_ENABLED=true`.
+- `POST /incidents` works (202, `deduped`, 404 for a resource outside the workspace).
+- Interim `investigate_incident` handler: marks the incident investigating and ends the run;
+  M3 replaces it with Medic.
+- Tests: `tests/test_incidents_detection.py` (15).
+
+Decisions:
+- Resource group = affected resources plus one-hop graph neighbors in either direction. The api
+  and the worker share the database, so an RDS spike and a worker crash become one incident.
+- The first signal (earliest) names the incident's detector rule and title; severity is the
+  highest of its signals (health_check critical; deploy failed and crashes high; logs and RDS
+  medium; reports high unless the person says otherwise).
+- A watcher incident's window starts 30 minutes before its first signal (the deploy or secret
+  change usually comes first); a report's starts `INCIDENT_DEFAULT_WINDOW_MINUTES` before it.
+- Watcher off by default (`INCIDENT_WATCH_ENABLED`), so tests and fresh installs make no AWS calls.
+
+Open issues:
+- Thresholds (5 errors and 3x, CPU 40 % and 2x, read latency 2 ms and 2x) are guesses until the
+  live missing-index run (M5); the search load may not push a t4g.micro past them.
+- Detection does not use an HTTP health check: the demo api has no stable endpoint (no load
+  balancer; the task IP changes), so ECS container health stands in for it.
 
 Spend: $0.
 

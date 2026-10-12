@@ -8304,9 +8304,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "description": "Incidents are not wired up yet."
           }
         },
         "summary": "Create Incident",

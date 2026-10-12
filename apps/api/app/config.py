@@ -255,6 +255,13 @@ class Settings(BaseSettings):
     max_steps_per_run: int = 12
     max_tokens_per_run: int = 400_000
 
+    # Incident detection (Phase 5). The watcher job checks linked resources every interval;
+    # off by default so tests and fresh installs make no AWS calls on their own.
+    incident_watch_enabled: bool = False
+    incident_watch_interval_seconds: int = 60
+    # Window Medic investigates when a report gives no `since`.
+    incident_default_window_minutes: int = 60
+
     # Worker and live updates
     worker_poll_interval_seconds: float = 1.0
     job_lock_timeout_seconds: int = 600
