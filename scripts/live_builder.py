@@ -91,9 +91,8 @@ async def main() -> int:
             what = "passed" if a.ok else f"failed at {a.failing_step}: {a.error_summary}"
             if not a.ok and a.failing_step is None:
                 print("    Dockerfile starts: " + repr(a.dockerfile_diff[:160]))
-            print(
-                f"  attempt {a.attempt} ({a.dockerfile_source}) {what} in {a.duration_ms / 1000:.0f} s"
-            )
+            secs = a.duration_ms / 1000
+            print(f"  attempt {a.attempt} ({a.dockerfile_source}) {what} in {secs:.0f} s")
 
         async def on_note(text: str) -> None:
             print(f"  {text}")
