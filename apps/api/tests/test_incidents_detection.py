@@ -294,6 +294,32 @@ async def test_related_resources_join_the_open_incident(
         assert ids["api"] in joined.group_resource_ids  # the db's other reader
 
 
+async def test_services_sharing_a_database_join_whichever_comes_first(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    ids = await _demo(session_factory, workspace.id)
+    async with session_factory() as session:
+        api = await open_incident(
+            session,
+            workspace_id=workspace.id,
+            resource_ids=[ids["api"]],
+            detected_by="watcher",
+            signals=[_signal(ids["api"], "health_check")],
+            now=NOW,
+        )
+    async with session_factory() as session:
+        # The api's group is {api, db}; the worker is not in it, but its group shares the db.
+        worker = await open_incident(
+            session,
+            workspace_id=workspace.id,
+            resource_ids=[ids["worker"]],
+            detected_by="watcher",
+            signals=[_signal(ids["worker"])],
+            now=NOW,
+        )
+    assert worker.deduped and worker.incident.id == api.incident.id
+
+
 async def test_a_closed_incident_does_not_absorb_new_reports(
     session_factory: SessionFactory, workspace: Workspace
 ) -> None:

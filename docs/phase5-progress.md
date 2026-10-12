@@ -109,8 +109,11 @@ Done:
 - Tests: `tests/test_incidents_detection.py` (15).
 
 Decisions:
-- Resource group = affected resources plus one-hop graph neighbors in either direction. The api
-  and the worker share the database, so an RDS spike and a worker crash become one incident.
+- Resource group = affected resources plus one-hop graph neighbors in either direction. A new
+  report joins an open incident when the two groups overlap. The api and the worker share the
+  database, so an RDS spike and a worker crash become one incident, whichever comes first
+  (CI caught the first version comparing only the new report's resources, which depended on
+  order).
 - The first signal (earliest) names the incident's detector rule and title; severity is the
   highest of its signals (health_check critical; deploy failed and crashes high; logs and RDS
   medium; reports high unless the person says otherwise).
