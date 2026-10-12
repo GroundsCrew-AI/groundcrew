@@ -93,8 +93,20 @@ from app.targets.base import Deployment as TargetDeployment
 logger = logging.getLogger("groundcrew.pipeline")
 
 DEPLOY_JOB = "deploy"
-REPO_ROOT = Path(__file__).resolve().parents[4]
-FIXTURES = REPO_ROOT / "demo" / "fixtures"
+# demo/fixtures in a checkout (apps/api/app/pipeline/runner.py -> the repo root), or
+# DEPLOY_FIXTURES_DIR (the worker container mounts them there in dev).
+_HERE = Path(__file__).resolve()
+CHECKOUT_FIXTURES = _HERE.parents[4] / "demo" / "fixtures" if len(_HERE.parents) > 4 else None
+
+
+def fixtures_dir(settings: Settings | None = None) -> Path:
+    configured = (settings or get_settings()).deploy_fixtures_dir
+    if configured:
+        return Path(configured)
+    if CHECKOUT_FIXTURES is not None and CHECKOUT_FIXTURES.is_dir():
+        return CHECKOUT_FIXTURES
+    raise PipelineInputError("No demo fixtures here (set DEPLOY_FIXTURES_DIR).")
+
 
 # Phases a run can be paused in (runs.state["phase"]).
 START = "start"
@@ -137,8 +149,9 @@ class FixtureCopy:
         self._dir: Path | None = None
 
     def materialize(self) -> Path:
-        source = (FIXTURES / self.name / "repo").resolve()
-        if not source.is_relative_to(FIXTURES.resolve()) or not source.is_dir():
+        base = fixtures_dir()
+        source = (base / self.name / "repo").resolve()
+        if not source.is_relative_to(base.resolve()) or not source.is_dir():
             raise PipelineInputError(f"No fixture {self.name!r} in demo/fixtures.")
         self._dir = Path(tempfile.mkdtemp(prefix="gc-fixture-"))
         target = self._dir / "repo"

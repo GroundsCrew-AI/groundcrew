@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     # Dev only: lets a live test script approve its own deploy (POST /approvals/{id}/self-approve),
     # recorded as "script:<name> (dev)". Ignored unless APP_ENV=dev.
     live_script_self_approve: bool = False
+    # Where `{"fixture": name}` deploy sources come from (dev only). Unset: demo/fixtures in the
+    # checkout. The dev worker container mounts them at /app/demo-fixtures.
+    deploy_fixtures_dir: str | None = None
 
     # Repositories (Phase 4 before the GitHub App lands): local paths or public git URLs.
     # Optional token for private HTTPS clones; sent as an HTTP header through git's environment,

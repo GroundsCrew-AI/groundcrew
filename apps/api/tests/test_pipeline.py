@@ -582,3 +582,10 @@ async def test_create_checks_the_source_and_target(
     assert r.status_code == 409 and "local dev" in r.text
     r = await client.get(f"/deploys/{uuid.uuid4()}", headers=alice.headers)
     assert r.status_code == 404
+
+
+def test_fixtures_come_from_the_setting_or_the_checkout(tmp_path: Path) -> None:
+    from app.pipeline.runner import fixtures_dir
+
+    assert fixtures_dir(_settings(deploy_fixtures_dir=str(tmp_path))) == tmp_path
+    assert (fixtures_dir(_settings()) / "py-build-trap" / "repo").is_dir()
