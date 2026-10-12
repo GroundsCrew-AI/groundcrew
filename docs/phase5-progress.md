@@ -6,7 +6,7 @@ Owner: Ahmed. Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-inter
 
 | Milestone | Branch | PR | State |
 |---|---|---|---|
-| M0 Interfaces | `phase5-m0-interfaces` | draft | Waiting for Rizwan's OK on the Asks |
+| M0 Interfaces | `phase5-m0-interfaces` | #22 (draft) | Waiting for Rizwan's OK on the Asks |
 | M1 Telemetry readers | | | Not started (after M0 merges) |
 | M2 Detection | | | |
 | M3 Medic agent | | | |
