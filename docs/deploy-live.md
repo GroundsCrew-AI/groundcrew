@@ -210,6 +210,18 @@ Done-when evidence.
 | kind | `1c5f56ee-1f70-4f2b-a589-8736f198c3dd` | http://legacy-flask-app.localhost | /health 200 | 2 | yes | 5 | $0.0035 | 2.0 min | k8s:deployment legacy-flask-app (actionable) |
 | AWS ECS | `a75b5513-48f1-4cfd-bebd-e2c22e183626` | http://18.218.117.206:8000 | /health 200 | 2 | yes | 5 | $0.0031 | 4.9 min | ecs:service legacy-flask-app (actionable) |
 
+**Done-when evidence (human-approved, from the Deploy page):**
+
+| Target | Run | Live URL | Health | Build attempts | Automatic fix | Model calls | Cost | Duration | On the Map | Approved by |
+|---|---|---|---|---|---|---|---|---|---|---|
+| kind | `f196e111-5c19-4218-9eff-5cc4e2072214` | http://legacy-flask-app.localhost | /health 200 | 3 | yes | 6 | $0.0049 | 14.1 min | k8s:deployment legacy-flask-app (actionable) | Rizwan-095 in the UI |
+
+Attempt 1 failed on `pg_config executable not found`, attempt 2 on `gcc` missing (that fix
+added `libpq-dev` only), attempt 3 passed. Most of the 14 minutes was attempt 3's `apt-get`
+crawling at about 2 KB/s: the build daemon's default route had moved to the kind network.
+`docker-compose.kind.yml` now pins dind's gateway to the compose network (`gw_priority`), and
+the same download takes 2 s.
+
 The ECS deploy was then rolled back as an emergency action (a first deploy: the service was
 deleted) and `make cleanup-deploys HOURS=0 APPLY=1 RUN=a75b5513-...` deleted its security
 group, log group, ECR repository with the image, and secret (4 of 4). Task definition

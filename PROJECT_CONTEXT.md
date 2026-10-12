@@ -442,7 +442,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
     encrypted Vercel `API_URL` gives a medium `calls` edge (name + shared repo + workflow evidence), a plain
     one compared with the task IP gives high; edges are recomputed per workspace on every discovery;
     secret-to-database links come from Terraform (secret version built from the db) before names
-- [ ] Phase 4 — Build + deploy agents (in progress)
+- [x] Phase 4 — Build + deploy agents (done 2026-10-12)
   - [x] Step 1: LLM layer. Task routing (tier + reasoning mode, fallback, escalation), `TokenFactory.chat` with
         retries, JSON-schema output and one repair, reasoning capture, `embed` / `rerank`; USD caps per run, per day,
         and in total backed by `llm_usage`; `cost_usd` and `ultra_equiv_usd` on every step and run; FakeLLM runs
@@ -525,7 +525,9 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
           Dev-only self-approve for live scripts; fake pipeline mode for Playwright (4 E2E tests, CI job
           `e2e`). Live through POST /deploys: kind 2.0 min and ECS 4.9 min, each with one automatic
           psycopg2 fix, about $0.003 of model calls each; ECS rolled back and cleaned up
-          (`docs/deploy-live.md`). Done-when evidence: one human-approved run from the Deploy page
+          (`docs/deploy-live.md`). Done-when evidence: run `f196e111` from the Deploy page, approved in
+          the UI by Rizwan-095: 3 build attempts (automatic fixes), live at
+          http://legacy-flask-app.localhost, on the Map (actionable)
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission

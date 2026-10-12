@@ -13,7 +13,13 @@ services:
       # Verify reaches apps through ingress-nginx on the control-plane node (Host: <app>.localhost).
       GC_KIND_INGRESS_URL: http://groundcrew-control-plane
   dind:
-    networks: [default, kind]
+    # The kind network only for pushing to kind-registry:5000. Internet traffic (apt, pip, base
+    # images) keeps the compose network's gateway: through the kind network it crawled (about
+    # 2 KB/s for apt in a build, 2026-10-12), so the default route is pinned here.
+    networks:
+      default:
+        gw_priority: 1
+      kind: {}
 
 networks:
   kind:

@@ -11,7 +11,7 @@ is compacted, re-read that file and this one, then continue from "Next".
 | M4 Builder | done | 14 tests; live: psycopg2 fixed automatically (2 runs) |
 | M5 Deployer | done | 4 tests |
 | M6 Pipeline + API | done | 6 end-to-end tests with fakes; preview fake deleted |
-| M8 E2E + live | in progress | Playwright 4 passed (fake mode); live kind and ECS run 1 done |
+| M8 E2E + live | done | Playwright 4 passed; live kind, ECS run 1, and the human-approved kind run `f196e111` |
 
 ## Token Factory spend (cap $1.00 for this run)
 
@@ -62,6 +62,10 @@ Done on this branch, on top of main with PR #22 (both sets of approved actions k
   Phase 4 paths); noted below.
 
 ## Open issues
+
+- A build that times out (SANDBOX_BUILD_TIMEOUT_SECONDS, 900 s) counts as a network failure and
+  is retried twice, so one slow attempt can take up to 45 minutes. Consider retrying a timeout
+  once, or with a shorter limit.
 
 - The first human-approved run (2026-10-12) failed at Plan: the stack had been recreated
   without the kind override, so the worker could not resolve `groundcrew-control-plane`. The
