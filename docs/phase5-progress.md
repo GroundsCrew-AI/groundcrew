@@ -11,7 +11,7 @@ Owner: Ahmed (all of Phase 5 since 2026-10-12, including the parts planned for R
 | M2 Detection | `phase5-m2-detection` | #26 | Merged 2026-10-12 |
 | M3 Medic agent | `phase5-m3-medic` | #27 | Merged 2026-10-12 |
 | M4 Incidents API + wiring | `phase5-m4-incidents-api` | #28 | Merged 2026-10-12 |
-| Operate tier (was Rizwan's) | `phase5-operate` | draft | Done, in review |
+| Operate tier (was Rizwan's) | `phase5-operate` | #29 (draft) | Done, in review |
 | Incidents UI (was Rizwan's) | | | Next |
 | M5 Live verification | | | Needs Rizwan: checkout-demo rebuild, Operate role |
 
