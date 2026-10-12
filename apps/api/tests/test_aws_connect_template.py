@@ -269,3 +269,79 @@ def test_code_allowlist_matches_the_deploy_policy() -> None:
                    for op in AWS_DEPLOY_OPERATIONS)  # fmt: skip
     assert "secretsmanager:GetSecretValue" not in AWS_DEPLOY_OPERATIONS
     assert "ecs:DeregisterTaskDefinition" not in AWS_DEPLOY_OPERATIONS
+
+
+# --- EnableOperate=true ----------------------------------------------------------------------
+
+SERVICE_ARNS = ["arn:aws:ecs:us-east-2:881050425883:service/checkout/*"]
+SECRET_ARNS = ["arn:aws:secretsmanager:us-east-2:881050425883:secret:checkout/*"]
+
+
+def _operate(tier: str = "observe") -> dict[str, Any]:
+    return render(
+        TEMPLATE,
+        {"Tier": tier, "EnableOperate": "true", "OperateServiceArns": SERVICE_ARNS,
+         "OperateSecretArns": SECRET_ARNS},
+    )  # fmt: skip
+
+
+def test_operate_is_off_by_default_and_independent_of_tier() -> None:
+    assert TEMPLATE["Parameters"]["EnableOperate"]["Default"] == "false"
+    assert "OperateRole" not in _deploy()["Resources"]
+    for tier in ("observe", "deploy"):
+        plain, operate = render(TEMPLATE, {"Tier": tier}), _operate(tier)
+        for section in ("Resources", "Outputs"):
+            for name, body in plain[section].items():
+                assert operate[section][name] == body, name
+        assert set(operate["Resources"]) - set(plain["Resources"]) == {"OperateRole"}
+        assert set(operate["Outputs"]) - set(plain["Outputs"]) == {"OperateRoleArn"}
+
+
+def test_operate_role_scopes_and_trust() -> None:
+    resources = _operate()["Resources"]
+    role = resources["OperateRole"]["Properties"]
+    assert role["RoleName"] == "groundcrew-operate"
+    assert (
+        role["AssumeRolePolicyDocument"]
+        == resources["GroundcrewRole"]["Properties"]["AssumeRolePolicyDocument"]
+    )
+    scopes: dict[str, Any] = {}
+    for st in _statements(resources["OperateRole"]):
+        if st["Effect"] == "Allow":
+            for action in _actions(st):
+                scopes[action] = (st["Resource"], st.get("Condition"))
+    assert scopes == {
+        "ecs:UpdateService": ({"Ref": "OperateServiceArns"}, None),
+        "ecs:DescribeServices": ({"Ref": "OperateServiceArns"}, None),
+        "ecs:ListTaskDefinitions": ("*", None),
+        "ecs:DescribeTaskDefinition": ("*", None),
+        "secretsmanager:UpdateSecretVersionStage": ({"Ref": "OperateSecretArns"}, None),
+        "secretsmanager:DescribeSecret": ({"Ref": "OperateSecretArns"}, None),
+    }
+    deny = [s for s in _statements(resources["OperateRole"]) if s["Effect"] == "Deny"]
+    assert deny == [s for s in _statements(resources["GroundcrewRole"]) if s["Effect"] == "Deny"]
+    assert {"Key": "project", "Value": "groundcrew"} in role["Tags"]
+
+
+def test_code_allowlist_matches_the_operate_policy() -> None:
+    from app.connectors.aws import AWS_OPERATE_OPERATIONS
+
+    allowed = {a for st in _statements(_operate()["Resources"]["OperateRole"])
+               if st["Effect"] == "Allow" for a in _actions(st)}  # fmt: skip
+    assert AWS_OPERATE_OPERATIONS - {"sts:GetCallerIdentity"} == allowed
+
+
+def test_api_template_copy_matches_infra() -> None:
+    assert (ROOT / "infra" / "aws-connect.yaml").read_text() == (
+        ROOT / "apps" / "api" / "app" / "connectors" / "templates" / "aws-connect.yaml"
+    ).read_text()
+
+
+def test_operate_needs_real_scopes() -> None:
+    rule = TEMPLATE["Rules"]["OperateNeedsServicesAndSecrets"]
+    assert rule["RuleCondition"] == {"Fn::Equals": [{"Ref": "EnableOperate"}, "true"]}
+    defaults = {
+        TEMPLATE["Parameters"][p]["Default"] for p in ("OperateServiceArns", "OperateSecretArns")
+    }
+    asserted = {a["Assert"]["Fn::Not"][0]["Fn::Equals"][1] for a in rule["Assertions"]}
+    assert asserted == defaults

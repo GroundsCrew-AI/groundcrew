@@ -296,3 +296,45 @@ def test_deploy_and_read_sessions_are_guarded_by_their_own_allowlists() -> None:
     for client, call in refused:
         with pytest.raises(ReadOnlyViolationError):
             call(client)
+
+
+# --- aws_operate_session (EnableOperate=true) ----------------------------------------------
+
+OPERATE_ROLE = "arn:aws:iam::881050425883:role/groundcrew-operate"
+
+
+def test_operate_session_uses_the_operate_role_and_allowlist() -> None:
+    from app.connectors.aws import AWS_OPERATE_OPERATIONS, OPERATE_SESSION_NAME
+
+    aws, fake = _aws("observe"), FakeSessions()
+    aws.config = {**aws.config, "operate_role_arn": OPERATE_ROLE}
+    ConnectionCredentialsProvider([aws], sessions=fake).aws_operate_session(aws.id)  # type: ignore[arg-type]
+    assert fake.assumed == [(OPERATE_ROLE, "gc-1")]
+    assert fake.kwargs == [
+        {"operations": AWS_OPERATE_OPERATIONS, "region": "us-east-2",
+         "session_name": OPERATE_SESSION_NAME}
+    ]  # fmt: skip
+
+
+def test_operate_session_needs_the_operate_capability() -> None:
+    from app.connectors.credentials import capabilities
+
+    aws, fake = _aws("deploy"), FakeSessions()
+    assert capabilities(aws) == ["observe", "deploy"]
+    with pytest.raises(CredentialsError, match="EnableOperate=true"):
+        ConnectionCredentialsProvider([aws], sessions=fake).aws_operate_session(aws.id)  # type: ignore[arg-type]
+    assert fake.assumed == []
+    aws.config = {**aws.config, "operate_role_arn": OPERATE_ROLE}
+    assert capabilities(aws) == ["observe", "deploy", "operate"]
+
+
+def test_operate_allowlist_only_reads_or_makes_the_three_fixes() -> None:
+    from app.connectors.aws import AWS_OPERATE_OPERATIONS, FORBIDDEN_OPERATIONS
+
+    writes = {
+        op
+        for op in AWS_OPERATE_OPERATIONS
+        if not op.split(":")[1].startswith(("Describe", "List", "Get"))
+    }
+    assert writes == {"ecs:UpdateService", "secretsmanager:UpdateSecretVersionStage"}
+    assert not AWS_OPERATE_OPERATIONS & FORBIDDEN_OPERATIONS

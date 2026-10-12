@@ -13,7 +13,7 @@ CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
 .PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
-	kind-up kind-down kind-kubeconfig kind-check kind-register plan-target live-evidence live-ecs-target live-builder dind-check smoke-ecs cleanup-deploys
+	kind-up kind-down kind-kubeconfig kind-check kind-register plan-target plan-emergency live-evidence live-ecs-target live-builder dind-check smoke-ecs cleanup-deploys
 
 # KIND=1 joins api and worker to the kind network (make kind-up first).
 COMPOSE := docker compose$(if $(filter 1,$(KIND)), -f docker-compose.yml -f docker-compose.kind.yml)
@@ -141,6 +141,11 @@ smoke-ecs:
 
 # Dry run of a deploy target (read-only): the plan and preflight for APP on CONNECTION
 # (an AWS connection with Tier=deploy, or a k8s connection). Nothing is pushed or created.
+plan-emergency:
+	@test -n "$(CONNECTION)" || { echo "Usage: make plan-emergency CONNECTION=<aws connection id> [CLUSTER=checkout] [SERVICE=checkout-worker] [SECRET=<arn>]"; exit 1; }
+	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/plan_emergency.py --connection $(CONNECTION) \
+		$(if $(CLUSTER),--cluster $(CLUSTER)) $(if $(SERVICE),--service $(SERVICE)) $(if $(SECRET),--secret $(SECRET))
+
 live-evidence:
 	@test -n "$(WORKSPACE)" -a -n "$(RESOURCES)" || { echo 'Usage: make live-evidence WORKSPACE=<id> RESOURCES="checkout-api checkout-worker" [MINUTES=60]'; exit 1; }
 	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/live_evidence.py --workspace $(WORKSPACE) \

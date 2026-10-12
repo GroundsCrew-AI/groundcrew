@@ -135,6 +135,22 @@ AWS_DEPLOY_OPERATIONS: frozenset[str] = frozenset(
 BASE_OPERATIONS: frozenset[str] = frozenset({"sts:AssumeRole", "sts:GetCallerIdentity"})
 
 # Never allowed, whatever the allowlist says (they return secret values or customer data).
+# Operations an operate session (the groundcrew-operate role, EnableOperate=true) may call:
+# approved emergency fixes only. The IAM policy limits the writes to the services and secrets
+# listed in the stack; this allowlist keeps code from calling anything else (no create,
+# delete, IAM, or secret values).
+AWS_OPERATE_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "sts:GetCallerIdentity",
+        "ecs:DescribeServices",
+        "ecs:UpdateService",
+        "ecs:ListTaskDefinitions",
+        "ecs:DescribeTaskDefinition",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:UpdateSecretVersionStage",
+    }
+)
+
 FORBIDDEN_OPERATIONS: frozenset[str] = frozenset(
     {
         "secretsmanager:GetSecretValue",
@@ -158,6 +174,7 @@ GLOBAL_SERVICES = frozenset({"iam", "sts"})
 
 SESSION_NAME = "groundcrew-discovery"
 DEPLOY_SESSION_NAME = "groundcrew-deploy"
+OPERATE_SESSION_NAME = "groundcrew-operate"
 SESSION_SECONDS = 3600
 # Refresh a cached session this long before it expires.
 REFRESH_MARGIN_SECONDS = 300

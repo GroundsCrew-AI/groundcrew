@@ -97,7 +97,7 @@ revision, no `AWSPREVIOUS`, no `operate` capability, or a resource outside the a
 Operate role is not set up). Medic calls it if it exists; until then it offers no emergency action
 and says so on the incident ("no Operate role"). Tests inject `FakeEmergencyActions`.
 
-### Operate capability (Rizwan, lands about a day after Phase 4 merges)
+### Operate capability (built 2026-10-12)
 
 - Stack parameter `EnableOperate` (`true` / `false`), independent of `Tier=deploy`: a customer can
   allow emergency fixes without allowing deploys. A connection stores its capabilities as a set of
@@ -110,8 +110,17 @@ and says so on the incident ("no Operate role"). Tests inject `FakeEmergencyActi
   `ecs:ListTaskDefinitions`, `DescribeTaskDefinition` on `*` (read-only, not scopable). No
   `iam:PassRole` (a rollback reuses an existing revision; `force_redeploy` is `UpdateService` with
   `forceNewDeployment`). Explicit Deny on secret values, like the other roles.
-- `aws_operate_session(connection_id)` has a runtime allowlist and refuses unless the connection
-  has the `operate` capability. Verified live with a smoke test like smoke-ecs.
+- `aws_operate_session(connection_id)` has a runtime allowlist (`AWS_OPERATE_OPERATIONS`) and
+  refuses unless the connection has the `operate` capability. `EnableOperate=true` with the
+  placeholder (default) ARN lists is refused by a template Rule.
+- Turning it on: update the `groundcrew-read-only` stack with `EnableOperate=true`,
+  `OperateServiceArns`, and `OperateSecretArns`; then `POST /connections/{id}/aws/operate`
+  `{"enabled": true}` verifies the role (ExternalId required) and stores `operate_role_arn`.
+  `ConnectionOut.capabilities` lists `observe`, `deploy`, `operate`. `{"enabled": false}` stops
+  using the role at once.
+- `make plan-emergency CONNECTION=<id>` prints the real plans for a service and secret, read-only.
+- Implementation: `app/actions/aws.py` (`AwsEmergencyActions`), found by Medic through
+  `app.actions.get_emergency_actions`.
 
 ## 3. Fix pull requests (Ahmed, `app/tools/github_pr.py`)
 

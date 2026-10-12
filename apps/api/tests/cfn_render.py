@@ -68,7 +68,7 @@ def _condition(node: Any, conditions: dict[str, Any], params: dict[str, str]) ->
     raise ValueError(f"unsupported condition: {node!r}")
 
 
-def render(template: dict[str, Any], params: dict[str, str] | None = None) -> dict[str, Any]:
+def render(template: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any]:
     """{"Resources": ..., "Outputs": ...} that exist for these parameters (defaults otherwise),
     without their Condition keys."""
     values = _param_values(template, params or {})

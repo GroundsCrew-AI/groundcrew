@@ -249,6 +249,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/aws/operate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aws Set Operate
+         * @description Turn approved emergency fixes on or off for a connected AWS account. On: verifies the
+         *     groundcrew-operate role first (nothing changes if it cannot be used). Off: Groundcrew stops
+         *     using the role at once; update the stack to EnableOperate=false to delete it. Every fix
+         *     still needs a person's approval.
+         */
+        post: operations["aws_set_operate_connections__connection_id__aws_operate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/aws/tier": {
         parameters: {
             query?: never;
@@ -839,6 +862,14 @@ export interface components {
             /** Role Arn */
             role_arn: string;
         };
+        /**
+         * AwsOperateIn
+         * @description Turn approved emergency fixes on (after the stack has EnableOperate=true) or off.
+         */
+        AwsOperateIn: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** AwsStartIn */
         AwsStartIn: {
             /**
@@ -1033,6 +1064,8 @@ export interface components {
         ConnectionOut: {
             /** Account */
             account?: string | null;
+            /** Capabilities */
+            capabilities?: ("observe" | "deploy" | "operate")[] | null;
             /**
              * Created At
              * Format: date-time
@@ -1055,6 +1088,8 @@ export interface components {
             name: string;
             /** Namespaces */
             namespaces?: number | null;
+            /** Operate Role Arn */
+            operate_role_arn?: string | null;
             /** Preview */
             preview: boolean;
             /** Repos */
@@ -3584,6 +3619,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_set_operate_connections__connection_id__aws_operate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AwsOperateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
                 };
             };
             /** @description Validation Error */

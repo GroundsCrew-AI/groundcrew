@@ -116,6 +116,13 @@ def deploy_role_arn(account_id: str) -> str:
     return f"arn:aws:iam::{account_id}:role/{DEPLOY_ROLE}"
 
 
+def operate_role_arn(account_id: str) -> str:
+    """The groundcrew-operate role an EnableOperate=true stack creates in that account."""
+    if not re.fullmatch(r"\d{12}", account_id):
+        raise DeployInfraError(f"Not an AWS account id: {account_id!r}.")
+    return f"arn:aws:iam::{account_id}:role/groundcrew-operate"
+
+
 def task_execution_role_arn(settings: Settings, account_id: str) -> str:
     """The task execution role ARN: the setting, or the stack's fixed name in that account."""
     if settings.gc_task_execution_role_arn:
