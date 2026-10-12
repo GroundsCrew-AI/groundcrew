@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
+from app.agents.medic.events import MedicEventData
 from app.db.models import (
     Approval,
     ApprovalStatus,
@@ -90,10 +91,14 @@ _PHASE4_STEP_FIELDS = (
     "data",
 )
 
-_EVENT_DATA: TypeAdapter[DeployEventData] = TypeAdapter(DeployEventData)
+# Typed step payloads: deploy events (app.pipeline.events) and incident events
+# (app.agents.medic.events). Their `type` values do not overlap.
+RunEventData = DeployEventData | MedicEventData
+
+_EVENT_DATA: TypeAdapter[RunEventData] = TypeAdapter(RunEventData)
 
 
-def _event_data(raw: dict[str, Any] | None) -> DeployEventData | None:
+def _event_data(raw: dict[str, Any] | None) -> RunEventData | None:
     if raw is None:
         return None
     try:
@@ -138,8 +143,9 @@ class StepOut(BaseModel):
     fell_back: bool = False
     escalated: bool = False
     reasoning_excerpt: str | None = None
-    # Deploy steps: the typed event payload, discriminated by `type` (docs/events.md).
-    data: DeployEventData | None = None
+    # Deploy and incident steps: the typed event payload, discriminated by `type`
+    # (docs/events.md).
+    data: RunEventData | None = None
     created_at: datetime
 
     @classmethod
@@ -366,7 +372,7 @@ class ApprovalStepEvent(BaseModel):
 
 
 # Event names on the SSE stream, for the web client. The deploy events (DEPLOY_EVENT_NAMES)
-# carry a StepOut whose `data` has the typed payload.
+# and incident events (MEDIC_EVENT_NAMES) carry a StepOut whose `data` has the typed payload.
 SseEventName = Literal[
     "step",
     "approval_requested",
@@ -380,4 +386,13 @@ SseEventName = Literal[
     "live_url",
     "rollback_offered",
     "run_finished",
+    "incident_opened",
+    "evidence_collected",
+    "memory_checked",
+    "research_done",
+    "diagnosis",
+    "fix_proposed",
+    "fix_applied",
+    "incident_resolved",
+    "incident_failed",
 ]

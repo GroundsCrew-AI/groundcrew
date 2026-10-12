@@ -352,6 +352,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/incidents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Incidents
+         * @description Newest first. Pass next_cursor back as ?cursor= for the next page.
+         */
+        get: operations["list_incidents_incidents_get"];
+        put?: never;
+        /**
+         * Create Incident
+         * @description Report an incident and start Medic. Returns at once; follow the run's event stream.
+         *
+         *     One open incident per group of related resources: reporting resources an open incident
+         *     already covers returns that incident (`deduped: true`).
+         */
+        post: operations["create_incident_incidents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/incidents/{incident_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Incident
+         * @description An incident with its root cause (cited), fixes, and verify result.
+         */
+        get: operations["get_incident_incidents__incident_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -433,7 +480,10 @@ export interface paths {
          *
          *     Events: `step`, `approval_requested`, `approval_decided`, the deploy events
          *     (`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,
-         *     `rollback_offered`, `run_finished`; id = step seq), `status`, and a final `done`.
+         *     `rollback_offered`, `run_finished`), the incident events (`incident_opened`,
+         *     `evidence_collected`, `memory_checked`, `research_done`, `diagnosis`, `fix_proposed`,
+         *     `fix_applied`, `incident_resolved`, `incident_failed`; id = step seq), `status`, and a
+         *     final `done`.
          *     See docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the
          *     connection. Reconnects with Last-Event-ID (or ?after=) continue after that step.
          *
@@ -595,6 +645,73 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActionPlan
+         * @description One emergency action, ready to approve. Shown on the approval card as is.
+         */
+        ActionPlan: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy";
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /** Current */
+            current: string | null;
+            /** Desired */
+            desired: string | null;
+            /** Params */
+            params: {
+                [key: string]: string;
+            };
+            /**
+             * Planned At
+             * Format: date-time
+             */
+            planned_at: string;
+            /** Summary */
+            summary: string;
+            /** Target */
+            target: string;
+        };
+        /**
+         * ActionResult
+         * @description What `execute` did. `ok=False` with `error` when AWS refused or the state moved.
+         */
+        ActionResult: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy";
+            /** Details */
+            details?: {
+                [key: string]: string;
+            };
+            /**
+             * Error
+             * @default null
+             */
+            error: string | null;
+            /**
+             * Finished At
+             * Format: date-time
+             */
+            finished_at: string;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Summary */
+            summary: string;
+        };
         /** ApprovalOut */
         ApprovalOut: {
             /** Arguments */
@@ -1236,6 +1353,17 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** Diagnosis */
+        Diagnosis: {
+            /** Dropped */
+            dropped?: string[];
+            root_cause: components["schemas"]["RootCause"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "diagnosis";
+        };
         /** EdgeOut */
         EdgeOut: {
             /**
@@ -1302,6 +1430,147 @@ export interface components {
              * @default null
              */
             value: string | null;
+        };
+        /** EvidenceCollected */
+        EvidenceCollected: {
+            /** Neighbors */
+            neighbors?: components["schemas"]["ResourceRef"][];
+            /** Sources */
+            sources: components["schemas"]["EvidenceSourceSummary"][];
+            /** Top */
+            top: components["schemas"]["EvidenceRef"][];
+            /** Total Lines */
+            total_lines: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "evidence_collected";
+        };
+        /**
+         * EvidenceRef
+         * @description One cited evidence line, copied from a telemetry reader's output.
+         */
+        EvidenceRef: {
+            /**
+             * Line
+             * @description The message part of the evidence line, verbatim
+             */
+            line: string;
+            /**
+             * Source
+             * @description Reader and resource, e.g. ecs:checkout-worker
+             */
+            source: string;
+            /**
+             * Timestamp
+             * @description ISO 8601 timestamp from the evidence line
+             */
+            timestamp: string;
+        };
+        /** EvidenceSourceSummary */
+        EvidenceSourceSummary: {
+            /** Lines */
+            lines: number;
+            /**
+             * Source
+             * @example cloudwatch_logs:/ecs/checkout-worker
+             */
+            source: string;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** FileChange */
+        FileChange: {
+            /** Diff */
+            diff: string;
+            /** Path */
+            path: string;
+        };
+        /** FixApplied */
+        FixApplied: {
+            /** @default null */
+            action_result: components["schemas"]["ActionResult"] | null;
+            /**
+             * Error
+             * @default null
+             */
+            error: string | null;
+            /** Fix Id */
+            fix_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pull_request" | "emergency_action";
+            /** Ok */
+            ok: boolean;
+            /** @default null */
+            pull_request: components["schemas"]["PullRequestRef"] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "fix_applied";
+        };
+        /**
+         * FixApproval
+         * @description On Medic's `approval_requested` step: the one fix this approval runs.
+         */
+        FixApproval: {
+            fix: components["schemas"]["ProposedFix"];
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "fix_approval";
+        };
+        /**
+         * FixOption
+         * @description A fix the model suggests. Medic turns these into concrete, approvable fixes; it never
+         *     runs one as written by the model.
+         */
+        FixOption: {
+            /** Description */
+            description: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "other";
+            /**
+             * Target
+             * @default null
+             */
+            target: string | null;
+        };
+        /** FixProposed */
+        FixProposed: {
+            /** Fixes */
+            fixes: components["schemas"]["ProposedFix"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "fix_proposed";
+        };
+        /**
+         * FixState
+         * @description A proposed fix and what happened to it.
+         */
+        FixState: {
+            applied?: components["schemas"]["FixApplied"] | null;
+            fix: components["schemas"]["ProposedFix"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "proposed" | "waiting_approval" | "rejected" | "applying" | "applied" | "failed";
         };
         /**
          * FixtureSource
@@ -1406,6 +1675,290 @@ export interface components {
             /** Version */
             version: string;
         };
+        /**
+         * IncidentCreate
+         * @description "Report incident": a person (or the watcher) names what is broken.
+         */
+        IncidentCreate: {
+            /** Description */
+            description?: string | null;
+            /** Resource Ids */
+            resource_ids: string[];
+            /** Since */
+            since?: string | null;
+            /** Title */
+            title?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** IncidentCreated */
+        IncidentCreated: {
+            /**
+             * Deduped
+             * @default false
+             */
+            deduped: boolean;
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+        };
+        /** IncidentDetail */
+        IncidentDetail: {
+            /** Affected Resources */
+            affected_resources: components["schemas"]["ResourceRef"][];
+            /** Cost Usd */
+            cost_usd: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Detected By
+             * @enum {string}
+             */
+            detected_by: "watcher" | "user";
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Error */
+            error?: string | null;
+            /** Evidence */
+            evidence: components["schemas"]["EvidenceRef"][];
+            /** Fixes */
+            fixes: components["schemas"]["FixState"][];
+            /** Fixes Applied */
+            fixes_applied: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Memory Reused */
+            memory_reused: boolean;
+            /** Pull Requests */
+            pull_requests: components["schemas"]["PullRequestRef"][];
+            /** Research */
+            research: components["schemas"]["ResearchResult"][];
+            /** Resolved At */
+            resolved_at: string | null;
+            root_cause: components["schemas"]["RootCause"] | null;
+            /** Root Cause Summary */
+            root_cause_summary: string | null;
+            /** Run Id */
+            run_id: string | null;
+            /** Run Ids */
+            run_ids: string[];
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "critical" | "high" | "medium" | "low";
+            /** Signals */
+            signals: components["schemas"]["Signal"][];
+            /** Similar Incidents */
+            similar_incidents: components["schemas"]["MemoryHit"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed";
+            /** Time To Detect Ms */
+            time_to_detect_ms: number | null;
+            /** Title */
+            title: string;
+            triggering_change: components["schemas"]["TriggeringChange"] | null;
+            /** Ultra Equiv Usd */
+            ultra_equiv_usd?: number | null;
+            verify: components["schemas"]["VerifyResult"] | null;
+            /** Window End */
+            window_end: string | null;
+            /**
+             * Window Start
+             * Format: date-time
+             */
+            window_start: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** IncidentFailed */
+        IncidentFailed: {
+            /**
+             * Cost Usd
+             * @default null
+             */
+            cost_usd: number | null;
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /** Reason */
+            reason: string;
+            /** Still Failing */
+            still_failing?: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "incident_failed";
+        };
+        /** IncidentOpened */
+        IncidentOpened: {
+            /** Affected Resources */
+            affected_resources: components["schemas"]["ResourceRef"][];
+            /**
+             * Detected By
+             * @enum {string}
+             */
+            detected_by: "watcher" | "user";
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "critical" | "high" | "medium" | "low";
+            /** Signals */
+            signals: components["schemas"]["Signal"][];
+            /** Title */
+            title: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "incident_opened";
+            /**
+             * Window End
+             * @default null
+             */
+            window_end: string | null;
+            /**
+             * Window Start
+             * Format: date-time
+             */
+            window_start: string;
+        };
+        /** IncidentPage */
+        IncidentPage: {
+            /** Items */
+            items: components["schemas"]["IncidentSummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /** IncidentResolved */
+        IncidentResolved: {
+            /** Cost Usd */
+            cost_usd: number | null;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Fixes Applied */
+            fixes_applied: string[];
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /** Memory Reused */
+            memory_reused: boolean;
+            /** Pull Requests */
+            pull_requests?: components["schemas"]["PullRequestRef"][];
+            /** Time To Detect Ms */
+            time_to_detect_ms: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "incident_resolved";
+            /**
+             * Ultra Equiv Usd
+             * @default null
+             */
+            ultra_equiv_usd: number | null;
+        };
+        /**
+         * IncidentSummary
+         * @description One row of GET /incidents.
+         */
+        IncidentSummary: {
+            /** Affected Resources */
+            affected_resources: components["schemas"]["ResourceRef"][];
+            /** Cost Usd */
+            cost_usd: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Detected By
+             * @enum {string}
+             */
+            detected_by: "watcher" | "user";
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Fixes Applied */
+            fixes_applied: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Memory Reused */
+            memory_reused: boolean;
+            /** Pull Requests */
+            pull_requests: components["schemas"]["PullRequestRef"][];
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Root Cause Summary */
+            root_cause_summary: string | null;
+            /** Run Id */
+            run_id: string | null;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "critical" | "high" | "medium" | "low";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed";
+            /** Time To Detect Ms */
+            time_to_detect_ms: number | null;
+            /** Title */
+            title: string;
+            triggering_change: components["schemas"]["TriggeringChange"] | null;
+            /** Ultra Equiv Usd */
+            ultra_equiv_usd?: number | null;
+            /** Window End */
+            window_end: string | null;
+            /**
+             * Window Start
+             * Format: date-time
+             */
+            window_start: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
         /** KubernetesConnectIn */
         KubernetesConnectIn: {
             /** Kubeconfig */
@@ -1476,6 +2029,36 @@ export interface components {
             /** Workspaces */
             workspaces: components["schemas"]["WorkspaceOut"][];
         };
+        /** MemoryChecked */
+        MemoryChecked: {
+            /** Hits */
+            hits: components["schemas"]["MemoryHit"][];
+            /** Reused */
+            reused: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "memory_checked";
+        };
+        /** MemoryHit */
+        MemoryHit: {
+            /** Fix Summary */
+            fix_summary: string | null;
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Root Cause */
+            root_cause: string | null;
+            /** Similarity */
+            similarity: number;
+            /** Title */
+            title: string;
+        };
         /** Neighbor */
         Neighbor: {
             /**
@@ -1536,6 +2119,96 @@ export interface components {
              * @enum {string}
              */
             status: "pass" | "warn" | "fail";
+        };
+        /** ProposedFix */
+        ProposedFix: {
+            /**
+             * Action
+             * @default null
+             */
+            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy") | null;
+            /**
+             * Approval Id
+             * @default null
+             */
+            approval_id: string | null;
+            /**
+             * Fix Id
+             * @example fix-1
+             */
+            fix_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "pull_request" | "emergency_action";
+            /** Order */
+            order: number;
+            /** @default null */
+            plan: components["schemas"]["ActionPlan"] | null;
+            /** @default null */
+            pull_request: components["schemas"]["PullRequestView"] | null;
+            /** Rationale */
+            rationale: string;
+            /** Title */
+            title: string;
+        };
+        /** PullRequestRef */
+        PullRequestRef: {
+            /** Branch */
+            branch: string;
+            /** Head Sha */
+            head_sha: string;
+            /** Number */
+            number: number;
+            /** Repo */
+            repo: string;
+            /** Url */
+            url: string;
+        };
+        /**
+         * PullRequestView
+         * @description A fix PR as shown before approval (the draft; contents as diffs).
+         */
+        PullRequestView: {
+            /** Base */
+            base: string;
+            /** Body */
+            body: string;
+            /** Branch */
+            branch: string;
+            /** Files */
+            files: components["schemas"]["FileChange"][];
+            /** Repo */
+            repo: string;
+            /** Title */
+            title: string;
+        };
+        /** ResearchDone */
+        ResearchDone: {
+            /** Queries */
+            queries: string[];
+            /** Results */
+            results: components["schemas"]["ResearchResult"][];
+            /**
+             * Skipped Reason
+             * @default null
+             */
+            skipped_reason: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "research_done";
+        };
+        /** ResearchResult */
+        ResearchResult: {
+            /** Snippet */
+            snippet: string;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
         };
         /** ResourceDetail */
         ResourceDetail: {
@@ -1668,6 +2341,25 @@ export interface components {
             /** Type */
             type: string;
         };
+        /** ResourceRef */
+        ResourceRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Provider */
+            provider: string;
+            /**
+             * Type
+             * @example ecs:service
+             * @example rds:db
+             * @example secretsmanager:secret
+             */
+            type: string;
+        };
         /** RollbackOffered */
         RollbackOffered: {
             /**
@@ -1686,6 +2378,35 @@ export interface components {
              * @enum {string}
              */
             type: "rollback_offered";
+        };
+        /** RootCause */
+        RootCause: {
+            /**
+             * Affected Resources
+             * @description Resource names
+             */
+            affected_resources?: string[];
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence: "high" | "medium" | "low" | "other";
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceRef"][];
+            /** Fix Options */
+            fix_options?: components["schemas"]["FixOption"][];
+            /**
+             * Root Cause
+             * @description What broke and why, citing the evidence
+             */
+            root_cause: string;
+            /**
+             * Summary
+             * @description One or two sentences a person reads first
+             */
+            summary: string;
+            /** @default null */
+            triggering_change: components["schemas"]["TriggeringChange"] | null;
         };
         /** RunCreate */
         RunCreate: {
@@ -1888,6 +2609,37 @@ export interface components {
             /** Ultra Equiv Usd */
             ultra_equiv_usd?: number | null;
         };
+        /**
+         * Signal
+         * @description Why an incident was opened, or what verify re-checks.
+         */
+        Signal: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Detail
+             * @example 3 tasks stopped with exit code 137 (OutOfMemoryError)
+             */
+            detail: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
+            /**
+             * Resource Id
+             * @default null
+             */
+            resource_id: string | null;
+            /**
+             * Resource Name
+             * @default null
+             */
+            resource_name: string | null;
+        };
         /** StageFinished */
         StageFinished: {
             /**
@@ -1971,7 +2723,7 @@ export interface components {
              */
             created_at: string;
             /** Data */
-            data?: (components["schemas"]["StageStarted"] | components["schemas"]["StageFinished"] | components["schemas"]["BuildAttempt"] | components["schemas"]["DeployPlan"] | components["schemas"]["VerifyResult"] | components["schemas"]["LiveUrl"] | components["schemas"]["RollbackOffered"] | components["schemas"]["RunFinished"]) | null;
+            data?: (components["schemas"]["StageStarted"] | components["schemas"]["StageFinished"] | components["schemas"]["BuildAttempt"] | components["schemas"]["DeployPlan"] | components["schemas"]["VerifyResult"] | components["schemas"]["LiveUrl"] | components["schemas"]["RollbackOffered"] | components["schemas"]["RunFinished"]) | (components["schemas"]["IncidentOpened"] | components["schemas"]["EvidenceCollected"] | components["schemas"]["MemoryChecked"] | components["schemas"]["ResearchDone"] | components["schemas"]["Diagnosis"] | components["schemas"]["FixProposed"] | components["schemas"]["FixApproval"] | components["schemas"]["FixApplied"] | components["schemas"]["IncidentResolved"] | components["schemas"]["IncidentFailed"]) | null;
             /** Escalated */
             escalated?: boolean;
             /** Fell Back */
@@ -2040,6 +2792,30 @@ export interface components {
          * @enum {string}
          */
         ToolPolicy: "read" | "write" | "emergency";
+        /** TriggeringChange */
+        TriggeringChange: {
+            /**
+             * At
+             * @description ISO 8601 time of the change
+             * @default null
+             */
+            at: string | null;
+            /**
+             * Description
+             * @default null
+             */
+            description: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "commit" | "secret_change" | "deploy" | "config" | "other";
+            /**
+             * Ref
+             * @default null
+             */
+            ref: string | null;
+        };
         /** UserOut */
         UserOut: {
             /** Avatar Url */
@@ -2799,6 +3575,138 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Health"];
                 };
+            };
+        };
+    };
+    list_incidents_incidents_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+                status?: ("open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed") | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Incidents are not wired up yet. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_incident_incidents_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IncidentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentCreated"];
+                };
+            };
+            /** @description Workspace or a resource not found for this user. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Incidents are not wired up yet. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_incident_incidents__incident_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                incident_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Incidents are not wired up yet. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

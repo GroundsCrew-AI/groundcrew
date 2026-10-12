@@ -104,3 +104,23 @@ event: done
 Older clients that only listen for `step`, `approval_*`, `status`, and `done` ignore the new event
 names (EventSource only delivers named events to their listeners): the generic run page keeps
 working for deploy runs, without the deploy events, until the Deploy page (Milestone 7) handles them.
+
+## Incident runs (`agent = "medic"`, Phase 5)
+
+Same mechanism as deploy runs: each incident event is a run step whose `kind` is the event name,
+with the typed payload in `step.data` (`apps/api/app/agents/medic/events.py`, `data.type` equals
+the event name). The full table and payload fields are in
+[phase5-interfaces.md](phase5-interfaces.md#7-run-stream-events-for-incidents).
+
+| Event | `data` |
+|---|---|
+| `incident_opened` | `IncidentOpened` |
+| `evidence_collected` | `EvidenceCollected` |
+| `memory_checked` | `MemoryChecked` |
+| `research_done` | `ResearchDone` |
+| `diagnosis` | `Diagnosis` (cited `RootCause`) |
+| `fix_proposed` | `FixProposed` |
+| `approval_requested` | `FixApproval` in `step.data`, plus `approval` |
+| `fix_applied` | `FixApplied` |
+| `verify_result` | `VerifyResult` (the deploy payload) |
+| `incident_resolved` / `incident_failed` | `IncidentResolved` / `IncidentFailed`, sent before `done` |

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import queue
 from app.accounts import NotFoundError, member_workspace, require_member
+from app.agents.medic.events import MEDIC_EVENT_NAMES
 from app.agents.registry import AGENTS
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
@@ -204,7 +205,7 @@ async def _step_event(session: AsyncSession, run: Run, step: RunStep) -> str:
                 approval_out = ApprovalOut.build(row[0], run, row[1])
         payload = ApprovalStepEvent(step=StepOut.build(step), approval=approval_out)
         return _sse(step.kind, payload, step.seq)
-    if step.kind in DEPLOY_EVENT_NAMES:
+    if step.kind in DEPLOY_EVENT_NAMES or step.kind in MEDIC_EVENT_NAMES:
         return _sse(step.kind, StepOut.build(step), step.seq)
     return _sse("step", StepOut.build(step), step.seq)
 
@@ -277,7 +278,10 @@ async def run_events(
 
     Events: `step`, `approval_requested`, `approval_decided`, the deploy events
     (`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,
-    `rollback_offered`, `run_finished`; id = step seq), `status`, and a final `done`.
+    `rollback_offered`, `run_finished`), the incident events (`incident_opened`,
+    `evidence_collected`, `memory_checked`, `research_done`, `diagnosis`, `fix_proposed`,
+    `fix_applied`, `incident_resolved`, `incident_failed`; id = step seq), `status`, and a
+    final `done`.
     See docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the
     connection. Reconnects with Last-Event-ID (or ?after=) continue after that step.
 

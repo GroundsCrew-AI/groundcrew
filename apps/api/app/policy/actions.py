@@ -15,6 +15,11 @@ for that run, action, and plan hash.
 Approvals for targets use these tool names, and their `arguments` carry `plan_hash`:
 - `target_apply`: policy `write`, the deploy plan.
 - `target_rollback`: policy `emergency`, a rollback plan (also deleting a first deploy).
+
+Medic (Phase 5, docs/phase5-interfaces.md) uses the same tokens:
+- `open_fix_pr`: policy `write`, a fix pull request (`plan_hash` of the PR draft).
+- `ecs_rollback_service`, `secret_rollback_version`, `force_redeploy`: policy `emergency`,
+  an `app.actions.base.ActionPlan` (`plan_hash` of the plan).
 """
 
 import base64
@@ -37,12 +42,21 @@ from app.policy.engine import PolicyViolationError
 TARGET_APPLY: Final = "target_apply"
 TARGET_ROLLBACK: Final = "target_rollback"
 TargetAction = Literal["target_apply", "target_rollback"]
+OPEN_FIX_PR: Final = "open_fix_pr"
+MedicAction = Literal[
+    "open_fix_pr", "ecs_rollback_service", "secret_rollback_version", "force_redeploy"
+]
+ApprovedActionName = TargetAction | MedicAction
 
 # The policy each action's approval must have: a rollback (including deleting a first deploy)
 # is an emergency action, never a plain write.
 _POLICY: dict[str, ToolPolicy] = {
     TARGET_APPLY: ToolPolicy.write,
     TARGET_ROLLBACK: ToolPolicy.emergency,
+    OPEN_FIX_PR: ToolPolicy.write,
+    "ecs_rollback_service": ToolPolicy.emergency,
+    "secret_rollback_version": ToolPolicy.emergency,
+    "force_redeploy": ToolPolicy.emergency,
 }
 
 
@@ -83,7 +97,7 @@ class ApprovedAction(BaseModel):
 
     approval_id: uuid.UUID
     run_id: uuid.UUID
-    action: TargetAction
+    action: ApprovedActionName
     plan_hash: str
     issued_at: datetime
     seal: str = Field(repr=False)
@@ -104,7 +118,7 @@ async def issue_approved_action(
     approval: Approval,
     *,
     run_id: uuid.UUID,
-    action: TargetAction,
+    action: ApprovedActionName,
     plan_hash: str,
     settings: Settings | None = None,
 ) -> ApprovedAction:
@@ -144,7 +158,7 @@ async def consume_approved_action(
     token: object,
     *,
     run_id: uuid.UUID,
-    action: TargetAction,
+    action: ApprovedActionName,
     plan_hash: str,
     settings: Settings | None = None,
 ) -> None:
