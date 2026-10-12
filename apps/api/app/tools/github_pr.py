@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import uuid
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -62,6 +62,8 @@ class PullRequestRef(BaseModel):
     url: str
     branch: str
     head_sha: str
+    # Refreshed from GitHub when an incident is read; "open" when Medic opens it.
+    state: Literal["open", "closed", "merged"] = "open"
 
 
 class FixPullRequests(Protocol):

@@ -387,6 +387,7 @@ SseEventName = Literal[
     "rollback_offered",
     "run_finished",
     "incident_opened",
+    "incident_updated",
     "evidence_collected",
     "memory_checked",
     "research_done",

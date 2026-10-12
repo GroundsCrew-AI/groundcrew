@@ -279,9 +279,9 @@ async def run_events(
     Events: `step`, `approval_requested`, `approval_decided`, the deploy events
     (`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,
     `rollback_offered`, `run_finished`), the incident events (`incident_opened`,
-    `evidence_collected`, `memory_checked`, `research_done`, `diagnosis`, `fix_proposed`,
-    `fix_applied`, `incident_resolved`, `incident_failed`; id = step seq), `status`, and a
-    final `done`.
+    `incident_updated`, `evidence_collected`, `memory_checked`, `research_done`,
+    `diagnosis`, `fix_proposed`, `fix_applied`, `incident_resolved`, `incident_failed`;
+    id = step seq), `status`, and a final `done`.
     See docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the
     connection. Reconnects with Last-Event-ID (or ?after=) continue after that step.
 

@@ -361,7 +361,8 @@ export interface paths {
         };
         /**
          * List Incidents
-         * @description Newest first. Pass next_cursor back as ?cursor= for the next page.
+         * @description Newest first. Filters combine with AND. Pass next_cursor back as ?cursor= for the next
+         *     page.
          */
         get: operations["list_incidents_incidents_get"];
         put?: never;
@@ -481,9 +482,9 @@ export interface paths {
          *     Events: `step`, `approval_requested`, `approval_decided`, the deploy events
          *     (`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,
          *     `rollback_offered`, `run_finished`), the incident events (`incident_opened`,
-         *     `evidence_collected`, `memory_checked`, `research_done`, `diagnosis`, `fix_proposed`,
-         *     `fix_applied`, `incident_resolved`, `incident_failed`; id = step seq), `status`, and a
-         *     final `done`.
+         *     `incident_updated`, `evidence_collected`, `memory_checked`, `research_done`,
+         *     `diagnosis`, `fix_proposed`, `fix_applied`, `incident_resolved`, `incident_failed`;
+         *     id = step seq), `status`, and a final `done`.
          *     See docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the
          *     connection. Reconnects with Last-Event-ID (or ?after=) continue after that step.
          *
@@ -938,6 +939,50 @@ export interface components {
              * @enum {string}
              */
             type: "build_attempt";
+        };
+        /**
+         * ChangeMarker
+         * @description A change in or before the window, for the timeline chart.
+         */
+        ChangeMarker: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "commit" | "secret_change" | "deploy" | "config" | "other";
+            /**
+             * Label
+             * @example abc1234 Lower worker memory
+             * @example checkout/database-url changed
+             */
+            label: string;
+            /** Ref */
+            ref: string;
+            /**
+             * Resource Id
+             * @default null
+             */
+            resource_id: string | null;
+            /**
+             * Url
+             * @default null
+             */
+            url: string | null;
+        };
+        /** Claim */
+        Claim: {
+            /**
+             * Evidence Ids
+             * @description Ids of the evidence lines this claim rests on
+             */
+            evidence_ids: string[];
+            /** Text */
+            text: string;
         };
         /** ConnectionDeleted */
         ConnectionDeleted: {
@@ -1433,12 +1478,14 @@ export interface components {
         };
         /** EvidenceCollected */
         EvidenceCollected: {
+            /** Changes */
+            changes?: components["schemas"]["ChangeMarker"][];
+            /** Items */
+            items: components["schemas"]["EvidenceItem"][];
             /** Neighbors */
             neighbors?: components["schemas"]["ResourceRef"][];
             /** Sources */
             sources: components["schemas"]["EvidenceSourceSummary"][];
-            /** Top */
-            top: components["schemas"]["EvidenceRef"][];
             /** Total Lines */
             total_lines: number;
             /**
@@ -1448,23 +1495,31 @@ export interface components {
             type: "evidence_collected";
         };
         /**
-         * EvidenceRef
-         * @description One cited evidence line, copied from a telemetry reader's output.
+         * EvidenceItem
+         * @description One evidence line, as collected (shown to the model with its id, and to the UI).
          */
-        EvidenceRef: {
+        EvidenceItem: {
             /**
-             * Line
-             * @description The message part of the evidence line, verbatim
+             * Id
+             * @example ev-3f2a9c1b7d
              */
+            id: string;
+            /** Line */
             line: string;
             /**
+             * Resource Id
+             * @default null
+             */
+            resource_id: string | null;
+            /**
              * Source
-             * @description Reader and resource, e.g. ecs:checkout-worker
+             * @example ecs:checkout-worker
+             * @example cloudwatch_logs:/ecs/checkout-api
              */
             source: string;
             /**
              * Timestamp
-             * @description ISO 8601 timestamp from the evidence line
+             * @description ISO 8601
              */
             timestamp: string;
         };
@@ -1502,7 +1557,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pull_request" | "emergency_action";
+            kind: "pr" | "emergency";
             /** Ok */
             ok: boolean;
             /** @default null */
@@ -1561,11 +1616,16 @@ export interface components {
         };
         /**
          * FixState
-         * @description A proposed fix and what happened to it.
+         * @description A proposed fix and what happened to it. `fix.kind` is pr or emergency;
+         *     `fix.plan_lines` is the plan as from -> to lines; the PR's URL and state are in
+         *     `pull_request` once opened.
          */
         FixState: {
             applied?: components["schemas"]["FixApplied"] | null;
+            /** Approval Id */
+            approval_id: string | null;
             fix: components["schemas"]["ProposedFix"];
+            pull_request?: components["schemas"]["PullRequestRef"] | null;
             /**
              * Status
              * @enum {string}
@@ -1684,6 +1744,8 @@ export interface components {
             description?: string | null;
             /** Resource Ids */
             resource_ids: string[];
+            /** Severity */
+            severity?: ("critical" | "high" | "medium" | "low") | null;
             /** Since */
             since?: string | null;
             /** Title */
@@ -1714,26 +1776,32 @@ export interface components {
         };
         /** IncidentDetail */
         IncidentDetail: {
+            /** Affected Resource Ids */
+            affected_resource_ids: string[];
             /** Affected Resources */
             affected_resources: components["schemas"]["ResourceRef"][];
+            /** Changes */
+            changes: components["schemas"]["ChangeMarker"][];
+            /** Completion Tokens */
+            completion_tokens: number;
             /** Cost Usd */
             cost_usd: number | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             /**
              * Detected By
              * @enum {string}
              */
             detected_by: "watcher" | "user";
+            /**
+             * Detector Rule
+             * @enum {string}
+             */
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
             error?: string | null;
             /** Evidence */
-            evidence: components["schemas"]["EvidenceRef"][];
+            evidence: components["schemas"]["EvidenceItem"][];
             /** Fixes */
             fixes: components["schemas"]["FixState"][];
             /** Fixes Applied */
@@ -1743,8 +1811,17 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            memory: components["schemas"]["MemoryUse"] | null;
             /** Memory Reused */
             memory_reused: boolean;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            outcome: components["schemas"]["IncidentOutcome"] | null;
+            /** Prompt Tokens */
+            prompt_tokens: number;
             /** Pull Requests */
             pull_requests: components["schemas"]["PullRequestRef"][];
             /** Research */
@@ -1765,8 +1842,6 @@ export interface components {
             severity: "critical" | "high" | "medium" | "low";
             /** Signals */
             signals: components["schemas"]["Signal"][];
-            /** Similar Incidents */
-            similar_incidents: components["schemas"]["MemoryHit"][];
             /**
              * Status
              * @enum {string}
@@ -1776,17 +1851,13 @@ export interface components {
             time_to_detect_ms: number | null;
             /** Title */
             title: string;
+            /** Total Tokens */
+            total_tokens: number;
             triggering_change: components["schemas"]["TriggeringChange"] | null;
             /** Ultra Equiv Usd */
             ultra_equiv_usd?: number | null;
             verify: components["schemas"]["VerifyResult"] | null;
-            /** Window End */
-            window_end: string | null;
-            /**
-             * Window Start
-             * Format: date-time
-             */
-            window_start: string;
+            window: components["schemas"]["TimeWindow"];
             /**
              * Workspace Id
              * Format: uuid
@@ -1825,6 +1896,11 @@ export interface components {
              */
             detected_by: "watcher" | "user";
             /**
+             * Detector Rule
+             * @enum {string}
+             */
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
+            /**
              * Incident Id
              * Format: uuid
              */
@@ -1843,16 +1919,19 @@ export interface components {
              * @enum {string}
              */
             type: "incident_opened";
+            window: components["schemas"]["TimeWindow"];
+        };
+        /** IncidentOutcome */
+        IncidentOutcome: {
+            /** Reason */
+            reason?: string | null;
             /**
-             * Window End
-             * @default null
+             * Result
+             * @enum {string}
              */
-            window_end: string | null;
-            /**
-             * Window Start
-             * Format: date-time
-             */
-            window_start: string;
+            result: "resolved" | "failed";
+            /** Still Failing */
+            still_failing?: string[];
         };
         /** IncidentPage */
         IncidentPage: {
@@ -1896,20 +1975,24 @@ export interface components {
          * @description One row of GET /incidents.
          */
         IncidentSummary: {
+            /** Affected Resource Ids */
+            affected_resource_ids: string[];
             /** Affected Resources */
             affected_resources: components["schemas"]["ResourceRef"][];
+            /** Completion Tokens */
+            completion_tokens: number;
             /** Cost Usd */
             cost_usd: number | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             /**
              * Detected By
              * @enum {string}
              */
             detected_by: "watcher" | "user";
+            /**
+             * Detector Rule
+             * @enum {string}
+             */
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Fixes Applied */
@@ -1921,6 +2004,13 @@ export interface components {
             id: string;
             /** Memory Reused */
             memory_reused: boolean;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /** Prompt Tokens */
+            prompt_tokens: number;
             /** Pull Requests */
             pull_requests: components["schemas"]["PullRequestRef"][];
             /** Resolved At */
@@ -1943,21 +2033,50 @@ export interface components {
             time_to_detect_ms: number | null;
             /** Title */
             title: string;
+            /** Total Tokens */
+            total_tokens: number;
             triggering_change: components["schemas"]["TriggeringChange"] | null;
             /** Ultra Equiv Usd */
             ultra_equiv_usd?: number | null;
-            /** Window End */
-            window_end: string | null;
-            /**
-             * Window Start
-             * Format: date-time
-             */
-            window_start: string;
+            window: components["schemas"]["TimeWindow"];
             /**
              * Workspace Id
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /**
+         * IncidentUpdated
+         * @description Every status change, so the UI can update the incident header without a reload.
+         */
+        IncidentUpdated: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /** Previous Status */
+            previous_status: ("open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed") | null;
+            /**
+             * Reason
+             * @default null
+             */
+            reason: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "incident_updated";
         };
         /** KubernetesConnectIn */
         KubernetesConnectIn: {
@@ -2034,7 +2153,12 @@ export interface components {
             /** Hits */
             hits: components["schemas"]["MemoryHit"][];
             /** Reused */
-            reused: boolean;
+            reused?: ("diagnosis" | "fix" | "research")[];
+            /**
+             * Reused Incident Id
+             * @default null
+             */
+            reused_incident_id: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2059,6 +2183,20 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** MemoryUse */
+        MemoryUse: {
+            /**
+             * Incident Id
+             * Format: uuid
+             */
+            incident_id: string;
+            /** Reused */
+            reused: ("diagnosis" | "fix" | "research")[];
+            /** Similarity */
+            similarity: number;
+            /** Title */
+            title: string;
+        };
         /** Neighbor */
         Neighbor: {
             /**
@@ -2072,6 +2210,27 @@ export interface components {
             provider: string;
             /** Type */
             type: string;
+        };
+        /**
+         * PlanLine
+         * @description One human-readable line of an ActionPlan: what changes, from what, to what.
+         */
+        PlanLine: {
+            /**
+             * After
+             * @example checkout-worker:41
+             */
+            after: string | null;
+            /**
+             * Before
+             * @example checkout-worker:42
+             */
+            before: string | null;
+            /**
+             * What
+             * @example checkout-worker task definition
+             */
+            what: string;
         };
         /**
          * PlannedResource
@@ -2141,11 +2300,13 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pull_request" | "emergency_action";
+            kind: "pr" | "emergency";
             /** Order */
             order: number;
             /** @default null */
             plan: components["schemas"]["ActionPlan"] | null;
+            /** Plan Lines */
+            plan_lines?: components["schemas"]["PlanLine"][];
             /** @default null */
             pull_request: components["schemas"]["PullRequestView"] | null;
             /** Rationale */
@@ -2163,6 +2324,12 @@ export interface components {
             number: number;
             /** Repo */
             repo: string;
+            /**
+             * State
+             * @default open
+             * @enum {string}
+             */
+            state: "open" | "closed" | "merged";
             /** Url */
             url: string;
         };
@@ -2341,7 +2508,10 @@ export interface components {
             /** Type */
             type: string;
         };
-        /** ResourceRef */
+        /**
+         * ResourceRef
+         * @description A graph resource; `id` is what the Map deep-links to.
+         */
         ResourceRef: {
             /**
              * Id
@@ -2386,18 +2556,18 @@ export interface components {
              * @description Resource names
              */
             affected_resources?: string[];
+            /** Claims */
+            claims?: components["schemas"]["Claim"][];
             /**
              * Confidence
              * @enum {string}
              */
             confidence: "high" | "medium" | "low" | "other";
-            /** Evidence */
-            evidence?: components["schemas"]["EvidenceRef"][];
             /** Fix Options */
             fix_options?: components["schemas"]["FixOption"][];
             /**
              * Root Cause
-             * @description What broke and why, citing the evidence
+             * @description What broke and why
              */
             root_cause: string;
             /**
@@ -2611,7 +2781,7 @@ export interface components {
         };
         /**
          * Signal
-         * @description Why an incident was opened, or what verify re-checks.
+         * @description A detector rule that fired, or what verify re-checks.
          */
         Signal: {
             /**
@@ -2625,11 +2795,6 @@ export interface components {
              */
             detail: string;
             /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
-            /**
              * Resource Id
              * @default null
              */
@@ -2639,6 +2804,11 @@ export interface components {
              * @default null
              */
             resource_name: string | null;
+            /**
+             * Rule
+             * @enum {string}
+             */
+            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
         };
         /** StageFinished */
         StageFinished: {
@@ -2723,7 +2893,7 @@ export interface components {
              */
             created_at: string;
             /** Data */
-            data?: (components["schemas"]["StageStarted"] | components["schemas"]["StageFinished"] | components["schemas"]["BuildAttempt"] | components["schemas"]["DeployPlan"] | components["schemas"]["VerifyResult"] | components["schemas"]["LiveUrl"] | components["schemas"]["RollbackOffered"] | components["schemas"]["RunFinished"]) | (components["schemas"]["IncidentOpened"] | components["schemas"]["EvidenceCollected"] | components["schemas"]["MemoryChecked"] | components["schemas"]["ResearchDone"] | components["schemas"]["Diagnosis"] | components["schemas"]["FixProposed"] | components["schemas"]["FixApproval"] | components["schemas"]["FixApplied"] | components["schemas"]["IncidentResolved"] | components["schemas"]["IncidentFailed"]) | null;
+            data?: (components["schemas"]["StageStarted"] | components["schemas"]["StageFinished"] | components["schemas"]["BuildAttempt"] | components["schemas"]["DeployPlan"] | components["schemas"]["VerifyResult"] | components["schemas"]["LiveUrl"] | components["schemas"]["RollbackOffered"] | components["schemas"]["RunFinished"]) | (components["schemas"]["IncidentOpened"] | components["schemas"]["IncidentUpdated"] | components["schemas"]["EvidenceCollected"] | components["schemas"]["MemoryChecked"] | components["schemas"]["ResearchDone"] | components["schemas"]["Diagnosis"] | components["schemas"]["FixProposed"] | components["schemas"]["FixApproval"] | components["schemas"]["FixApplied"] | components["schemas"]["IncidentResolved"] | components["schemas"]["IncidentFailed"]) | null;
             /** Escalated */
             escalated?: boolean;
             /** Fell Back */
@@ -2787,6 +2957,19 @@ export interface components {
             /** Text */
             text: string | null;
         };
+        /** TimeWindow */
+        TimeWindow: {
+            /**
+             * End
+             * @default null
+             */
+            end: string | null;
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+        };
         /**
          * ToolPolicy
          * @enum {string}
@@ -2805,6 +2988,8 @@ export interface components {
              * @default null
              */
             description: string | null;
+            /** Evidence Ids */
+            evidence_ids?: string[];
             /**
              * Kind
              * @enum {string}
@@ -3583,6 +3768,11 @@ export interface operations {
             query: {
                 workspace_id: string;
                 status?: ("open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed") | null;
+                severity?: ("critical" | "high" | "medium" | "low") | null;
+                /** @description Incidents affecting this resource */
+                resource?: string | null;
+                /** @description Opened at or after this time */
+                since?: string | null;
                 limit?: number;
                 cursor?: string | null;
             };

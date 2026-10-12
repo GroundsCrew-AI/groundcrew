@@ -115,10 +115,11 @@ the event name). The full table and payload fields are in
 | Event | `data` |
 |---|---|
 | `incident_opened` | `IncidentOpened` |
+| `incident_updated` | `IncidentUpdated` (every status change) |
 | `evidence_collected` | `EvidenceCollected` |
 | `memory_checked` | `MemoryChecked` |
 | `research_done` | `ResearchDone` |
-| `diagnosis` | `Diagnosis` (cited `RootCause`) |
+| `diagnosis` | `Diagnosis` (`RootCause` whose claims cite evidence ids) |
 | `fix_proposed` | `FixProposed` |
 | `approval_requested` | `FixApproval` in `step.data`, plus `approval` |
 | `fix_applied` | `FixApplied` |

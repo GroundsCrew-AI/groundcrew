@@ -695,6 +695,94 @@
         "title": "BuildAttempt",
         "type": "object"
       },
+      "ChangeMarker": {
+        "description": "A change in or before the window, for the timeline chart.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "commit",
+              "secret_change",
+              "deploy",
+              "config",
+              "other"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "examples": [
+              "abc1234 Lower worker memory",
+              "checkout/database-url changed"
+            ],
+            "title": "Label",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resource Id"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          }
+        },
+        "required": [
+          "kind",
+          "ref",
+          "at",
+          "label"
+        ],
+        "title": "ChangeMarker",
+        "type": "object"
+      },
+      "Claim": {
+        "properties": {
+          "evidence_ids": {
+            "description": "Ids of the evidence lines this claim rests on",
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "evidence_ids"
+        ],
+        "title": "Claim",
+        "type": "object"
+      },
       "ConnectionDeleted": {
         "properties": {
           "cleanup": {
@@ -2103,6 +2191,20 @@
       },
       "EvidenceCollected": {
         "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeMarker"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
           "neighbors": {
             "items": {
               "$ref": "#/components/schemas/ResourceRef"
@@ -2115,13 +2217,6 @@
               "$ref": "#/components/schemas/EvidenceSourceSummary"
             },
             "title": "Sources",
-            "type": "array"
-          },
-          "top": {
-            "items": {
-              "$ref": "#/components/schemas/EvidenceRef"
-            },
-            "title": "Top",
             "type": "array"
           },
           "total_lines": {
@@ -2137,37 +2232,60 @@
         },
         "required": [
           "sources",
-          "top",
+          "items",
           "total_lines"
         ],
         "title": "EvidenceCollected",
         "type": "object"
       },
-      "EvidenceRef": {
-        "description": "One cited evidence line, copied from a telemetry reader's output.",
+      "EvidenceItem": {
+        "description": "One evidence line, as collected (shown to the model with its id, and to the UI).",
         "properties": {
+          "id": {
+            "examples": [
+              "ev-3f2a9c1b7d"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
           "line": {
-            "description": "The message part of the evidence line, verbatim",
             "title": "Line",
             "type": "string"
           },
+          "resource_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resource Id"
+          },
           "source": {
-            "description": "Reader and resource, e.g. ecs:checkout-worker",
+            "examples": [
+              "ecs:checkout-worker",
+              "cloudwatch_logs:/ecs/checkout-api"
+            ],
             "title": "Source",
             "type": "string"
           },
           "timestamp": {
-            "description": "ISO 8601 timestamp from the evidence line",
+            "description": "ISO 8601",
             "title": "Timestamp",
             "type": "string"
           }
         },
         "required": [
+          "id",
           "source",
           "timestamp",
           "line"
         ],
-        "title": "EvidenceRef",
+        "title": "EvidenceItem",
         "type": "object"
       },
       "EvidenceSourceSummary": {
@@ -2245,8 +2363,8 @@
           },
           "kind": {
             "enum": [
-              "pull_request",
-              "emergency_action"
+              "pr",
+              "emergency"
             ],
             "title": "Kind",
             "type": "string"
@@ -2367,7 +2485,7 @@
         "type": "object"
       },
       "FixState": {
-        "description": "A proposed fix and what happened to it.",
+        "description": "A proposed fix and what happened to it. `fix.kind` is pr or emergency;\n`fix.plan_lines` is the plan as from -> to lines; the PR's URL and state are in\n`pull_request` once opened.",
         "properties": {
           "applied": {
             "anyOf": [
@@ -2379,8 +2497,30 @@
               }
             ]
           },
+          "approval_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
           "fix": {
             "$ref": "#/components/schemas/ProposedFix"
+          },
+          "pull_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PullRequestRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "enum": [
@@ -2397,7 +2537,8 @@
         },
         "required": [
           "fix",
-          "status"
+          "status",
+          "approval_id"
         ],
         "title": "FixState",
         "type": "object"
@@ -2726,6 +2867,23 @@
             "title": "Resource Ids",
             "type": "array"
           },
+          "severity": {
+            "anyOf": [
+              {
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
+          },
           "since": {
             "anyOf": [
               {
@@ -2790,12 +2948,31 @@
       },
       "IncidentDetail": {
         "properties": {
+          "affected_resource_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Affected Resource Ids",
+            "type": "array"
+          },
           "affected_resources": {
             "items": {
               "$ref": "#/components/schemas/ResourceRef"
             },
             "title": "Affected Resources",
             "type": "array"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeMarker"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "completion_tokens": {
+            "title": "Completion Tokens",
+            "type": "integer"
           },
           "cost_usd": {
             "anyOf": [
@@ -2808,17 +2985,25 @@
             ],
             "title": "Cost Usd"
           },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
           "detected_by": {
             "enum": [
               "watcher",
               "user"
             ],
             "title": "Detected By",
+            "type": "string"
+          },
+          "detector_rule": {
+            "enum": [
+              "health_check",
+              "ecs_deployment_failed",
+              "ecs_tasks_stopped",
+              "log_error_spike",
+              "rds_cpu_latency",
+              "user_report",
+              "other"
+            ],
+            "title": "Detector Rule",
             "type": "string"
           },
           "duration_ms": {
@@ -2845,7 +3030,7 @@
           },
           "evidence": {
             "items": {
-              "$ref": "#/components/schemas/EvidenceRef"
+              "$ref": "#/components/schemas/EvidenceItem"
             },
             "title": "Evidence",
             "type": "array"
@@ -2869,9 +3054,38 @@
             "title": "Id",
             "type": "string"
           },
+          "memory": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryUse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "memory_reused": {
             "title": "Memory Reused",
             "type": "boolean"
+          },
+          "opened_at": {
+            "format": "date-time",
+            "title": "Opened At",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IncidentOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prompt_tokens": {
+            "title": "Prompt Tokens",
+            "type": "integer"
           },
           "pull_requests": {
             "items": {
@@ -2957,13 +3171,6 @@
             "title": "Signals",
             "type": "array"
           },
-          "similar_incidents": {
-            "items": {
-              "$ref": "#/components/schemas/MemoryHit"
-            },
-            "title": "Similar Incidents",
-            "type": "array"
-          },
           "status": {
             "enum": [
               "open",
@@ -2991,6 +3198,10 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
           },
           "triggering_change": {
             "anyOf": [
@@ -3023,22 +3234,8 @@
               }
             ]
           },
-          "window_end": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Window End"
-          },
-          "window_start": {
-            "format": "date-time",
-            "title": "Window Start",
-            "type": "string"
+          "window": {
+            "$ref": "#/components/schemas/TimeWindow"
           },
           "workspace_id": {
             "format": "uuid",
@@ -3049,31 +3246,37 @@
         "required": [
           "id",
           "workspace_id",
+          "run_id",
           "title",
           "status",
           "severity",
           "detected_by",
+          "detector_rule",
+          "opened_at",
+          "resolved_at",
+          "window",
+          "affected_resource_ids",
           "affected_resources",
-          "run_id",
-          "window_start",
-          "window_end",
           "root_cause_summary",
           "triggering_change",
           "fixes_applied",
           "pull_requests",
           "memory_reused",
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens",
           "cost_usd",
-          "created_at",
-          "resolved_at",
           "time_to_detect_ms",
           "duration_ms",
           "signals",
-          "root_cause",
           "evidence",
-          "similar_incidents",
-          "research",
+          "changes",
+          "root_cause",
           "fixes",
           "verify",
+          "outcome",
+          "memory",
+          "research",
           "run_ids"
         ],
         "title": "IncidentDetail",
@@ -3140,6 +3343,19 @@
             "title": "Detected By",
             "type": "string"
           },
+          "detector_rule": {
+            "enum": [
+              "health_check",
+              "ecs_deployment_failed",
+              "ecs_tasks_stopped",
+              "log_error_spike",
+              "rds_cpu_latency",
+              "user_report",
+              "other"
+            ],
+            "title": "Detector Rule",
+            "type": "string"
+          },
           "incident_id": {
             "format": "uuid",
             "title": "Incident Id",
@@ -3172,23 +3388,8 @@
             "title": "Type",
             "type": "string"
           },
-          "window_end": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Window End"
-          },
-          "window_start": {
-            "format": "date-time",
-            "title": "Window Start",
-            "type": "string"
+          "window": {
+            "$ref": "#/components/schemas/TimeWindow"
           }
         },
         "required": [
@@ -3196,11 +3397,47 @@
           "title",
           "severity",
           "detected_by",
+          "detector_rule",
           "signals",
           "affected_resources",
-          "window_start"
+          "window"
         ],
         "title": "IncidentOpened",
+        "type": "object"
+      },
+      "IncidentOutcome": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "result": {
+            "enum": [
+              "resolved",
+              "failed"
+            ],
+            "title": "Result",
+            "type": "string"
+          },
+          "still_failing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Still Failing",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "IncidentOutcome",
         "type": "object"
       },
       "IncidentPage": {
@@ -3315,12 +3552,24 @@
       "IncidentSummary": {
         "description": "One row of GET /incidents.",
         "properties": {
+          "affected_resource_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Affected Resource Ids",
+            "type": "array"
+          },
           "affected_resources": {
             "items": {
               "$ref": "#/components/schemas/ResourceRef"
             },
             "title": "Affected Resources",
             "type": "array"
+          },
+          "completion_tokens": {
+            "title": "Completion Tokens",
+            "type": "integer"
           },
           "cost_usd": {
             "anyOf": [
@@ -3333,17 +3582,25 @@
             ],
             "title": "Cost Usd"
           },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
           "detected_by": {
             "enum": [
               "watcher",
               "user"
             ],
             "title": "Detected By",
+            "type": "string"
+          },
+          "detector_rule": {
+            "enum": [
+              "health_check",
+              "ecs_deployment_failed",
+              "ecs_tasks_stopped",
+              "log_error_spike",
+              "rds_cpu_latency",
+              "user_report",
+              "other"
+            ],
+            "title": "Detector Rule",
             "type": "string"
           },
           "duration_ms": {
@@ -3372,6 +3629,15 @@
           "memory_reused": {
             "title": "Memory Reused",
             "type": "boolean"
+          },
+          "opened_at": {
+            "format": "date-time",
+            "title": "Opened At",
+            "type": "string"
+          },
+          "prompt_tokens": {
+            "title": "Prompt Tokens",
+            "type": "integer"
           },
           "pull_requests": {
             "items": {
@@ -3453,6 +3719,10 @@
             "title": "Title",
             "type": "string"
           },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          },
           "triggering_change": {
             "anyOf": [
               {
@@ -3474,22 +3744,8 @@
             ],
             "title": "Ultra Equiv Usd"
           },
-          "window_end": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Window End"
-          },
-          "window_start": {
-            "format": "date-time",
-            "title": "Window Start",
-            "type": "string"
+          "window": {
+            "$ref": "#/components/schemas/TimeWindow"
           },
           "workspace_id": {
             "format": "uuid",
@@ -3500,26 +3756,104 @@
         "required": [
           "id",
           "workspace_id",
+          "run_id",
           "title",
           "status",
           "severity",
           "detected_by",
+          "detector_rule",
+          "opened_at",
+          "resolved_at",
+          "window",
+          "affected_resource_ids",
           "affected_resources",
-          "run_id",
-          "window_start",
-          "window_end",
           "root_cause_summary",
           "triggering_change",
           "fixes_applied",
           "pull_requests",
           "memory_reused",
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens",
           "cost_usd",
-          "created_at",
-          "resolved_at",
           "time_to_detect_ms",
           "duration_ms"
         ],
         "title": "IncidentSummary",
+        "type": "object"
+      },
+      "IncidentUpdated": {
+        "description": "Every status change, so the UI can update the incident header without a reload.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "incident_id": {
+            "format": "uuid",
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "previous_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "investigating",
+                  "waiting_approval",
+                  "applying",
+                  "verifying",
+                  "resolved",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "investigating",
+              "waiting_approval",
+              "applying",
+              "verifying",
+              "resolved",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "const": "incident_updated",
+            "default": "incident_updated",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "incident_id",
+          "status",
+          "previous_status",
+          "at"
+        ],
+        "title": "IncidentUpdated",
         "type": "object"
       },
       "KubernetesConnectIn": {
@@ -3722,8 +4056,29 @@
             "type": "array"
           },
           "reused": {
+            "items": {
+              "enum": [
+                "diagnosis",
+                "fix",
+                "research"
+              ],
+              "type": "string"
+            },
             "title": "Reused",
-            "type": "boolean"
+            "type": "array"
+          },
+          "reused_incident_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reused Incident Id"
           },
           "type": {
             "const": "memory_checked",
@@ -3733,8 +4088,7 @@
           }
         },
         "required": [
-          "hits",
-          "reused"
+          "hits"
         ],
         "title": "MemoryChecked",
         "type": "object"
@@ -3800,6 +4154,43 @@
         "title": "MemoryHit",
         "type": "object"
       },
+      "MemoryUse": {
+        "properties": {
+          "incident_id": {
+            "format": "uuid",
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "reused": {
+            "items": {
+              "enum": [
+                "diagnosis",
+                "fix",
+                "research"
+              ],
+              "type": "string"
+            },
+            "title": "Reused",
+            "type": "array"
+          },
+          "similarity": {
+            "title": "Similarity",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "incident_id",
+          "title",
+          "similarity",
+          "reused"
+        ],
+        "title": "MemoryUse",
+        "type": "object"
+      },
       "Neighbor": {
         "properties": {
           "id": {
@@ -3827,6 +4218,53 @@
           "provider"
         ],
         "title": "Neighbor",
+        "type": "object"
+      },
+      "PlanLine": {
+        "description": "One human-readable line of an ActionPlan: what changes, from what, to what.",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "checkout-worker:41"
+            ],
+            "title": "After"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "checkout-worker:42"
+            ],
+            "title": "Before"
+          },
+          "what": {
+            "examples": [
+              "checkout-worker task definition"
+            ],
+            "title": "What",
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "before",
+          "after"
+        ],
+        "title": "PlanLine",
         "type": "object"
       },
       "PlannedResource": {
@@ -3960,8 +4398,8 @@
           },
           "kind": {
             "enum": [
-              "pull_request",
-              "emergency_action"
+              "pr",
+              "emergency"
             ],
             "title": "Kind",
             "type": "string"
@@ -3980,6 +4418,13 @@
               }
             ],
             "default": null
+          },
+          "plan_lines": {
+            "items": {
+              "$ref": "#/components/schemas/PlanLine"
+            },
+            "title": "Plan Lines",
+            "type": "array"
           },
           "pull_request": {
             "anyOf": [
@@ -4027,6 +4472,16 @@
           },
           "repo": {
             "title": "Repo",
+            "type": "string"
+          },
+          "state": {
+            "default": "open",
+            "enum": [
+              "open",
+              "closed",
+              "merged"
+            ],
+            "title": "State",
             "type": "string"
           },
           "url": {
@@ -4547,6 +5002,7 @@
         "type": "object"
       },
       "ResourceRef": {
+        "description": "A graph resource; `id` is what the Map deep-links to.",
         "properties": {
           "id": {
             "format": "uuid",
@@ -4632,6 +5088,13 @@
             "title": "Affected Resources",
             "type": "array"
           },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/Claim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
           "confidence": {
             "enum": [
               "high",
@@ -4642,13 +5105,6 @@
             "title": "Confidence",
             "type": "string"
           },
-          "evidence": {
-            "items": {
-              "$ref": "#/components/schemas/EvidenceRef"
-            },
-            "title": "Evidence",
-            "type": "array"
-          },
           "fix_options": {
             "items": {
               "$ref": "#/components/schemas/FixOption"
@@ -4657,7 +5113,7 @@
             "type": "array"
           },
           "root_cause": {
-            "description": "What broke and why, citing the evidence",
+            "description": "What broke and why",
             "title": "Root Cause",
             "type": "string"
           },
@@ -5310,7 +5766,7 @@
         "type": "object"
       },
       "Signal": {
-        "description": "Why an incident was opened, or what verify re-checks.",
+        "description": "A detector rule that fired, or what verify re-checks.",
         "properties": {
           "at": {
             "format": "date-time",
@@ -5322,19 +5778,6 @@
               "3 tasks stopped with exit code 137 (OutOfMemoryError)"
             ],
             "title": "Detail",
-            "type": "string"
-          },
-          "kind": {
-            "enum": [
-              "health_check",
-              "ecs_deployment_failed",
-              "ecs_tasks_stopped",
-              "log_error_spike",
-              "rds_cpu_latency",
-              "user_report",
-              "other"
-            ],
-            "title": "Kind",
             "type": "string"
           },
           "resource_id": {
@@ -5361,10 +5804,23 @@
             ],
             "default": null,
             "title": "Resource Name"
+          },
+          "rule": {
+            "enum": [
+              "health_check",
+              "ecs_deployment_failed",
+              "ecs_tasks_stopped",
+              "log_error_spike",
+              "rds_cpu_latency",
+              "user_report",
+              "other"
+            ],
+            "title": "Rule",
+            "type": "string"
           }
         },
         "required": [
-          "kind",
+          "rule",
           "detail",
           "at"
         ],
@@ -5659,6 +6115,7 @@
                     "incident_failed": "#/components/schemas/IncidentFailed",
                     "incident_opened": "#/components/schemas/IncidentOpened",
                     "incident_resolved": "#/components/schemas/IncidentResolved",
+                    "incident_updated": "#/components/schemas/IncidentUpdated",
                     "memory_checked": "#/components/schemas/MemoryChecked",
                     "research_done": "#/components/schemas/ResearchDone"
                   },
@@ -5667,6 +6124,9 @@
                 "oneOf": [
                   {
                     "$ref": "#/components/schemas/IncidentOpened"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IncidentUpdated"
                   },
                   {
                     "$ref": "#/components/schemas/EvidenceCollected"
@@ -5963,6 +6423,33 @@
         "title": "SystemSummaryOut",
         "type": "object"
       },
+      "TimeWindow": {
+        "properties": {
+          "end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start"
+        ],
+        "title": "TimeWindow",
+        "type": "object"
+      },
       "ToolPolicy": {
         "enum": [
           "read",
@@ -5998,6 +6485,13 @@
             ],
             "default": null,
             "title": "Description"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
           },
           "kind": {
             "enum": [
@@ -7462,7 +7956,7 @@
     },
     "/incidents": {
       "get": {
-        "description": "Newest first. Pass next_cursor back as ?cursor= for the next page.",
+        "description": "Newest first. Filters combine with AND. Pass next_cursor back as ?cursor= for the next\npage.",
         "operationId": "list_incidents_incidents_get",
         "parameters": [
           {
@@ -7498,6 +7992,66 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "severity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "description": "Incidents affecting this resource",
+            "in": "query",
+            "name": "resource",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Incidents affecting this resource",
+              "title": "Resource"
+            }
+          },
+          {
+            "description": "Opened at or after this time",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opened at or after this time",
+              "title": "Since"
             }
           },
           {
@@ -7931,7 +8485,7 @@
     },
     "/runs/{run_id}/events": {
       "get": {
-        "description": "SSE: existing steps, then new ones and status changes until the run ends.\n\nEvents: `step`, `approval_requested`, `approval_decided`, the deploy events\n(`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,\n`rollback_offered`, `run_finished`), the incident events (`incident_opened`,\n`evidence_collected`, `memory_checked`, `research_done`, `diagnosis`, `fix_proposed`,\n`fix_applied`, `incident_resolved`, `incident_failed`; id = step seq), `status`, and a\nfinal `done`.\nSee docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the\nconnection. Reconnects with Last-Event-ID (or ?after=) continue after that step.\n\nNo request-scoped session here: FastAPI closes it only after the stream ends, which\nwould hold a pooled connection idle in transaction for every open stream. Each poll\nuses its own short session instead.",
+        "description": "SSE: existing steps, then new ones and status changes until the run ends.\n\nEvents: `step`, `approval_requested`, `approval_decided`, the deploy events\n(`stage_started`, `stage_finished`, `build_attempt`, `verify_result`, `live_url`,\n`rollback_offered`, `run_finished`), the incident events (`incident_opened`,\n`incident_updated`, `evidence_collected`, `memory_checked`, `research_done`,\n`diagnosis`, `fix_proposed`, `fix_applied`, `incident_resolved`, `incident_failed`;\nid = step seq), `status`, and a final `done`.\nSee docs/events.md. A heartbeat comment every 15 s keeps proxies from closing the\nconnection. Reconnects with Last-Event-ID (or ?after=) continue after that step.\n\nNo request-scoped session here: FastAPI closes it only after the stream ends, which\nwould hold a pooled connection idle in transaction for every open stream. Each poll\nuses its own short session instead.",
         "operationId": "run_events_runs__run_id__events_get",
         "parameters": [
           {
