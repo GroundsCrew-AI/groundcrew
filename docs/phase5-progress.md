@@ -9,8 +9,8 @@ Owner: Ahmed. Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-inter
 | M0 Interfaces | `phase5-m0-interfaces` | #22, #23 | Merged 2026-10-12 |
 | M1 Telemetry readers | `phase5-m1-telemetry` | #25 | Merged 2026-10-12 |
 | M2 Detection | `phase5-m2-detection` | #26 | Merged 2026-10-12 |
-| M3 Medic agent | `phase5-m3-medic` | #27 (draft) | Done, in review |
-| M4 Incidents API + wiring | | | |
+| M3 Medic agent | `phase5-m3-medic` | #27 | Merged 2026-10-12 |
+| M4 Incidents API + wiring | `phase5-m4-incidents-api` | draft | Done, in review |
 | M5 Live verification | | | Needs Rizwan: checkout-demo rebuild, Operate role |
 
 ## M0 (2026-10-12)
@@ -175,6 +175,32 @@ Open issues:
   verify window (20 minutes) may be short for that.
 
 Spend: $0 (FakeLLM only).
+
+## M4 (2026-10-12)
+
+Done:
+- `GET /incidents` (status, severity, resource, since; cursor paging, newest first) and
+  `GET /incidents/{id}` built from the incident row, Medic's `incidents.state`, and every run of
+  the incident (`app/incidents/views.py`): tokens and cost summed across runs, evidence items,
+  change markers, cited root cause, fixes with approval ids, PR links and state, verify result,
+  outcome, memory reuse, research. The PR draft's full file contents stay internal.
+- Fix PR state refreshed from GitHub (GET pulls) on detail reads, at most once a minute.
+- Stopping a Medic run closes its incident as failed ("Stopped by <login>."), with
+  `incident_updated` and `incident_failed` steps; pending fixes become rejected.
+- `MEDIC_PR_VERIFY_TIMEOUT_SECONDS` (default 3600) when only a fix PR was applied (a person
+  merges, the pipeline deploys, then the signals can recover).
+- Wiring: Medic's resume handler is registered with Rizwan's registry (since M3);
+  `investigate_incident` and `verify_incident` are worker handlers; the approvals inbox and run
+  stream show Medic runs with no change.
+- Web types regenerated (only the 501 responses removed). Tests: `tests/test_incidents_api.py` (4).
+
+Open issues:
+- Emergency actions need Rizwan's `app.actions.get_emergency_actions` (Operate role, target
+  Oct 17); until then incidents get the fix PR and a note.
+- `VerifyCheck` `errors` / `metric` are used directly (they landed in #24).
+- M5 needs the checkout-demo stack rebuilt, the Operate role, and Rizwan's OK for live runs.
+
+Spend: $0.
 
 ## How to resume
 

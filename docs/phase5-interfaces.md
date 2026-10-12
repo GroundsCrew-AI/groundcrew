@@ -174,7 +174,7 @@ runs model text as an action.
 
 ## 6. Incidents API (Ahmed; Rizwan's UI)
 
-Code: `app/routes/incidents.py` (501 until M4, behind auth and membership like `/deploys`),
+Code: `app/routes/incidents.py` (live since M4, behind auth and membership like `/deploys`),
 `app/routes/incident_schemas.py`. Types are in `apps/web/lib/api/schema.d.ts`.
 
 | Method | Path | Body / query | Response |
@@ -230,6 +230,10 @@ group of related resources: reporting resources an open incident covers returns 
 | `memory` | `{incident_id, title, similarity, reused: [diagnosis \| fix \| research]}` when a past incident was reused |
 | `research` | Tavily results `[{title, url, snippet}]` (max 3) |
 | `run_ids`, `error` | every Medic run for it, oldest first |
+
+Stopping the Medic run (`POST /runs/{run_id}/stop`) rejects its pending approvals and closes the
+incident as `failed` ("Stopped by <login>."). Fix PR states are refreshed from GitHub when the
+detail is read, at most once a minute.
 
 Approve a fix with the existing `POST /approvals/{approval_id}/decide`; it also shows in the
 approvals inbox (run agent `medic`).

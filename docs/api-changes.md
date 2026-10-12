@@ -82,3 +82,13 @@ For the Incidents UI (Rizwan). Contract: `docs/phase5-interfaces.md`.
   code that narrows on `data.type` is unaffected (web typecheck and tests pass unchanged).
 - `SseEventName` adds `incident_opened`, `incident_updated`, `evidence_collected`, `memory_checked`, `research_done`,
   `diagnosis`, `fix_proposed`, `fix_applied`, `incident_resolved`, `incident_failed`.
+
+## Phase 5 M4: incidents API live
+
+- `GET /incidents` (filters `status`, `severity`, `resource`, `since`; `limit`, `cursor`) and
+  `GET /incidents/{incident_id}` now answer with the M0 shapes (`IncidentPage`, `IncidentDetail`);
+  the 501 responses are gone from the schema. No field changed.
+- `POST /runs/{run_id}/stop` on a Medic run also closes its incident (`incident_updated` and
+  `incident_failed` steps follow `stopped` on the stream).
+- `fixes[].pull_request.state` and `pull_requests[].state` move from `open` to `merged` or
+  `closed` as GitHub reports them.
