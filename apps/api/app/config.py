@@ -262,6 +262,14 @@ class Settings(BaseSettings):
     # Window Medic investigates when a report gives no `since`.
     incident_default_window_minutes: int = 60
 
+    # Medic (Phase 5). Investigation wall clock, recovery checks after a fix, research cap,
+    # and how close a past incident must be for its diagnosis and fix to be reused.
+    medic_timeout_seconds: int = 300
+    medic_verify_timeout_seconds: int = 1200
+    medic_verify_interval_seconds: int = 30
+    tavily_max_calls_per_incident: int = 2
+    medic_memory_threshold: float = 0.85
+
     # Worker and live updates
     worker_poll_interval_seconds: float = 1.0
     job_lock_timeout_seconds: int = 600

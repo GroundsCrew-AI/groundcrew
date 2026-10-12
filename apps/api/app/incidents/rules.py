@@ -33,14 +33,14 @@ SPIKE_FACTOR = 2.0
 MAX_STOPPED_TASKS = 50
 MAX_LOG_EVENTS = 5_000
 
-_HEALTH = re.compile(r"(?i)health ?checks?|unhealthy")
+HEALTH = re.compile(r"(?i)health ?checks?|unhealthy")
 _ERROR = re.compile(
     r"(?i)\b(error|exception|traceback|fatal|critical|failed|unreachable|refused|"
     r"timed? ?out|killed|outofmemory|panic)\b|\"level\": ?\"(error|critical)\"|\s5\d\d\s"
 )
 
 
-def _time(value: object) -> datetime | None:
+def to_time(value: object) -> datetime | None:
     if isinstance(value, datetime):
         return value
     if isinstance(value, int | float):
@@ -65,7 +65,7 @@ def ecs_signals(
 
     for d in service.get("deployments", []):
         if d.get("status") == "PRIMARY" and d.get("rolloutState") == "FAILED":
-            at = _time(d.get("updatedAt")) or now
+            at = to_time(d.get("updatedAt")) or now
             reason = d.get("rolloutStateReason") or "rollout failed"
             out.append(
                 Signal(
@@ -77,18 +77,18 @@ def ecs_signals(
                 )
             )
 
-    stopped = [t for t in tasks if _recent(_time(t.get("stoppedAt")), now)]
-    health = [t for t in stopped if _HEALTH.search(str(t.get("stoppedReason", "")))]
+    stopped = [t for t in tasks if _recent(to_time(t.get("stoppedAt")), now)]
+    health = [t for t in stopped if HEALTH.search(str(t.get("stoppedReason", "")))]
     health_events = [
         e
         for e in service.get("events", [])
-        if _recent(_time(e.get("createdAt")), now)
-        and _HEALTH.search(str(e.get("message", "")))
+        if _recent(to_time(e.get("createdAt")), now)
+        and HEALTH.search(str(e.get("message", "")))
         and "fail" in str(e.get("message", "")).lower()
     ]
     if health or health_events:
-        times = [_time(t.get("stoppedAt")) for t in health] + [
-            _time(e.get("createdAt")) for e in health_events
+        times = [to_time(t.get("stoppedAt")) for t in health] + [
+            to_time(e.get("createdAt")) for e in health_events
         ]
         at = min(t for t in times if t is not None)
         out.append(
@@ -118,7 +118,7 @@ def ecs_signals(
         detail = f"{len(crashed)} tasks stopped with exit code {', '.join(map(str, codes_seen))}"
         if oom:
             detail += f" ({oom} OutOfMemoryError)"
-        at = min(_time(t.get("stoppedAt")) or now for t, _ in crashed)
+        at = min(to_time(t.get("stoppedAt")) or now for t, _ in crashed)
         out.append(
             Signal(
                 rule="ecs_tasks_stopped",
@@ -200,7 +200,7 @@ def fetch_logs(
     return [
         (at, str(e.get("message", "")))
         for e in raw
-        if (at := _time(e.get("timestamp"))) is not None
+        if (at := to_time(e.get("timestamp"))) is not None
     ]
 
 

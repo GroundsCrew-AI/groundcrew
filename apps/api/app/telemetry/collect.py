@@ -94,6 +94,8 @@ class ConnectionClients:
 class Evidence:
     sources: dict[str, list[Line]] = field(default_factory=dict)
     truncated: dict[str, bool] = field(default_factory=dict)
+    # The graph resource each source reads (for evidence items' resource_id).
+    source_resources: dict[str, uuid.UUID] = field(default_factory=dict)
     changes: list[ChangeMarker] = field(default_factory=list)
     affected: list[ResourceRef] = field(default_factory=list)
     neighbors: list[ResourceRef] = field(default_factory=list)
@@ -301,6 +303,7 @@ async def collect(
         resource = jobs[key][0]
         evidence.sources[key] = out.lines
         evidence.truncated[key] = out.truncated
+        evidence.source_resources[key] = resource.id
         evidence.changes.extend(
             c if c.resource_id else c.model_copy(update={"resource_id": resource.id})
             for c in out.changes

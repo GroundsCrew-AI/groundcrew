@@ -43,6 +43,8 @@ class Task(enum.StrEnum):
     # Medic (Ultra for thinking, Super for legwork)
     investigate_step = "investigate_step"
     root_cause = "root_cause"
+    # A close past incident was found: check its diagnosis against this incident's evidence.
+    confirm_root_cause = "confirm_root_cause"
     propose_fix = "propose_fix"
     verify_recovery = "verify_recovery"
     # Generic task types from Phase 1 (Echo Ops and other tool-loop agents)
@@ -87,6 +89,7 @@ ROUTES: dict[Task, Route] = {
     Task.tool_step: Route(Task.tool_step, _S, _OFF, 1_500, fallback=_N),
     Task.investigate_step: Route(Task.investigate_step, _S, _OFF, 1_500),
     Task.root_cause: Route(Task.root_cause, _U, _ON, 10_000, fallback=_S),
+    Task.confirm_root_cause: Route(Task.confirm_root_cause, _S, _LOW, 4_000),
     # Ultra and Lightning never run with reasoning=low: in the probes it saved little or cost
     # more (Ultra 311 vs 362 tokens over 5 samples, wide spread; Lightning 603 vs 460).
     Task.propose_fix: Route(Task.propose_fix, _U, _ON, 6_000, fallback=_S),

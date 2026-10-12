@@ -92,6 +92,11 @@ Rules for `execute`:
 wording or the time). `EmergencyActionError` (safe message) when no plan is possible: no previous
 revision, no `AWSPREVIOUS`, no `operate` capability, or a resource outside the allowed ARNs.
 
+**How Medic finds the real implementation:** `app/actions/__init__.py` exposes
+`get_emergency_actions(session_factory, settings) -> EmergencyActions | None` (None when the
+Operate role is not set up). Medic calls it if it exists; until then it offers no emergency action
+and says so on the incident ("no Operate role"). Tests inject `FakeEmergencyActions`.
+
 ### Operate capability (Rizwan, lands about a day after Phase 4 merges)
 
 - Stack parameter `EnableOperate` (`true` / `false`), independent of `Tier=deploy`: a customer can
