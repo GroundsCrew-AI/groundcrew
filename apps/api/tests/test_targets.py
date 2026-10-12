@@ -368,7 +368,7 @@ async def test_ecs_plan_creates_the_repository_then_pushes_and_masks_secrets() -
         ("image", "push"),
         ("logs:LogGroup", "create"),
         ("ec2:SecurityGroup", "create"),
-        ("secretsmanager:Secret", "create"),
+        ("secretsmanager/Secret", "create"),
         ("ecs:TaskDefinition", "create"),
         ("ecs:Service", "create"),
     ]
@@ -599,3 +599,12 @@ async def test_k8s_verify_stops_early_when_pods_cannot_be_created(
     health = await target.verify(deployment)
     assert not health.ok
     assert health.checks[0].detail.startswith("FailedCreate: pods")
+
+
+async def test_ecs_step_labels_survive_display_redaction() -> None:
+    from app.security.redact import redact_json
+
+    target, _ = ecs([])
+    plan = await target.plan(spec(uuid.uuid4(), CONNECTION))
+    shown = redact_json([s.model_dump() for s in plan.steps])
+    assert [s["kind"] for s in shown] == [s.kind for s in plan.steps]

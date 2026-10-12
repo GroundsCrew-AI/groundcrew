@@ -13,9 +13,10 @@ from botocore.exceptions import ClientError
 
 from app.db.models import Approval, ApprovalStatus, Run, RunStatus, ToolPolicy, Workspace
 from app.db.session import SessionFactory
+from app.pipeline.fake import InMemoryKubeApi
 from app.policy.actions import ApprovedAction, TargetAction, issue_approved_action
 from app.sandbox.base import BuildResult, PushResult, PushTarget, SmokeEnv, SmokeResult
-from app.targets.base import DeploySpec, EnvValue, TargetError
+from app.targets.base import DeploySpec, EnvValue
 
 ACCOUNT = "881050425883"
 SECRET_VALUE = "postgresql://app:hunter2@db:5432/app"  # noqa: S105 (test value)
@@ -75,102 +76,7 @@ class FakeSandbox:
         return None
 
 
-class FakeKubeApi:
-    """Objects keyed by (kind, namespace, name). Deployments get a revision and a ready status
-    when applied, the way the controller would."""
-
-    def __init__(self, events: list[str]) -> None:
-        self.events = events
-        self.objects: dict[tuple[str, str | None, str], dict[str, Any]] = {}
-        self.logs = "2026-10-12T10:00:00Z booting\n2026-10-12T10:00:01Z listening on 8000\n"
-        self.ready = True
-        self.pods: list[dict[str, Any]] = [
-            {"metadata": {"name": "legacy-flask-app-abc"}, "status": {}}
-        ]
-
-    def put(self, kind: str, namespace: str | None, body: dict[str, Any]) -> None:
-        self.objects[(kind, namespace, body["metadata"]["name"])] = body
-
-    async def get(
-        self, kind: str, name: str, namespace: str | None = None
-    ) -> dict[str, Any] | None:
-        # Like the real deployer: no Secrets without the RoleBinding in their namespace.
-        if (
-            kind == "secrets"
-            and ("rolebindings", namespace, "groundcrew-deployer") not in self.objects
-        ):
-            raise TargetError(f"get secrets/{name} failed: 403 Forbidden")
-        found = self.objects.get((kind, namespace, name))
-        return copy.deepcopy(found) if found else None
-
-    async def create(
-        self, kind: str, body: dict[str, Any], namespace: str | None = None
-    ) -> dict[str, Any]:
-        self.events.append(f"create {kind}/{body['metadata']['name']}")
-        self.put(kind, namespace, copy.deepcopy(body))
-        return body
-
-    async def apply(self, kind: str, body: dict[str, Any], namespace: str) -> dict[str, Any]:
-        self.events.append(f"apply {kind}/{body['metadata']['name']}")
-        body = copy.deepcopy(body)
-        if kind == "deployments":
-            old = self.objects.get((kind, namespace, body["metadata"]["name"]))
-            revision = (
-                int(
-                    ((old or {}).get("metadata") or {})
-                    .get("annotations", {})
-                    .get("deployment.kubernetes.io/revision", "0")
-                )
-                + 1
-            )
-            self._ready(body, revision)
-            self.objects[("replicasets", namespace, f"{body['metadata']['name']}-{revision}")] = {
-                "metadata": {
-                    "name": f"{body['metadata']['name']}-{revision}",
-                    "annotations": {"deployment.kubernetes.io/revision": str(revision)},
-                },
-                "spec": {"template": copy.deepcopy(body["spec"]["template"])},
-            }
-        self.put(kind, namespace, body)
-        return body
-
-    def _ready(self, body: dict[str, Any], revision: int) -> None:
-        body["metadata"]["annotations"] = {"deployment.kubernetes.io/revision": str(revision)}
-        body["metadata"]["generation"] = revision
-        want = body["spec"]["replicas"]
-        body["status"] = {
-            "observedGeneration": revision,
-            "updatedReplicas": want,
-            "availableReplicas": want if self.ready else 0,
-        }
-
-    async def merge_patch(
-        self, kind: str, name: str, namespace: str, body: dict[str, Any]
-    ) -> dict[str, Any]:
-        self.events.append(f"patch {kind}/{name}")
-        current = self.objects[(kind, namespace, name)]
-        current["spec"]["template"] = copy.deepcopy(body["spec"]["template"])
-        revision = int(current["metadata"]["annotations"]["deployment.kubernetes.io/revision"]) + 1
-        self._ready(current, revision)
-        return current
-
-    async def delete(self, kind: str, name: str, namespace: str | None = None) -> None:
-        self.events.append(f"delete {kind}/{name}")
-        self.objects.pop((kind, namespace, name), None)
-
-    async def list(self, kind: str, namespace: str, label_selector: str) -> list[dict[str, Any]]:
-        if kind == "pods":
-            return copy.deepcopy(self.pods)
-        return [
-            copy.deepcopy(v)
-            for (k, ns, _), v in self.objects.items()
-            if k == kind and ns == namespace
-        ]
-
-    async def pod_log(
-        self, namespace: str, pod: str, *, since_seconds: int, tail_lines: int
-    ) -> str:
-        return self.logs
+FakeKubeApi = InMemoryKubeApi
 
 
 def client_error(code: str, operation: str, message: str = "") -> ClientError:
