@@ -63,6 +63,14 @@ Done on this branch, on top of main with PR #22 (both sets of approved actions k
 
 ## Open issues
 
+- The first human-approved run (2026-10-12) failed at Plan: the stack had been recreated
+  without the kind override, so the worker could not resolve `groundcrew-control-plane`. The
+  stack is back on `make dev KIND=1`. Fixed in code: the error now says how to fix it, and the
+  stage that was running ends as failed instead of showing "running".
+- LLM step summaries are redacted for display, which shows `"secret_env": [REDACTED]` for the
+  plan_deploy answer (the redactor reads `secret_env": [` as a secret). Display only; the
+  redaction rules are shared security code and were not loosened.
+
 - Scout's detect_app_spec (Nano, low) hit its 2,000-token cap on legacy-flask-app in both live
   checks and fell back to rules only (the spec was still right). Scout and its route are outside
   the Phase 4 paths, so it is not changed here.

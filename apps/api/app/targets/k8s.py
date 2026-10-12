@@ -111,6 +111,23 @@ class KubeApi(Protocol):
     ) -> str: ...
 
 
+def unreachable(server: str, exc: BaseException) -> str:
+    """Why the cluster could not be reached, with the fix; never a token or response body."""
+    text = str(exc)
+    if any(
+        m in text for m in ("NameResolutionError", "Failed to resolve", "Name or service not known")
+    ):
+        return (
+            f"Cannot resolve the cluster address {server}. For the local kind cluster the API and "
+            "worker must be on the kind network: start Groundcrew with make dev KIND=1."
+        )
+    status = getattr(exc, "status", None)
+    if status in (401, 403):
+        return f"The cluster at {server} refused the kubeconfig's credentials ({status})."
+    first = text.splitlines()[0][:200] if text else type(exc).__name__
+    return f"Cannot reach the cluster at {server}: {first}"
+
+
 class LiveKubeApi:
     """KubeApi over the kubernetes dynamic client. Calls block, so each runs in a thread.
     Errors become TargetError with the status and reason, never a request or response body."""
@@ -122,8 +139,12 @@ class LiveKubeApi:
             api_client = config.new_client_from_config(config_file=str(kubeconfig))
         except Exception as exc:
             raise TargetError(f"Could not load the kubeconfig: {type(exc).__name__}") from None
-        self._client = dynamic.DynamicClient(api_client)
         self.server = api_client.configuration.host
+        try:
+            # The client reads the cluster's API list here: the first call to the cluster.
+            self._client = dynamic.DynamicClient(api_client)
+        except Exception as exc:
+            raise TargetError(unreachable(self.server, exc)) from None
 
     def _resource(self, kind: str) -> Any:
         api_version, name = KINDS[kind]

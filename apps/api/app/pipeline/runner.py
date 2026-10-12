@@ -334,6 +334,7 @@ class PipelineRunner:
                 await session.refresh(run)
                 error = summarize(f"{type(exc).__name__}: {exc}", 1000)
                 await record_step(session, run, kind="error", output_summary=error)
+                await job.fail_open_stage(error or "error")
                 with contextlib.suppress(Finished):
                     await job.finish(RunStatus.failed, StopReason.error, error=error)
 
@@ -397,6 +398,22 @@ class _Job:
                 summary=summary,
             ),
         )
+
+    async def fail_open_stage(self, error: str) -> None:
+        """An unexpected error: the stage that was running ends as failed, so the strip and
+        the timeline do not show it running forever."""
+        stage = self.state.get("stage")
+        entry = self.stages().get(stage or "", {})
+        if not stage or entry.get("status") != "running":
+            return
+        agent: StageAgent = (
+            "scout"
+            if stage == "scout"
+            else ("builder" if stage in ("build", "smoke") else "deployer")
+        )
+        started = time.monotonic() - _seconds_since(entry.get("started_at"))
+        with contextlib.suppress(Exception):
+            await self.stage_end(stage, agent, started, "failed", error[:200])
 
     def recorder(self, agent: str) -> _Recorder:
         if agent not in self.recorders:
