@@ -13,7 +13,7 @@ CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
 .PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
-	kind-up kind-down kind-kubeconfig kind-check kind-register dind-check smoke-ecs cleanup-deploys
+	kind-up kind-down kind-kubeconfig kind-check kind-register plan-target dind-check smoke-ecs cleanup-deploys
 
 # KIND=1 joins api and worker to the kind network (make kind-up first).
 COMPOSE := docker compose$(if $(filter 1,$(KIND)), -f docker-compose.yml -f docker-compose.kind.yml)
@@ -138,6 +138,13 @@ smoke-ecs:
 	@test -n "$(CONNECTION)" || { echo "Usage: make smoke-ecs CONNECTION=<aws connection id> [DRY_RUN=0] [CLEANUP=1]"; exit 1; }
 	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/smoke_ecs_deploy.py --connection $(CONNECTION) \
 		$(if $(filter 1,$(CLEANUP)),--cleanup,$(if $(filter 0,$(DRY_RUN)),--real))
+
+# Dry run of a deploy target (read-only): the plan and preflight for APP on CONNECTION
+# (an AWS connection with Tier=deploy, or a k8s connection). Nothing is pushed or created.
+plan-target:
+	@test -n "$(CONNECTION)" || { echo "Usage: make plan-target CONNECTION=<connection id> [APP=legacy-flask-app] [PORT=8000]"; exit 1; }
+	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/plan_target.py --connection $(CONNECTION) \
+		$(if $(APP),--app $(APP)) $(if $(PORT),--port $(PORT))
 
 # Deletes what deploys left behind (project=groundcrew, older than HOURS) on AWS (every
 # deploy-tier connection, or CONNECTION) and in kind. Dry run unless APPLY=1 (docs/phase4-infra.md).

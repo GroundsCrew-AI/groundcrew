@@ -53,6 +53,11 @@ about 6k tokens (Nano's reliable range), and says how many were left out.
 - `CredentialsProvider` and `ResourceSink`: landed in Phase 3, signatures below.
 - The shape of a finished deployment in `runs.state` (`DeployRecord` in `app/pipeline/state.py`,
   documented in `docs/deploys-contract.md`), which Medic reads for "recent deploys" and rollback.
+- Rollback (Phase 4, M3): `target_for(settings, credentials, connection)`, then
+  `plan = await target.rollback_plan(deployment)`, an emergency approval with tool name
+  `target_rollback` and `arguments.plan_hash = plan.plan_hash()`, then
+  `token = await issue_approved_action(...)` and `await target.rollback(plan, token)`
+  (`docs/phase4-infra.md`, Targets). Without that token `rollback()` refuses to run.
 
 ---
 

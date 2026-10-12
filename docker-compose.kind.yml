@@ -10,6 +10,8 @@ services:
     environment:
       # Builds in dind push here; kind nodes pull the same name (make kind-up adds the mirror).
       GC_KIND_REGISTRY: kind-registry:5000
+      # Verify reaches apps through ingress-nginx on the control-plane node (Host: <app>.localhost).
+      GC_KIND_INGRESS_URL: http://groundcrew-control-plane
   dind:
     networks: [default, kind]
 

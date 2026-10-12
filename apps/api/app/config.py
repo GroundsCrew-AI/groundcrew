@@ -4,6 +4,7 @@ Secrets are optional at import time so the app (and /health) can start without t
 Code that needs a secret must check for it and fail with a clear error at call time.
 """
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -89,6 +90,10 @@ class Settings(BaseSettings):
     tavily_api_key: SecretStr | None = None
     database_url: SecretStr | None = None
     secrets_key: SecretStr | None = None
+    # Signs ApprovedAction tokens (app/policy/actions.py), so a token issued by one worker is
+    # valid in another and after a restart. Required outside APP_ENV=dev; dev derives one from
+    # SECRETS_KEY when unset. Generate one: secrets.token_urlsafe(48) (see .env.example).
+    approval_token_key: SecretStr | None = None
 
     # Repositories (Phase 4 before the GitHub App lands): local paths or public git URLs.
     # Optional token for private HTTPS clones; sent as an HTTP header through git's environment,
@@ -157,6 +162,17 @@ class Settings(BaseSettings):
     # the registry mirror that `make kind-up` configures.
     gc_kind_registry: str = "localhost:5001"
     gc_namespace_prefix: str = "gc-"
+    # Targets (app/targets). Who may reach an ECS app's port: the security group's source CIDR
+    # (0.0.0.0/0 for the demo; set your own /32 to keep an app private).
+    gc_ingress_cidr: str = "0.0.0.0/0"
+    # kind apps answer at http://<app>.<GC_KIND_APP_DOMAIN> through ingress-nginx. Verify sends
+    # its requests to GC_KIND_INGRESS_URL with that Host header: 127.0.0.1 on this machine,
+    # http://groundcrew-control-plane from Compose on the kind network (make dev KIND=1).
+    gc_kind_app_domain: str = "localhost"
+    gc_kind_ingress_url: str = "http://127.0.0.1"
+    # How long verify waits for a rollout (k8s) or a stable service (ECS, usually 1 to 3 min).
+    gc_verify_timeout_seconds: float = 300.0
+    gc_log_retention_days: int = 7
 
     # Build sandbox (app/sandbox). `docker` talks to the daemon in DOCKER_HOST (the dind service
     # in local dev); `nebius` is TODO(nebius-sandbox). A smoke-test container publishes its port
@@ -199,6 +215,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "must start with gc- (the admission policy only allows gc-* namespaces)"
             )
+        return value
+
+    @field_validator("gc_ingress_cidr")
+    @classmethod
+    def _cidr(cls, value: str) -> str:
+        ipaddress.ip_network(value, strict=True)
         return value
 
     @field_validator("gc_task_execution_role_arn")
