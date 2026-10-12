@@ -406,9 +406,14 @@ image reaches any registry.
 **Approved actions.** `apply()` and `rollback()` refuse to run without an `ApprovedAction` from
 `app.policy.actions.issue_approved_action`: an approved, unused approval for the same run, with
 tool name `target_apply` (policy write) or `target_rollback` (policy emergency) and
-`arguments.plan_hash` equal to the plan's hash. Issuing marks the approval used; the target
-consumes the token before its first write. No token, a reused token, a token for another plan,
-run, or action, or a hand-made one all raise `PolicyViolationError`. Medic calls `rollback()`
+`arguments.plan_hash` equal to the plan's hash. Tokens are signed with `APPROVAL_TOKEN_KEY`
+(required outside `APP_ENV=dev`; dev derives one from `SECRETS_KEY`), so a token issued by one
+worker works in another and after a restart (`encode()` / `decode()` for job payloads). The
+target spends the token before its first write with one atomic
+`UPDATE approvals SET used_at = now() WHERE id = ... AND used_at IS NULL` (also requiring the
+approval to still be approved), so it runs once however many workers hold it. No token, a reused
+token, a token for another plan, run, or action, an altered or hand-made one, or one whose
+approval was withdrawn all raise `PolicyViolationError`. Medic calls `rollback()`
 the same way, with its own emergency approval. A rollback, including deleting a first deploy,
 never runs on its own.
 

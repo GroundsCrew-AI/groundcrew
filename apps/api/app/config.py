@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     tavily_api_key: SecretStr | None = None
     database_url: SecretStr | None = None
     secrets_key: SecretStr | None = None
+    # Signs ApprovedAction tokens (app/policy/actions.py), so a token issued by one worker is
+    # valid in another and after a restart. Required outside APP_ENV=dev; dev derives one from
+    # SECRETS_KEY when unset. Generate one: secrets.token_urlsafe(48) (see .env.example).
+    approval_token_key: SecretStr | None = None
 
     # Repositories (Phase 4 before the GitHub App lands): local paths or public git URLs.
     # Optional token for private HTTPS clones; sent as an HTTP header through git's environment,

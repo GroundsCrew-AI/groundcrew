@@ -29,6 +29,7 @@ import yaml
 from app.config import Settings
 from app.connectors.credentials import CredentialsProvider
 from app.connectors.deploy_infra import k8s_labels, namespace, slug
+from app.db.session import SessionFactory, get_session_factory
 from app.discovery.types import ConnectorResult
 from app.pipeline.events import PreflightCheck, TargetKind, VerifyCheck
 from app.policy.actions import (
@@ -244,6 +245,7 @@ class K8sTarget:
         api: KubeApi | None = None,
         http: httpx.AsyncClient | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        session_factory: SessionFactory | None = None,
     ) -> None:
         self.settings = settings
         self.credentials = credentials
@@ -252,8 +254,16 @@ class K8sTarget:
         self._api = api
         self._http = http
         self._sleep = sleep
+        self._session_factory = session_factory
 
     # --- plumbing -------------------------------------------------------------------------
+
+    @property
+    def session_factory(self) -> SessionFactory:
+        """Where approved actions are spent (approvals.used_at)."""
+        if self._session_factory is None:
+            self._session_factory = get_session_factory()
+        return self._session_factory
 
     @property
     def api(self) -> KubeApi:
@@ -586,8 +596,12 @@ class K8sTarget:
     async def apply(
         self, plan: TargetPlan, spec: DeploySpec, token: ApprovedAction, sandbox: Sandbox
     ) -> Deployment:
-        consume_approved_action(
-            token, run_id=plan.run_id, action=TARGET_APPLY, plan_hash=plan.plan_hash()
+        await consume_approved_action(
+            self.session_factory,
+            token,
+            run_id=plan.run_id,
+            action=TARGET_APPLY,
+            plan_hash=plan.plan_hash(),
         )
         check_spec_matches(plan, spec)
         n = self._names(plan.app)
@@ -848,8 +862,12 @@ class K8sTarget:
         )
 
     async def rollback(self, plan: TargetPlan, token: ApprovedAction) -> Deployment:
-        consume_approved_action(
-            token, run_id=plan.run_id, action=TARGET_ROLLBACK, plan_hash=plan.plan_hash()
+        await consume_approved_action(
+            self.session_factory,
+            token,
+            run_id=plan.run_id,
+            action=TARGET_ROLLBACK,
+            plan_hash=plan.plan_hash(),
         )
         n = self._names(plan.app)
         base = {

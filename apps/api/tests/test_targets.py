@@ -30,6 +30,15 @@ class NoCredentials:
         raise AssertionError("the fakes replace credentials")
 
 
+_db: dict[str, SessionFactory] = {}
+
+
+@pytest.fixture(autouse=True)
+def _test_db(session_factory: SessionFactory) -> None:
+    """Targets spend approved actions in the test database."""
+    _db["sf"] = session_factory
+
+
 async def no_sleep(_seconds: float) -> None:
     return None
 
@@ -60,6 +69,7 @@ def k8s(
         cluster="kind-groundcrew",
         api=api,
         sleep=no_sleep,
+        session_factory=_db["sf"],
         **kw,
     )
     return target, api
@@ -73,6 +83,7 @@ def ecs(events: list[str], aws: FakeAws | None = None, **kw: Any) -> tuple[EcsTa
         CONNECTION,
         session=cast(Any, aws),
         sleep=no_sleep,
+        session_factory=_db["sf"],
         **kw,
     )
     return target, aws
@@ -438,6 +449,7 @@ async def test_ecs_security_group_source_is_configurable() -> None:
         CONNECTION,
         session=cast(Any, aws),
         sleep=no_sleep,
+        session_factory=_db["sf"],
     )
     plan = await target.plan(spec(uuid.uuid4(), CONNECTION))
     assert plan.steps[3].detail == "tcp/8000 from 198.51.100.7/32"

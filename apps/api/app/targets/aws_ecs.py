@@ -42,6 +42,7 @@ from app.connectors.deploy_infra import (
     task_execution_role_arn,
     task_family,
 )
+from app.db.session import SessionFactory, get_session_factory
 from app.discovery.types import ConnectorResult, DiscoveredResource
 from app.pipeline.events import PreflightCheck, TargetKind, VerifyCheck
 from app.policy.actions import (
@@ -87,6 +88,7 @@ class EcsTarget:
         session: boto3.Session | None = None,
         http: httpx.AsyncClient | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        session_factory: SessionFactory | None = None,
     ) -> None:
         self.settings = settings
         self.credentials = credentials
@@ -94,9 +96,17 @@ class EcsTarget:
         self._session = session
         self._http = http
         self._sleep = sleep
+        self._session_factory = session_factory
         self._account: str | None = None
 
     # --- plumbing -------------------------------------------------------------------------
+
+    @property
+    def session_factory(self) -> SessionFactory:
+        """Where approved actions are spent (approvals.used_at)."""
+        if self._session_factory is None:
+            self._session_factory = get_session_factory()
+        return self._session_factory
 
     @property
     def session(self) -> boto3.Session:
@@ -435,8 +445,12 @@ class EcsTarget:
     async def apply(
         self, plan: TargetPlan, spec: DeploySpec, token: ApprovedAction, sandbox: Sandbox
     ) -> Deployment:
-        consume_approved_action(
-            token, run_id=plan.run_id, action=TARGET_APPLY, plan_hash=plan.plan_hash()
+        await consume_approved_action(
+            self.session_factory,
+            token,
+            run_id=plan.run_id,
+            action=TARGET_APPLY,
+            plan_hash=plan.plan_hash(),
         )
         check_spec_matches(plan, spec)
         n = self._names(plan.app)
@@ -813,8 +827,12 @@ class EcsTarget:
         )
 
     async def rollback(self, plan: TargetPlan, token: ApprovedAction) -> Deployment:
-        consume_approved_action(
-            token, run_id=plan.run_id, action=TARGET_ROLLBACK, plan_hash=plan.plan_hash()
+        await consume_approved_action(
+            self.session_factory,
+            token,
+            run_id=plan.run_id,
+            action=TARGET_ROLLBACK,
+            plan_hash=plan.plan_hash(),
         )
         n = self._names(plan.app)
         to = plan.rollback_to_revision

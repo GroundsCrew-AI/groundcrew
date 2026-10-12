@@ -104,7 +104,11 @@ async def test_kind_target_end_to_end(
     )
     sandbox = DockerSandbox(settings)
     target = K8sTarget(
-        settings, cast(CredentialsProvider, HostKubeconfig()), CONNECTION, cluster="kind-groundcrew"
+        settings,
+        cast(CredentialsProvider, HostKubeconfig()),
+        CONNECTION,
+        cluster="kind-groundcrew",
+        session_factory=session_factory,
     )
     report: list[str] = []
     first: Deployment | None = None

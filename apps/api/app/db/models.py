@@ -341,6 +341,9 @@ class Approval(TimestampMixin, Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set once the approved action ran, so an approval can never be used twice.
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set atomically when an ApprovedAction for this approval is consumed by a deploy target
+    # (UPDATE ... WHERE used_at IS NULL), so a token works once across workers and restarts.
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Event(TimestampMixin, Base):

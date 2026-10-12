@@ -2,31 +2,36 @@
 
 Tools go through `execute_tool`, which checks the approval itself. Targets are called by the
 pipeline (Deployer, M5) and by Medic (Phase 5), not as tools, so they take an `ApprovedAction`
-instead: a single-use token that only `issue_approved_action` creates, from an approved,
-unused approval for that run, action, and plan hash. Issuing marks the approval executed
-(committed before anything runs), so an approval yields at most one token; a target consumes
-the token before its first write, so a token works at most once.
+instead: a token that only `issue_approved_action` creates, from an approved, unused approval
+for that run, action, and plan hash.
 
-The token is sealed with a key that lives only in this process, so code cannot build one by
-hand: an `ApprovedAction(...)` with a made-up seal is refused. Workers issue and consume in
-the same process, right before the call.
+- **Signed with a persistent key** (APPROVAL_TOKEN_KEY; in APP_ENV=dev derived from SECRETS_KEY
+  when unset), so a token issued by one worker is valid in another and after a restart, and
+  code cannot make one by hand. `encode()` / `decode()` carry it through a job payload.
+- **Single use in the database**: a target consumes the token before its first write with
+  `UPDATE approvals SET used_at = now() WHERE id = ... AND used_at IS NULL`. Only one worker
+  can win that update, so a token works exactly once however many workers hold it.
 
 Approvals for targets use these tool names, and their `arguments` carry `plan_hash`:
 - `target_apply`: policy `write`, the deploy plan.
 - `target_rollback`: policy `emergency`, a rollback plan (also deleting a first deploy).
 """
 
+import base64
 import hashlib
 import hmac
-import secrets
+import json
 import uuid
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final, Literal
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings, get_settings
 from app.db.models import Approval, ApprovalStatus, ToolPolicy
+from app.db.session import SessionFactory
 from app.policy.engine import PolicyViolationError
 
 TARGET_APPLY: Final = "target_apply"
@@ -40,25 +45,58 @@ _POLICY: dict[str, ToolPolicy] = {
     TARGET_ROLLBACK: ToolPolicy.emergency,
 }
 
-_KEY = secrets.token_bytes(32)
-# Approval ids whose token was consumed in this process (a token works once).
-_consumed: set[uuid.UUID] = set()
+
+class ApprovalKeyError(PolicyViolationError):
+    """No key to sign or check approved actions with (APPROVAL_TOKEN_KEY)."""
 
 
-def _seal(approval_id: uuid.UUID, run_id: uuid.UUID, action: str, plan_hash: str) -> str:
-    message = f"{approval_id}|{run_id}|{action}|{plan_hash}".encode()
-    return hmac.new(_KEY, message, hashlib.sha256).hexdigest()
+def _key(settings: Settings) -> bytes:
+    if settings.approval_token_key is not None and settings.approval_token_key.get_secret_value():
+        return settings.approval_token_key.get_secret_value().encode()
+    if settings.app_env == "dev" and settings.secrets_key is not None:
+        # Dev only: a key of its own, derived so it never equals SECRETS_KEY itself.
+        secret = settings.secrets_key.get_secret_value().encode()
+        return hmac.new(secret, b"groundcrew approval tokens", hashlib.sha256).digest()
+    raise ApprovalKeyError(
+        "APPROVAL_TOKEN_KEY is not set, so approved deploy actions cannot be signed or checked "
+        "(required outside APP_ENV=dev; see .env.example)."
+    )
 
 
-@dataclass(frozen=True)
-class ApprovedAction:
-    """Permission to run one approved plan once. Pass it to the target; never store it."""
+def _seal(
+    settings: Settings,
+    approval_id: uuid.UUID,
+    run_id: uuid.UUID,
+    action: str,
+    plan_hash: str,
+    issued_at: datetime,
+) -> str:
+    message = f"{approval_id}|{run_id}|{action}|{plan_hash}|{issued_at.isoformat()}".encode()
+    return hmac.new(_key(settings), message, hashlib.sha256).hexdigest()
+
+
+class ApprovedAction(BaseModel):
+    """Permission to run one approved plan once. Pass it to the target, or carry it to another
+    worker with `encode()`; it is spent the first time a target consumes it."""
+
+    model_config = ConfigDict(frozen=True)
 
     approval_id: uuid.UUID
     run_id: uuid.UUID
     action: TargetAction
     plan_hash: str
-    seal: str = field(repr=False)
+    issued_at: datetime
+    seal: str = Field(repr=False)
+
+    def encode(self) -> str:
+        return base64.urlsafe_b64encode(self.model_dump_json().encode()).decode()
+
+    @classmethod
+    def decode(cls, text: str) -> "ApprovedAction":
+        try:
+            return cls.model_validate_json(base64.urlsafe_b64decode(text.encode()))
+        except (ValueError, ValidationError, json.JSONDecodeError):
+            raise PolicyViolationError("Not an approved action token.") from None
 
 
 async def issue_approved_action(
@@ -68,47 +106,57 @@ async def issue_approved_action(
     run_id: uuid.UUID,
     action: TargetAction,
     plan_hash: str,
+    settings: Settings | None = None,
 ) -> ApprovedAction:
-    """Turns an approved, unused approval into a token, and marks the approval used.
-
-    Raises PolicyViolationError when the approval is not approved, was already used, or is for
-    a different run, action, policy, or plan."""
-    locked = await session.get(Approval, approval.id, with_for_update=True, populate_existing=True)
-    if locked is None:
+    """A signed token for an approved, unused approval. Raises PolicyViolationError when the
+    approval is not approved, was already used, or is for a different run, action, policy, or
+    plan. Issuing writes nothing: single use is enforced when the token is consumed."""
+    settings = settings or get_settings()
+    stored = await session.get(Approval, approval.id, populate_existing=True)
+    if stored is None:
         raise PolicyViolationError("Approval row no longer exists.")
-    if locked.status != ApprovalStatus.approved:
-        raise PolicyViolationError(f"Approval {locked.id} is {locked.status}, not approved.")
-    if locked.executed_at is not None:
-        raise PolicyViolationError(f"Approval {locked.id} was already used.")
-    if locked.run_id != run_id:
-        raise PolicyViolationError(f"Approval {locked.id} is for a different run.")
-    if locked.tool_name != action or locked.policy != _POLICY[action]:
+    if stored.status != ApprovalStatus.approved:
+        raise PolicyViolationError(f"Approval {stored.id} is {stored.status}, not approved.")
+    if stored.used_at is not None or stored.executed_at is not None:
+        raise PolicyViolationError(f"Approval {stored.id} was already used.")
+    if stored.run_id != run_id:
+        raise PolicyViolationError(f"Approval {stored.id} is for a different run.")
+    if stored.tool_name != action or stored.policy != _POLICY[action]:
         raise PolicyViolationError(
-            f"Approval {locked.id} is a {locked.policy} {locked.tool_name}, not {action}."
+            f"Approval {stored.id} is a {stored.policy} {stored.tool_name}, not {action}."
         )
-    arguments = locked.arguments if isinstance(locked.arguments, dict) else {}
+    arguments = stored.arguments if isinstance(stored.arguments, dict) else {}
     if arguments.get("plan_hash") != plan_hash:
-        raise PolicyViolationError(f"Approval {locked.id} was for a different plan.")
-    # Committed before anything runs: an approval is spent even if the action then crashes.
-    locked.executed_at = datetime.now(UTC)
-    await session.commit()
+        raise PolicyViolationError(f"Approval {stored.id} was for a different plan.")
+    issued_at = datetime.now(UTC)
     return ApprovedAction(
-        approval_id=locked.id,
+        approval_id=stored.id,
         run_id=run_id,
         action=action,
         plan_hash=plan_hash,
-        seal=_seal(locked.id, run_id, action, plan_hash),
+        issued_at=issued_at,
+        seal=_seal(settings, stored.id, run_id, action, plan_hash, issued_at),
     )
 
 
-def consume_approved_action(
-    token: object, *, run_id: uuid.UUID, action: TargetAction, plan_hash: str
+async def consume_approved_action(
+    session_factory: SessionFactory,
+    token: object,
+    *,
+    run_id: uuid.UUID,
+    action: TargetAction,
+    plan_hash: str,
+    settings: Settings | None = None,
 ) -> None:
     """Called by a target before its first write. Raises PolicyViolationError unless `token`
-    was issued here for exactly this run, action, and plan, and was not consumed before."""
+    was issued for exactly this run, action, and plan, its approval is still approved, and no
+    one used it before (checked and marked in one UPDATE, committed before any write)."""
+    settings = settings or get_settings()
     if not isinstance(token, ApprovedAction):
         raise PolicyViolationError(f"{action} needs an approved action from the policy engine.")
-    expected = _seal(token.approval_id, token.run_id, token.action, token.plan_hash)
+    expected = _seal(
+        settings, token.approval_id, token.run_id, token.action, token.plan_hash, token.issued_at
+    )
     if not hmac.compare_digest(token.seal, expected):
         raise PolicyViolationError(
             f"{action}: this approved action was not issued by the policy engine."
@@ -119,6 +167,22 @@ def consume_approved_action(
         raise PolicyViolationError(f"{action}: the approved action is for a different run.")
     if not hmac.compare_digest(token.plan_hash, plan_hash):
         raise PolicyViolationError(f"{action}: the approved action is for a different plan.")
-    if token.approval_id in _consumed:
-        raise PolicyViolationError(f"{action}: approval {token.approval_id} was already used.")
-    _consumed.add(token.approval_id)
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        used = await session.scalar(
+            update(Approval)
+            .where(
+                Approval.id == token.approval_id,
+                Approval.run_id == run_id,
+                Approval.tool_name == action,
+                Approval.status == ApprovalStatus.approved,
+                Approval.used_at.is_(None),
+            )
+            .values(used_at=now, executed_at=now)
+            .returning(Approval.id)
+        )
+        await session.commit()
+    if used is None:
+        raise PolicyViolationError(
+            f"{action}: approval {token.approval_id} was already used or is no longer approved."
+        )
