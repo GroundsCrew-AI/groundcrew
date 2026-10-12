@@ -169,7 +169,8 @@ class DeployPlan(BaseModel):
 
 
 class VerifyCheck(BaseModel):
-    name: Literal["rollout", "health", "root", "other"]
+    # errors and metric: for Phase 5 (Medic's recovery checks read logs and metrics).
+    name: Literal["rollout", "health", "root", "errors", "metric", "other"]
     ok: bool
     detail: str
     url: str | None = None

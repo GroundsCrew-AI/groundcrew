@@ -102,3 +102,57 @@ jobs:
       - run: npm test
       # No auth secrets in CI: the build must not need them.
       - run: npm run build
+
+  e2e:
+    name: E2E (Playwright, fake mode)
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: groundcrew
+          POSTGRES_PASSWORD: groundcrew
+          POSTGRES_DB: groundcrew
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U groundcrew -d groundcrew"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    # Fake mode (APP_ENV=dev, PIPELINE_FAKE=1): no Token Factory, no Docker builds, no cluster.
+    # The test sign-in exists only with APP_ENV=dev and E2E_TEST_AUTH=1 (scripts/e2e.sh sets both).
+    env:
+      E2E_DB_URL: postgresql+asyncpg://groundcrew:groundcrew@localhost:5432/groundcrew_e2e
+      NEXT_TELEMETRY_DISABLED: "1"
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+      - run: uv sync --frozen
+        working-directory: apps/api
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+        working-directory: apps/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: scripts/e2e.sh
+      - name: Logs and report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            .e2e/
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 7
+

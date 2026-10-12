@@ -6736,6 +6736,8 @@
               "rollout",
               "health",
               "root",
+              "errors",
+              "metric",
               "other"
             ],
             "title": "Name",

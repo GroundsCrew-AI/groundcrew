@@ -589,3 +589,42 @@ def test_fixtures_come_from_the_setting_or_the_checkout(tmp_path: Path) -> None:
 
     assert fixtures_dir(_settings(deploy_fixtures_dir=str(tmp_path))) == tmp_path
     assert (fixtures_dir(_settings()) / "py-build-trap" / "repo").is_dir()
+
+
+async def test_an_unexpected_error_fails_the_running_stage(
+    client: httpx.AsyncClient, alice: Member, session_factory: SessionFactory
+) -> None:
+    from app.targets import TargetError
+
+    stack = Stack(session_factory, alice)
+
+    real_target_for = stack.deps.target_for
+
+    def unreachable(*args: Any) -> Any:
+        target = real_target_for(*args)
+
+        async def plan(_spec: Any) -> Any:
+            raise TargetError("Cannot resolve the cluster address https://x:6443.")
+
+        target.plan = plan  # type: ignore[method-assign,assignment]
+        return target
+
+    stack.deps.target_for = unreachable
+    k8s = await _connection(session_factory, alice.workspace_id, "k8s", "kind", {"cluster": "c"})
+    deploy_id = await _start(client, alice, k8s, [])
+    await stack.drain()
+    run = await _run(session_factory, deploy_id)
+    assert run.status == RunStatus.failed and "Cannot resolve" in (run.error or "")
+    detail = (await client.get(f"/deploys/{deploy_id}", headers=alice.headers)).json()
+    stages = {s["stage"]: s["status"] for s in detail["stages"]}
+    assert stages["build"] == "succeeded" and stages["plan"] == "failed"
+    assert "running" not in stages.values()
+
+
+def test_an_unresolvable_cluster_says_how_to_fix_it() -> None:
+    from app.targets.k8s import unreachable
+
+    message = unreachable(
+        "https://groundcrew-control-plane:6443", OSError("NameResolutionError: x")
+    )
+    assert "make dev KIND=1" in message

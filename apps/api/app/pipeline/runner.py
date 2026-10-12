@@ -195,6 +195,11 @@ class PipelineDeps:
 
 def default_deps(session_factory: SessionFactory, settings: Settings | None = None) -> PipelineDeps:
     settings = settings or get_settings()
+    if settings.pipeline_fake and settings.app_env == "dev":
+        from app.pipeline.fake import fake_deps
+
+        deps: PipelineDeps = fake_deps(session_factory, settings)
+        return deps
     return PipelineDeps(
         settings=settings,
         llm=TokenFactory(settings),
@@ -329,6 +334,7 @@ class PipelineRunner:
                 await session.refresh(run)
                 error = summarize(f"{type(exc).__name__}: {exc}", 1000)
                 await record_step(session, run, kind="error", output_summary=error)
+                await job.fail_open_stage(error or "error")
                 with contextlib.suppress(Finished):
                     await job.finish(RunStatus.failed, StopReason.error, error=error)
 
@@ -392,6 +398,22 @@ class _Job:
                 summary=summary,
             ),
         )
+
+    async def fail_open_stage(self, error: str) -> None:
+        """An unexpected error: the stage that was running ends as failed, so the strip and
+        the timeline do not show it running forever."""
+        stage = self.state.get("stage")
+        entry = self.stages().get(stage or "", {})
+        if not stage or entry.get("status") != "running":
+            return
+        agent: StageAgent = (
+            "scout"
+            if stage == "scout"
+            else ("builder" if stage in ("build", "smoke") else "deployer")
+        )
+        started = time.monotonic() - _seconds_since(entry.get("started_at"))
+        with contextlib.suppress(Exception):
+            await self.stage_end(stage, agent, started, "failed", error[:200])
 
     def recorder(self, agent: str) -> _Recorder:
         if agent not in self.recorders:
@@ -1043,21 +1065,6 @@ async def pipeline_job(session_factory: SessionFactory, payload: dict[str, Any])
     await PipelineRunner(session_factory).run(uuid.UUID(payload["run_id"]))
 
 
-async def resume_run_job(session_factory: SessionFactory, payload: dict[str, Any]) -> None:
-    """Worker handler for "resume_run": deploy runs go to the pipeline, other runs to the
-    agent loop (decide_approval enqueues the same job kind for both)."""
-    from app.agents.base import run_agent_job
-
-    async with session_factory() as session:
-        agent = await session.scalar(
-            select(Run.agent).where(Run.id == uuid.UUID(payload["run_id"]))
-        )
-    if agent == "deploy":
-        await pipeline_job(session_factory, payload)
-    else:
-        await run_agent_job(session_factory, payload)
-
-
 async def count_steps(session: AsyncSession, run_id: uuid.UUID, kind: str) -> int:
     from app.db.models import RunStep
 
@@ -1079,6 +1086,5 @@ __all__ = [
     "open_env",
     "pipeline_job",
     "purge_env",
-    "resume_run_job",
     "seal_env",
 ]

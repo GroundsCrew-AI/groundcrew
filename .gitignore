@@ -50,3 +50,8 @@ probe_followup.json
 
 # make smoke-ecs reports
 .smoke/
+
+# Playwright (scripts/e2e.sh)
+.e2e/
+apps/web/test-results/
+apps/web/playwright-report/

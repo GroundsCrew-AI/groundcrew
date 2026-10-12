@@ -363,7 +363,8 @@ class EcsTarget:
             exists = await self._secret_arn(secret_name(spec.app, name)) is not None
             steps.append(
                 ApplyStep(
-                    kind="secretsmanager:Secret",
+                    # Not "secretsmanager:Secret": display redaction reads "x:Secret" as a value.
+                    kind="secretsmanager/Secret",
                     name=secret_name(spec.app, name),
                     action="update" if exists else "create",
                 )

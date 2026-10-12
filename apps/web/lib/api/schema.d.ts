@@ -3109,7 +3109,7 @@ export interface components {
              * Name
              * @enum {string}
              */
-            name: "rollout" | "health" | "root" | "other";
+            name: "rollout" | "health" | "root" | "errors" | "metric" | "other";
             /** Ok */
             ok: boolean;
             /**
