@@ -52,17 +52,25 @@ and cost.
 | `ok`, `duration_ms` | |
 | `failing_step`, `error_summary` | On failure: the Dockerfile instruction and a one-line cause |
 | `log_tail` | Last 8,000 characters of the build log, redacted |
-| `image_ref` | On success: the image in the sandbox (pushed in the `push` stage) |
+| `image_ref` | On success: the image in the sandbox. It is pushed only after approval, as the first step of `apply` |
 | `model_call` | The call that wrote this Dockerfile: `{task, model_tier, model_id, reasoning_mode, escalated, prompt_tokens, completion_tokens, cost_usd, step_seq}`; null for `repo` |
 
 ### `DeployPlan` (on `approval_requested`)
 
-`target`, `target_connection_id`, `app`, `image`, `port`, `health_path`, `replicas`, `cpu`,
-`memory`, `env` (`EnvVarView`: `name`, `secret`, `required`, `provided`, and `value` only for plain
-vars), `resources` (`{kind, name, action, detail}`), `preflight` (`{name, status: pass | warn |
-fail, detail, overridden}`), `allow_missing_env`, `expected_url`, `rendered` (manifests as YAML or
-task definition and service as JSON, secrets as `********`), `rendered_format`, and
-`rollback_to_revision` when this is a rollback.
+`target`, `target_connection_id`, `app`, `image` (where apply pushes it), `source_image` (the
+sandbox image ID that was built and smoke-tested, which approving pushes; null on a rollback),
+`port`, `health_path`, `replicas`, `cpu`, `memory`, `env` (`EnvVarView`: `name`, `secret`,
+`required`, `provided`, and `value` only for plain vars), `resources` (the apply steps in order,
+`{kind, name, action, detail}`; the first is the image push, `kind: image, action: push`, after
+`ecr:Repository` on ECS), `preflight` (`{name, status: pass | warn | fail, detail, overridden}`;
+`image` reads "Built and smoke-tested (sha256:...)"), `allow_missing_env`, `expected_url`,
+`rendered` (manifests as YAML or task definition and service as JSON, secrets as `********`),
+`rendered_format`, and `rollback_to_revision` when this is a rollback.
+
+Nothing is pushed before approval, so there is no `push` stage. When the env changes at the
+approval card (`POST /deploys/{id}/env`, M6), the pending approval is decided as `rejected`,
+`approval` finishes `skipped`, `preflight` runs again, and a new `approval_requested` follows
+with the new plan and the same `source_image`.
 
 ### `RunFinished`
 
@@ -81,10 +89,11 @@ event: build_attempt     data.attempt=1 ok=false error_summary="pg_config execut
 event: step              kind=llm  fix_build on Super
 event: build_attempt     data.attempt=2 ok=true dockerfile_source=fixed
 event: stage_finished    data.stage=build
-...                      smoke, push, plan, preflight
+...                      smoke, plan, preflight (image built and smoke-tested, not pushed)
 event: approval_requested data.type=deploy_plan
 event: status            status=waiting_approval
 event: approval_decided
+event: stage_started     data.stage=apply   (push the image first, then the manifests)
 event: stage_finished    data.stage=apply
 event: verify_result     data.ok=true
 event: live_url          data.url=http://legacy-flask-app.localhost

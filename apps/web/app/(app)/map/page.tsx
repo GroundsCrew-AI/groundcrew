@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { RunDiscoveryButton } from "@/components/connections/run-discovery-button";
 import { MapCanvas } from "@/components/map/map-canvas";
@@ -23,6 +23,11 @@ export default function MapPage() {
   const [includeStale, setIncludeStale] = useState(false);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selected, setSelected] = useState<string | null>(null);
+  // /map?resource=<id> (from "View on Map" on a deploy) opens that resource's panel.
+  useEffect(() => {
+    const resource = new URLSearchParams(window.location.search).get("resource");
+    if (resource) setSelected(resource);
+  }, []);
   const graph = useGraph(workspace?.id, includeStale);
   const data = graph.data;
   const providers = useMemo(() => [...new Set((data?.nodes ?? []).map((n) => n.provider))].sort(), [data]);

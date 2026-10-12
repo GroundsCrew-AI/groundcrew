@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { api, unwrap } from "@/lib/api/client";
 import type { ApprovalStepEvent, RunStatusEvent, Step } from "@/lib/api/client";
+import { DEPLOY_EVENTS } from "@/lib/deploys";
 import type { TimelineAction } from "@/lib/timeline";
 
 export type StreamState = "idle" | "connecting" | "live" | "reconnecting" | "closed";
@@ -78,6 +79,13 @@ export function useRunStream(
         track(event);
         dispatch({ type: "step", step: JSON.parse(event.data) as Step });
       });
+      // Deploy events are steps with typed `data` (docs/events.md), sent under their own names.
+      for (const type of DEPLOY_EVENTS) {
+        source.addEventListener(type, (event) => {
+          track(event);
+          dispatch({ type: "step", step: JSON.parse(event.data) as Step });
+        });
+      }
       for (const type of ["approval_requested", "approval_decided"] as const) {
         source.addEventListener(type, (event) => {
           track(event);

@@ -21,7 +21,9 @@ from app.pipeline.events import (
     DEPLOY_EVENT_NAMES,
     BuildAttempt,
     DeployPlan,
+    DeployStage,
     EnvVarView,
+    PlannedResource,
     RunFinished,
     StageStarted,
 )
@@ -233,13 +235,19 @@ def test_plan_shows_secrets_by_name_only() -> None:
         target_connection_id=TARGET,
         app="legacy-flask-app",
         image="kind-registry:5000/legacy-flask-app:abc",
+        source_image="sha256:" + "3f2a" * 16,
         port=8000,
         health_path="/health",
         replicas=1,
         cpu="250m",
         memory="512Mi",
         env=[EnvVarView(name="DATABASE_URL", secret=True, required=True, provided=False)],
-        resources=[],
+        resources=[
+            PlannedResource(
+                kind="image", name="kind-registry:5000/legacy-flask-app:abc", action="push"
+            ),
+            PlannedResource(kind="Deployment", name="legacy-flask-app", action="create"),
+        ],
         preflight=[],
         allow_missing_env=True,
         rendered="kind: Secret\n",
@@ -400,3 +408,10 @@ async def test_no_progress_and_state_are_stored(
         session.add(fresh)
         await session.commit()
         assert fresh.state == {}
+
+
+def test_nothing_is_pushed_before_approval() -> None:
+    # The image push is the first step of apply, not a stage before the approval.
+    assert "push" not in get_args(DeployStage)
+    stages = list(get_args(DeployStage))
+    assert stages.index("smoke") < stages.index("approval") < stages.index("apply")

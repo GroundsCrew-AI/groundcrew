@@ -490,15 +490,17 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
           `aws_deploy_session()`, temp `DOCKER_CONFIG`, `--password-stdin`); `NebiusSandbox` stub
           (`TODO(nebius-sandbox)`). Live: `legacy-flask-app` naive build fails on `pg_config`, fixed build
           passes smoke and pushes to kind
-    - [x] M3 Targets (`app/targets/`): `K8sTarget` and `EcsTarget` behind one protocol (discover, plan,
-          preflight, apply, verify, logs, rollback_plan, rollback). Nothing leaves the sandbox before
-          approval: the push is the first apply step (ECR repository first on ECS). `apply()` and
-          `rollback()` need a single-use `ApprovedAction` bound to run + plan hash
-          (`app/policy/actions.py`; rollback, including deleting a first deploy, needs an emergency
-          approval). k8s: gc-<app> -> RoleBinding -> Secret -> Deployment -> Service -> Ingress;
-          ECS: deploy role only, deploy_infra names and tags, task definitions never deregistered,
-          SG source `GC_INGRESS_CIDR`. Live on kind (deploy, redeploy, rollback, delete); ECS dry run
-          only (`make plan-target`)
+    - [x] M7 Deploy page (`apps/web`): source picker (GitHub connection, repo, ref), target picker (kind / AWS
+          deploy tier; observe tier disabled with "Turn on deploys"), env rows with a secret toggle,
+          allow_missing_env; live view at `/deploy/[id]` on the shared run timeline (stage strip, build
+          attempts with diff / error / model badge / tokens / cost, plan approval card with secrets masked and
+          approve blocked on a failed preflight, verify, live URL with "View on Map", rollback card); deploys
+          list. Runs on the M1 types; while `/deploys` answers 501, `lib/deploys-fake.ts` (deleted in M6)
+          simulates the run in the browser behind a "Preview" banner
+          Review fixes (2026-10-12): no `push` stage, the image push is apply's first step (plan
+          `source_image`, resource action `push`); missing env fixed on the approval card (Set value /
+          Continue without it re-runs only preflight, same image; `POST /deploys/{id}/env` lands in M6);
+          disabled Approve explains the failing check; full repo name; preview on a simulated clock
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission
@@ -506,7 +508,7 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
 
 **Current phase:** 4 (Build + deploy agents, in progress, Rizwan); Phase 5 (Medic, Ahmed) in parallel;
 Phase 3 complete 2026-10-09
-**Last updated:** 2026-10-11
+**Last updated:** 2026-10-12
 **Known issues / blockers:**
 - Phase 0 open items: Tavily API key; budget alerts (AWS $20 / $50, Azure $20).
 - Any member of a workspace can approve. Roles (who may approve write vs emergency actions) come with
@@ -541,6 +543,8 @@ Phase 3 complete 2026-10-09
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-12 | Before approval a deploy only builds and smoke-tests in the sandbox. Pushing the image (and creating the ECR repository) is the first step of apply, on kind and ECS alike; there is no `push` stage | Approval comes before anything leaves the sandbox; one rule for both targets (owner's M7 review) |
+| 2026-10-12 | A missing required env var can be fixed on the approval card: set the value or continue without it. Only preflight re-runs and the plan is re-rendered with the same built image | No rebuild for a config fix; the approval stays on the exact plan |
 | 2026-10-09 | A Vercel `calls` edge is high only when a plain env value matches the target's IP or endpoint; an encrypted value gives medium even when a workflow is seen writing the task IP into it | We never read the value, so we cannot confirm it still matches the current task |
 | 2026-10-09 | Scout's summary is checked against the graph by rules (`check_summary`) and unsupported bullets are dropped and recorded as run steps; Scout's prompt is unchanged (tweak proposed to Ahmed) | Nano invented links on the live run (app storing state in the tfstate bucket, shared images, deploy.yml provisioning infrastructure); `agents/` is owned by Phase 4 |
 | 2026-10-09 | Tooling (state and lock stores, the template bucket, `groundcrew-*` roles, Resource Explorer) is tagged `role=tooling` in the digest and folded into a Tooling group on the Map | It is real infrastructure, but the app does not use it; showing it as app resources led to false summary claims |

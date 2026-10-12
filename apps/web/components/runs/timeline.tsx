@@ -6,7 +6,11 @@ import { type ReactNode, useState } from "react";
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { Approval, Decision, RunStatus, Step } from "@/lib/api/client";
+import type { EnvFix } from "@/lib/deploys";
 import { agentName, formatCost, formatDuration, formatTimestamp, formatTokens } from "@/lib/format";
+
+import { DeployPlanCard } from "@/components/deploy/plan-card";
+import { DeployStep, deployStepColor, hiddenDeploySteps, replacedPlans } from "@/components/deploy/deploy-step";
 
 import { ApprovalCard, DecidedBy } from "./approval-card";
 import { PolicyTag, TierBadge } from "./badges";
@@ -18,6 +22,10 @@ const TIER_COLOR: Record<string, string> = {
 };
 
 function nodeColor(step: Step, approval: Approval | undefined): string {
+  if (step.kind !== "approval_requested" && step.kind !== "approval_decided") {
+    const deploy = deployStepColor(step);
+    if (deploy) return deploy;
+  }
   switch (step.kind) {
     case "llm":
       return TIER_COLOR[step.model_tier ?? ""] ?? "var(--subtle)";
@@ -151,7 +159,13 @@ export function Timeline({
   deciding,
   animateAfter = 0,
   runAgent,
+  onFixEnv,
+  fixing = null,
 }: {
+  /** Deploy runs: set missing env vars or continue without them from the plan card. */
+  onFixEnv?: (approval: Approval, fix: EnvFix) => void;
+  /** The approval whose env fix is being sent. */
+  fixing?: string | null;
   /** The run's own agent. Steps by another agent show its name. */
   runAgent?: string;
   /** Steps with a higher seq arrived live and animate in; older ones render still. */
@@ -170,8 +184,13 @@ export function Timeline({
   const carded = new Set(
     steps.filter((s) => s.kind === "approval_requested" && s.approval_id).map((s) => s.approval_id),
   );
+  // Deploy runs: a stage's start row is dropped once the stage has finished.
+  const hidden = hiddenDeploySteps(steps);
+  const replaced = replacedPlans(steps);
   const visible = steps.filter(
-    (s) => !(s.kind === "approval_decided" && s.approval_id && carded.has(s.approval_id)),
+    (s) =>
+      !hidden.has(s.seq) &&
+      !(s.kind === "approval_decided" && s.approval_id && carded.has(s.approval_id)),
   );
 
   return (
@@ -185,9 +204,23 @@ export function Timeline({
             className={cn("flex gap-3 pb-5", step.seq > animateAfter && "animate-step-in")}
             data-seq={step.seq}
           >
-            <Rail color={nodeColor(step, approval)} last={last} />
+            <Rail
+              color={approval && replaced.has(approval.id) ? "var(--subtle)" : nodeColor(step, approval)}
+              last={last}
+            />
             <div className="min-w-0 flex-1">
-              {step.kind === "approval_requested" && approval ? (
+              {step.kind === "approval_requested" && approval && step.data?.type === "deploy_plan" ? (
+                <DeployPlanCard
+                  plan={step.data}
+                  approval={approval}
+                  runEnded={ended}
+                  replaced={replaced.has(approval.id)}
+                  onDecide={(decision) => onDecide(approval, decision)}
+                  deciding={deciding?.id === approval.id ? deciding.decision : null}
+                  onFixEnv={onFixEnv && ((fix) => onFixEnv(approval, fix))}
+                  fixing={fixing === approval.id}
+                />
+              ) : step.kind === "approval_requested" && approval ? (
                 <ApprovalCard
                   approval={approval}
                   runEnded={ended}
@@ -198,6 +231,8 @@ export function Timeline({
                 <div className="pt-px">
                   <DecidedBy approval={approval} />
                 </div>
+              ) : step.data ? (
+                <DeployStep step={step} />
               ) : (
                 <>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">

@@ -370,7 +370,8 @@ Builder builds, smoke-tests, and pushes only through the `Sandbox` protocol
 - **push**: `kind_target(settings, repo, tag)` (no login) or `ecr_target(session, repo, tag)`
   with a session from `aws_deploy_session()`. An ECR login goes into a temporary `DOCKER_CONFIG`
   through `--password-stdin`, the same way `scripts/smoke_ecs_deploy.py` does it, and the
-  password is scrubbed from any error. The ECR repository is created by the ECS target (M3).
+  password is scrubbed from any error. Push runs only after approval, as the first step of
+  apply; the ECR repository is created by the ECS target (M3) right before it.
 - **cleanup(run_id)**: removes the run's labelled containers and images; the build cache stays.
 
 Live checks (2026-10-11, dind 29.7.2 from the worker): `legacy-flask-app` with a naive

@@ -22,12 +22,13 @@ from app.db.models import RunStatus, StopReason
 LOG_TAIL_CHARS = 8000
 MAX_BUILD_ATTEMPTS = 5
 
-# Pipeline stages in order. Builder owns build, smoke, and push; Deployer the rest.
+# Pipeline stages in order. Builder owns build and smoke; Deployer the rest. Nothing leaves the
+# sandbox before approval: pushing the image (and creating the ECR repository) is the first
+# step of apply.
 DeployStage = Literal[
     "scout",
     "build",
     "smoke",
-    "push",
     "plan",
     "preflight",
     "approval",
@@ -100,7 +101,8 @@ class BuildAttempt(BaseModel):
     error_summary: str | None = None
     # Last LOG_TAIL_CHARS of the build log, redacted.
     log_tail: str | None = None
-    # On success: the local image reference in the sandbox (pushed later in the push stage).
+    # On success: the local image reference in the sandbox. It is pushed only after approval,
+    # as the first step of apply.
     image_ref: str | None = None
     model_call: AttemptModelCall | None = None
 
@@ -117,9 +119,13 @@ class EnvVarView(BaseModel):
 
 
 class PlannedResource(BaseModel):
-    kind: str = Field(examples=["Deployment", "ecs:Service"])
+    """One step of apply. DeployPlan.resources is in apply order: the image push (and the ECR
+    repository before it) comes first, because nothing leaves the sandbox before approval."""
+
+    kind: str = Field(examples=["image", "ecr:Repository", "Deployment", "ecs:Service"])
     name: str
-    action: Literal["create", "update", "unchanged", "delete"]
+    # push: the image is pushed from the sandbox to the registry (kind "image").
+    action: Literal["create", "update", "unchanged", "delete", "push"]
     detail: str | None = None
 
 
@@ -138,7 +144,11 @@ class DeployPlan(BaseModel):
     target: TargetKind
     target_connection_id: uuid.UUID
     app: str
+    # Where apply pushes the image (registry/repo:tag) and what the workload runs.
     image: str
+    # The image built and smoke-tested in the sandbox (its sha256 ID). Approving the plan
+    # pushes exactly this image. Null on a rollback (its image is already in the registry).
+    source_image: str | None
     port: int
     health_path: str | None
     replicas: int
