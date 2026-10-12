@@ -9,7 +9,7 @@ Owner: Ahmed. Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-inter
 | M0 Interfaces | `phase5-m0-interfaces` | #22, #23 | Merged 2026-10-12 |
 | M1 Telemetry readers | `phase5-m1-telemetry` | #25 | Merged 2026-10-12 |
 | M2 Detection | `phase5-m2-detection` | #26 | Merged 2026-10-12 |
-| M3 Medic agent | `phase5-m3-medic` | draft | Done, in review |
+| M3 Medic agent | `phase5-m3-medic` | #27 (draft) | Done, in review |
 | M4 Incidents API + wiring | | | |
 | M5 Live verification | | | Needs Rizwan: checkout-demo rebuild, Operate role |
 
