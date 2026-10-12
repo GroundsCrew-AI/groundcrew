@@ -34,6 +34,9 @@ def default_handlers() -> dict[str, Handler]:
     # Imported here so `app.queue` users do not load every agent and tool.
     from app.agents.base import run_agent_job
     from app.discovery.engine import discovery_job
+    from app.incidents.investigate import investigate_incident_job
+    from app.incidents.store import INVESTIGATE_JOB
+    from app.incidents.watcher import WATCH_JOB, watch_incidents_job
     from app.pipeline.resume import resume_run_job
     from app.pipeline.runner import DEPLOY_JOB, pipeline_job
 
@@ -45,6 +48,8 @@ def default_handlers() -> dict[str, Handler]:
         "discover": discovery_job,
         "discover_workspace": discovery_job,
         DEPLOY_JOB: pipeline_job,
+        INVESTIGATE_JOB: investigate_incident_job,
+        WATCH_JOB: watch_incidents_job,
     }
 
 
@@ -208,6 +213,10 @@ async def main() -> None:
         lock_timeout_seconds=settings.job_lock_timeout_seconds,
         shutdown_grace_seconds=settings.worker_shutdown_grace_seconds,
     )
+    if settings.incident_watch_enabled:
+        from app.incidents.watcher import ensure_watch_job
+
+        await ensure_watch_job(worker.session_factory)
     try:
         await worker.run(stop)
     finally:

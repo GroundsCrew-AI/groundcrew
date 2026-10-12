@@ -1,9 +1,9 @@
 """Incidents: Medic investigates, proposes fixes, applies them after approval, and verifies
 (docs/phase5-interfaces.md).
 
-The contract is fixed in M0; the incident store and Medic behind it land in M2 to M4. Until then
-every route authenticates, checks workspace membership (404 for non-members, like everywhere
-else), and answers 501.
+POST /incidents works since M2 (incident row, dedupe, Medic run). The read routes answer 501
+until M4. Every route authenticates and checks workspace membership (404 for non-members, like
+everywhere else).
 """
 
 import uuid
@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.accounts import NotFoundError, member_workspace
 from app.agents.medic.events import IncidentStatus, Severity
+from app.incidents.store import ResourceNotFoundError, open_incident
 from app.routes.deps import CurrentUser, SessionDep
 from app.routes.incident_schemas import (
     IncidentCreate,
@@ -43,10 +44,7 @@ async def _check_member(session: SessionDep, user: CurrentUser, workspace_id: uu
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
-    responses={
-        404: {"description": "Workspace or a resource not found for this user."},
-        **_NOT_IMPLEMENTED,
-    },
+    responses={404: {"description": "Workspace or a resource not found for this user."}},
 )
 async def create_incident(
     body: IncidentCreate, user: CurrentUser, session: SessionDep
@@ -57,7 +55,23 @@ async def create_incident(
     already covers returns that incident (`deduped: true`).
     """
     await _check_member(session, user, body.workspace_id)
-    raise _not_implemented()
+    try:
+        opened = await open_incident(
+            session,
+            workspace_id=body.workspace_id,
+            resource_ids=body.resource_ids,
+            detected_by="user",
+            signals=[],
+            title=body.title,
+            description=body.description,
+            severity=body.severity,
+            since=body.since,
+        )
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from None
+    return IncidentCreated(
+        incident_id=opened.incident.id, run_id=opened.run.id, deduped=opened.deduped
+    )
 
 
 @router.get("", responses=_NOT_IMPLEMENTED)
