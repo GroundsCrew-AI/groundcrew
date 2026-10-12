@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
-import { signInWithGitHub } from "@/app/actions";
+import { signInAsTestUser, signInWithGitHub } from "@/app/actions";
 import { auth } from "@/auth";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
+import { testAuthEnabled } from "@/lib/test-auth";
 
 import { TimelinePreview } from "./timeline-preview";
 
@@ -64,6 +65,13 @@ export default async function SignInPage({
               Continue with GitHub
             </Button>
           </form>
+          {testAuthEnabled() && (
+            <form action={signInAsTestUser} className="mt-3">
+              <Button type="submit" variant="outline" size="lg" className="h-10 w-full text-[14px]">
+                Sign in as the test user (dev)
+              </Button>
+            </form>
+          )}
           <p className="mt-4 text-[12px] text-muted-foreground">
             We read your GitHub name, login, avatar, and email. Nothing else, and nothing is posted to
             your account.
