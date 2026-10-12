@@ -68,7 +68,7 @@ sandbox image ID that was built and smoke-tested, which approving pushes; null o
 `rendered_format`, and `rollback_to_revision` when this is a rollback.
 
 Nothing is pushed before approval, so there is no `push` stage. When the env changes at the
-approval card (`POST /deploys/{id}/env`, M6), the pending approval is decided as `rejected`,
+approval card (`POST /deploys/{id}/env`), the pending approval is decided as `rejected`,
 `approval` finishes `skipped`, `preflight` runs again, and a new `approval_requested` follows
 with the new plan and the same `source_image`.
 

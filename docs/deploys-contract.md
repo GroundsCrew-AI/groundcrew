@@ -5,11 +5,12 @@ one run: Scout reads the repo, Builder writes and fixes a Dockerfile in the sand
 asks for approval, applies, and verifies. This file is the contract between the API, the web app,
 and Medic (Phase 5). The live events are in [events.md](events.md).
 
-Status: final. The routes return **501** until the pipeline lands (Phase 4, Milestone 6); the
-request and response shapes below do not change when they start working.
+Status: live (Phase 4, M6). A deploy is a run with `agent = "deploy"`; its `deploy_id` is the
+run's id.
 
-Code: `apps/api/app/routes/deploy_schemas.py` (requests and responses),
-`apps/api/app/pipeline/events.py` (event payloads), `apps/api/app/pipeline/state.py` (`runs.state`).
+Code: `apps/api/app/routes/deploys.py` and `deploy_schemas.py` (requests and responses),
+`apps/api/app/pipeline/runner.py` (the pipeline), `apps/api/app/pipeline/events.py` (event
+payloads), `apps/api/app/pipeline/state.py` (`runs.state`).
 
 ## Routes
 
@@ -21,6 +22,7 @@ connection the user is not a member of is a 404, like everywhere else.
 | POST | `/deploys` | `DeployCreate` | 202 `DeployCreated` |
 | GET | `/deploys` | `workspace_id`, `limit` (1 to 100, default 25), `cursor` | 200 `DeployPage`, newest first |
 | GET | `/deploys/{deploy_id}` | | 200 `DeployDetail` |
+| POST | `/deploys/{deploy_id}/env` | `DeployEnvUpdate` | 202 `DeployEnvUpdated` (below) |
 
 Follow a deploy live with the run stream: `POST /runs/{run_id}/stream-token`, then
 `GET /runs/{run_id}/events?token=`. Stop it with `POST /runs/{run_id}/stop`. Approve its plan with
@@ -105,13 +107,12 @@ image that approving pushes.
 - **verify** fails: Deployer collects logs and offers a rollback as an emergency approval
   (`rollback_offered`). Rejecting it leaves the failed deployment in place.
 
-## Fixing missing env at approval (lands in M5/M6)
+## Fixing missing env at approval
 
 When preflight fails only because a required env var is missing, the approval card offers
 **Set value** (a masked input) or **Continue without it**. Either one re-runs only `preflight`
 and re-renders the plan with the image already built and smoke-tested: no rebuild, no new
-smoke test. The web app and the preview implement this now; the route below is the planned
-shape and is added with the pipeline.
+smoke test. The approval card calls:
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -170,6 +171,13 @@ so later fields do not break older readers.
 |---|---|
 | 401 | Not signed in |
 | 404 | Workspace, deploy, or connection not found for this user |
-| 409 | Target is an AWS connection without `Tier=deploy`, or the source connection is not GitHub; for `/env`, the approval is not the deploy's pending plan |
+| 409 | Target is an AWS connection without `Tier=deploy` (or not a deploy target), the source connection is not GitHub, a fixture source outside `APP_ENV=dev`; for `/env`, the approval is not the deploy's pending plan |
 | 422 | Body does not match the schema (env values never echoed) |
-| 501 | Before Milestone 6 |
+
+## Dev-only self-approve (live test scripts)
+
+`POST /approvals/{approval_id}/self-approve` with `{"script": "<name>"}` approves a pending
+approval as `script:<name> (dev)` (stored in `approvals.decided_via`, shown in the inbox and
+the timeline). It answers 404 unless `APP_ENV=dev` and `LIVE_SCRIPT_SELF_APPROVE=1`, only for
+members of the run's workspace, and it never rejects. `scripts/live_phase4.sh` uses it; a
+person approving in the UI never needs it.
