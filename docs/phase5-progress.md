@@ -8,8 +8,8 @@ Owner: Ahmed. Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-inter
 |---|---|---|---|
 | M0 Interfaces | `phase5-m0-interfaces` | #22, #23 | Merged 2026-10-12 |
 | M1 Telemetry readers | `phase5-m1-telemetry` | #25 | Merged 2026-10-12 |
-| M2 Detection | `phase5-m2-detection` | #26 (draft) | Done, in review |
-| M3 Medic agent | | | |
+| M2 Detection | `phase5-m2-detection` | #26 | Merged 2026-10-12 |
+| M3 Medic agent | `phase5-m3-medic` | draft | Done, in review |
 | M4 Incidents API + wiring | | | |
 | M5 Live verification | | | Needs Rizwan: checkout-demo rebuild, Operate role |
 
@@ -128,6 +128,53 @@ Open issues:
   balancer; the task IP changes), so ECS container health stands in for it.
 
 Spend: $0.
+
+## M3 (2026-10-12)
+
+Done:
+- `app/agents/medic/agent.py` (`MedicRunner`), jobs in `jobs.py`:
+  - `investigate_incident`: gather (`collect()`, then `evidence.rank`: heuristic score, plus
+    embedding cosine when embeddings are priced; every source keeps its best lines; top 40 with
+    stable ids) -> memory (`memory.similar`: pgvector cosine, or a rules + resources fallback
+    without embeddings) -> research (Tavily, one query from the strongest error line, capped per
+    incident, skipped on a memory hit) -> diagnose (`root_cause`, or `confirm_root_cause` on
+    Super when a past incident is reused; `diagnose.check` keeps only cited claims) -> propose.
+    Each stage records its event and saves `incidents.state` (`state.py`). Hard timeout.
+  - Fixes (`fixes.py`): emergency actions by rule when production is down
+    (secret change: `secret_rollback_version` then `force_redeploy` of every service that uses
+    the secret; commit/deploy: `ecs_rollback_service` of the crashing services); a fix PR from
+    `propose_fix` when a commit started it, guarded by `check_draft`, shown as diffs.
+  - One approval per fix; `resume` (registered for agent "medic" in Rizwan's resume registry)
+    applies approved fixes in order with single-use tokens and waits at the first undecided one
+    (run row locked before the last look, so a decision cannot slip between).
+  - `verify_incident` job: re-checks the signals (rollout, health, errors, metric) every
+    `MEDIC_VERIFY_INTERVAL_SECONDS`; two healthy rounds resolve and remember; the deadline fails
+    with what still fails.
+- `app/tools/github_pr.py`: `GitHubFixPullRequests` (branch, contents API commits, PR; its own
+  write allowlist and body checks) and the reads for PR context; `app/tools/tavily.py`.
+- New route `confirm_root_cause` (Super, low, 4,000 tokens). New settings in `.env.example`.
+- The M2 placeholder handler is gone; `investigate_incident` and `verify_incident` run Medic.
+- Tests: `tests/test_medic.py` (11): each scenario from incident to fixes on FakeLLM; approvals out
+  of order; verify to resolved; the memory hit on a re-run (no research, Super); every fix
+  rejected; verify timeout; Token Factory missing; post-check; PR guardrails; the GitHub writes.
+
+Decisions:
+- Emergency actions come from rules over the cited root cause and the graph, never from model
+  text; the model writes only PR file contents, which a person reviews as a diff.
+- Fixes apply strictly in order (an emergency action before its PR); verification starts once
+  every fix is decided.
+- A memory hit reuses the past diagnosis and fix as context, skips research, and diagnoses on
+  Super: cheaper and faster, still checked against this incident's evidence.
+- Without the Operate role (`app.actions.get_emergency_actions` not there yet) Medic offers no
+  emergency action and says so; nothing pretends to roll back.
+
+Open issues:
+- Stopping a waiting Medic run (POST /runs/{id}/stop) leaves the incident `waiting_approval`;
+  M4 should close the incident when its run is stopped.
+- A fix PR's verify waits for a person to merge it and the pipeline to deploy; the default
+  verify window (20 minutes) may be short for that.
+
+Spend: $0 (FakeLLM only).
 
 ## How to resume
 

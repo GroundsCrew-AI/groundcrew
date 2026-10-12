@@ -136,6 +136,7 @@ Model routing (`app/llm/router.py`) has two dials per task: a tier and a reasoni
 | fix_build | Super | on | 6,000 | |
 | tool_step, investigate_step | Super, or **Lightning** once priced | off | 1,500 | Nano (tool_step); Super when on Lightning |
 | root_cause | Ultra | on | 10,000 | Super |
+| confirm_root_cause (Medic, a close past incident was found) | Super | low | 4,000 | |
 | propose_fix | Ultra | on | 6,000 | Super |
 | classify, summarize, detect / write_config, plan, patch (Phase 1 generic, Echo Ops) | Nano / Super | off | `LLM_MAX_TOKENS` | |
 

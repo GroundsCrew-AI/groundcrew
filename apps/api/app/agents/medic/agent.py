@@ -1,0 +1,849 @@
+"""Medic: investigate an incident, propose fixes, apply them after approval, verify, remember.
+
+Three entry points, each a worker job on the incident's Medic run:
+
+- `investigate` ("investigate_incident"): gather -> memory -> research -> diagnose -> propose.
+  Each stage records its typed event (docs/phase5-interfaces.md, section 7) and saves
+  `incidents.state`; model calls are `llm` steps with model, tokens, and cost. Then one approval
+  per fix, and the run waits. A hard timeout (MEDIC_TIMEOUT_SECONDS) bounds the investigation.
+- `resume` ("resume_run" for agent "medic", app.pipeline.resume): apply approved fixes in order
+  with single-use tokens, skip rejected ones, and wait again at the first undecided one. Once
+  every fix is decided and one applied, verification starts.
+- `verify` ("verify_incident"): re-check the signals every MEDIC_VERIFY_INTERVAL_SECONDS; two
+  healthy rounds resolve the incident (and remember it), MEDIC_VERIFY_TIMEOUT_SECONDS fails it.
+
+Caps: the run's USD and token caps and MAX_ULTRA_CALLS_PER_INCIDENT (RunBudget), Tavily calls
+per incident (TAVILY_MAX_CALLS_PER_INCIDENT).
+"""
+
+import asyncio
+import logging
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any, Final
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app import queue
+from app.actions.base import EmergencyActionError, EmergencyActions
+from app.agents.medic import diagnose as dx
+from app.agents.medic import evidence as ev
+from app.agents.medic import fixes as fx
+from app.agents.medic import memory as mem
+from app.agents.medic.events import (
+    Diagnosis,
+    EvidenceCollected,
+    EvidenceSourceSummary,
+    FixApplied,
+    FixApproval,
+    FixProposed,
+    IncidentFailed,
+    IncidentResolved,
+    IncidentStatus,
+    MemoryChecked,
+    ResearchDone,
+    ResearchResult,
+    Signal,
+)
+from app.agents.medic.state import FixRecord, MedicState, MemoryUsed, Outcome
+from app.agents.medic.verify import run_checks
+from app.config import Settings, get_settings
+from app.connectors.aws import AwsReader
+from app.connectors.github import GitHubApp, get_github_app
+from app.db.models import (
+    TERMINAL_RUN_STATUSES,
+    Approval,
+    ApprovalStatus,
+    Connection,
+    Edge,
+    Incident,
+    Resource,
+    Run,
+    RunStatus,
+    StopReason,
+    ToolPolicy,
+)
+from app.db.session import SessionFactory
+from app.incidents.store import set_status
+from app.incidents.watcher import default_reader_for
+from app.llm.budget import BudgetExceededError, PgUsageStore, RunBudget
+from app.llm.client import TokenFactory
+from app.llm.recorder import StepRecorder
+from app.policy.actions import OPEN_FIX_PR, issue_approved_action
+from app.security.redact import redact
+from app.steps import record_step
+from app.telemetry.collect import Evidence, GraphEvidenceCollector
+from app.tools.github_pr import FixPullRequests, GitHubFixPullRequests
+from app.tools.tavily import TavilyClient, TavilyError, search_query
+
+logger = logging.getLogger("groundcrew.medic")
+
+AGENT: Final = "medic"
+VERIFY_JOB: Final = "verify_incident"
+HEALTHY_ROUNDS = 2
+
+Collect = Callable[[uuid.UUID, list[uuid.UUID], datetime, datetime], Awaitable[Evidence]]
+
+
+@dataclass
+class MedicDeps:
+    settings: Settings
+    llm: TokenFactory
+    collect: Collect
+    actions: EmergencyActions | None
+    prs: FixPullRequests | None
+    github: GitHubApp | None
+    tavily: TavilyClient | None
+    reader_for: Callable[[Connection], AwsReader]
+    now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+
+
+def _emergency_actions(
+    session_factory: SessionFactory, settings: Settings
+) -> EmergencyActions | None:
+    """Rizwan's Operate-tier actions, once app.actions provides `get_emergency_actions`."""
+    import app.actions as package
+
+    factory = getattr(package, "get_emergency_actions", None)
+    return factory(session_factory, settings) if callable(factory) else None
+
+
+def default_deps(session_factory: SessionFactory, settings: Settings | None = None) -> MedicDeps:
+    settings = settings or get_settings()
+    github = get_github_app()
+    has_github = github.configured()
+    tavily = None
+    if settings.tavily_api_key is not None and settings.tavily_api_key.get_secret_value():
+        tavily = TavilyClient(settings)
+    return MedicDeps(
+        settings=settings,
+        llm=TokenFactory(settings),
+        collect=GraphEvidenceCollector(session_factory, settings=settings).collect,
+        actions=_emergency_actions(session_factory, settings),
+        prs=GitHubFixPullRequests(session_factory, github) if has_github else None,
+        github=github if has_github else None,
+        tavily=tavily,
+        reader_for=default_reader_for(settings),
+    )
+
+
+DepsFactory = Callable[[SessionFactory], MedicDeps]
+_deps_factory: DepsFactory = default_deps
+
+
+def set_deps_factory(factory: DepsFactory | None) -> None:
+    """Tests swap in fakes; None restores the default."""
+    global _deps_factory
+    _deps_factory = factory or default_deps
+
+
+def _signals(incident: Incident) -> list[Signal]:
+    return [Signal.model_validate(s) for s in incident.signals]
+
+
+def _save(incident: Incident, state: MedicState) -> None:
+    incident.state = state.model_dump(mode="json")
+
+
+class MedicRunner:
+    def __init__(self, session_factory: SessionFactory, deps: MedicDeps) -> None:
+        self.session_factory = session_factory
+        self.deps = deps
+        self.settings = deps.settings
+
+    # ------------------------------------------------------------------ helpers
+
+    async def _load(
+        self, session: AsyncSession, incident_id: uuid.UUID | None, run_id: uuid.UUID
+    ) -> tuple[Incident, Run, MedicState] | None:
+        run = await session.get(Run, run_id)
+        if run is None:
+            return None
+        incident = await session.get(Incident, incident_id or run.incident_id)
+        if incident is None:
+            return None
+        return incident, run, MedicState.model_validate(incident.state or {})
+
+    async def _graph(self, session: AsyncSession, incident: Incident) -> fx.Graph:
+        ws = incident.workspace_id
+        resources = {
+            r.id: r
+            for r in await session.scalars(select(Resource).where(Resource.workspace_id == ws))
+        }
+        edges = list(await session.scalars(select(Edge).where(Edge.workspace_id == ws)))
+        connections = {
+            c.id: c
+            for c in await session.scalars(select(Connection).where(Connection.workspace_id == ws))
+        }
+        return fx.Graph(resources, edges, connections, list(incident.affected_resource_ids))
+
+    async def _status(
+        self,
+        session: AsyncSession,
+        incident: Incident,
+        run: Run,
+        status: IncidentStatus,
+        reason: str | None = None,
+    ) -> None:
+        await set_status(session, incident, run, status, reason=reason, now=self.deps.now())
+
+    async def _finish(
+        self,
+        session: AsyncSession,
+        run: Run,
+        status: RunStatus,
+        stop: StopReason,
+        *,
+        result: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        run.status, run.stop_reason = status, stop
+        run.result, run.error = result, error
+        run.finished_at = self.deps.now()
+
+    async def _fail(
+        self,
+        session: AsyncSession,
+        incident: Incident,
+        run: Run,
+        state: MedicState,
+        reason: str,
+        *,
+        still_failing: list[str] | None = None,
+        run_status: RunStatus = RunStatus.failed,
+        stop: StopReason = StopReason.error,
+    ) -> None:
+        state.phase, state.error = "done", reason
+        state.outcome = Outcome(result="failed", reason=reason, still_failing=still_failing or [])
+        _save(incident, state)
+        await self._status(session, incident, run, "failed", reason)
+        await record_step(
+            session,
+            run,
+            kind="incident_failed",
+            output_summary=reason,
+            data=IncidentFailed(
+                incident_id=incident.id,
+                reason=reason,
+                still_failing=still_failing or [],
+                cost_usd=float(run.cost_usd) if run.cost_usd is not None else None,
+            ),
+        )
+        await self._finish(
+            session,
+            run,
+            run_status,
+            stop,
+            result=None if run_status == RunStatus.failed else reason,
+            error=reason if run_status == RunStatus.failed else None,
+        )
+        await session.commit()
+
+    # -------------------------------------------------------------- investigate
+
+    async def investigate(self, incident_id: uuid.UUID, run_id: uuid.UUID) -> None:
+        async with self.session_factory() as session:
+            loaded = await self._load(session, incident_id, run_id)
+            if loaded is None:
+                return
+            incident, run, state = loaded
+            if run.status in TERMINAL_RUN_STATUSES:
+                return
+            run.status, run.stop_reason = RunStatus.running, None
+            run.started_at = run.started_at or self.deps.now()
+            state.run_id, state.phase = run.id, "investigating"
+            await self._status(session, incident, run, "investigating")
+            _save(incident, state)
+            await session.commit()
+            budget = await RunBudget.load(
+                session, run, PgUsageStore(self.session_factory), self.settings
+            )
+            recorder = StepRecorder(session, run, AGENT)
+            try:
+                await asyncio.wait_for(
+                    self._investigate(session, incident, run, state, budget, recorder),
+                    self.settings.medic_timeout_seconds,
+                )
+            except BudgetExceededError as exc:
+                await session.rollback()
+                await self._fail(
+                    session, incident, run, state, f"Budget reached: {exc}", stop=StopReason.budget
+                )
+            except TimeoutError:
+                await session.rollback()
+                await self._fail(
+                    session,
+                    incident,
+                    run,
+                    state,
+                    f"Investigation took longer than {self.settings.medic_timeout_seconds} s.",
+                )
+            except Exception as exc:
+                logger.exception(
+                    "medic investigation failed", extra={"incident_id": str(incident.id)}
+                )
+                await session.rollback()
+                await self._fail(
+                    session, incident, run, state, redact(f"{type(exc).__name__}: {exc}")[:500]
+                )
+
+    async def _investigate(
+        self,
+        session: AsyncSession,
+        incident: Incident,
+        run: Run,
+        state: MedicState,
+        budget: RunBudget,
+        recorder: StepRecorder,
+    ) -> None:
+        deps, llm = self.deps, self.deps.llm
+        signals = _signals(incident)
+        affected = set(incident.affected_resource_ids)
+        now = deps.now()
+
+        # 1. Gather
+        evidence = await deps.collect(
+            incident.workspace_id, list(incident.affected_resource_ids), incident.window_start, now
+        )
+        symptom = await mem.symptom_text(session, incident)
+        items, embedded = await ev.rank(ev.to_items(evidence), symptom, affected, llm, budget)
+        state.sources = [
+            EvidenceSourceSummary(
+                source=k, lines=len(v), truncated=evidence.truncated.get(k, False)
+            )
+            for k, v in sorted(evidence.sources.items())
+        ]
+        state.neighbors, state.evidence, state.changes = evidence.neighbors, items, evidence.changes
+        _save(incident, state)
+        await record_step(
+            session,
+            run,
+            kind="evidence_collected",
+            output_summary=(
+                f"{len(items)} of {sum(len(v) for v in evidence.sources.values())} lines from "
+                f"{len(evidence.sources)} sources, ranked by "
+                f"{'embeddings' if embedded else 'rules'}"
+            ),
+            data=EvidenceCollected(
+                sources=state.sources,
+                neighbors=evidence.neighbors,
+                items=items,
+                changes=evidence.changes,
+                total_lines=sum(len(v) for v in evidence.sources.values()),
+            ),
+        )
+        await session.commit()
+
+        # 2. Memory
+        vector = await mem.embed_symptom(llm, budget, symptom)
+        if vector is not None:
+            incident.embedding = vector
+        hits = await mem.similar(session, incident, vector)
+        reused = mem.reusable(hits, self.settings.medic_memory_threshold)
+        state.memory_hits = hits
+        if reused is not None:
+            state.memory = MemoryUsed(
+                incident_id=reused.incident_id,
+                title=reused.title,
+                similarity=reused.similarity,
+                reused=["diagnosis", "fix"],
+            )
+        _save(incident, state)
+        await record_step(
+            session,
+            run,
+            kind="memory_checked",
+            output_summary=(
+                f"Reusing {reused.title} ({reused.similarity:.2f})"
+                if reused
+                else f"{len(hits)} similar past incidents, none close enough to reuse"
+            ),
+            data=MemoryChecked(
+                hits=hits,
+                reused_incident_id=reused.incident_id if reused else None,
+                reused=state.memory.reused if state.memory else [],
+            ),
+        )
+        await session.commit()
+
+        # 3. Research
+        results, queries, skipped = await self._research(items, affected, state, reused is not None)
+        state.research, state.research_queries = results, queries
+        _save(incident, state)
+        await record_step(
+            session,
+            run,
+            kind="research_done",
+            output_summary=skipped or f"{len(results)} results for {queries[0]!r}",
+            data=ResearchDone(queries=queries, results=results, skipped_reason=skipped),
+        )
+        await session.commit()
+
+        # 4. Diagnose
+        names = [r.name for r in state.neighbors if r.id in affected] or [
+            str(s.resource_name) for s in signals if s.resource_name
+        ]
+        graph = await self._graph(session, incident)
+        affected_names = [
+            graph.resources[r].name for r in incident.affected_resource_ids if r in graph.resources
+        ] or names
+        prompt = dx.messages(
+            incident.title, signals, affected_names, items, evidence.changes, results, reused
+        )
+        raw = await dx.diagnose(llm, budget, prompt, confirm=reused is not None, on_call=recorder)
+        root_cause, dropped = dx.check(raw, items, evidence.changes)
+        state.root_cause, state.dropped = root_cause, dropped
+        incident.root_cause = root_cause.root_cause
+        _save(incident, state)
+        await record_step(
+            session,
+            run,
+            kind="diagnosis",
+            output_summary=root_cause.summary
+            + (f" ({len(dropped)} uncited items dropped)" if dropped else ""),
+            data=Diagnosis(root_cause=root_cause, dropped=dropped),
+        )
+        await session.commit()
+
+        # 5. Propose
+        emergency = await fx.emergency(root_cause, signals, graph, evidence.changes, deps.actions)
+        pr = await fx.pull_request(
+            incident.id,
+            root_cause,
+            signals,
+            graph,
+            evidence.changes,
+            deps.github,
+            llm,
+            budget,
+            order=len(emergency.records) + 1,
+            on_call=recorder,
+        )
+        state.fixes = emergency.records + pr.records
+        state.notes = [*evidence.notes, *emergency.notes, *pr.notes]
+        _save(incident, state)
+        await record_step(
+            session,
+            run,
+            kind="fix_proposed",
+            output_summary="; ".join([f.fix.title for f in state.fixes] + state.notes) or "No fix",
+            data=FixProposed(fixes=[f.fix for f in state.fixes]),
+        )
+        if not state.fixes:
+            await self._fail(
+                session,
+                incident,
+                run,
+                state,
+                "No fix Medic can apply. " + " ".join(state.notes),
+                run_status=RunStatus.succeeded,
+                stop=StopReason.completed,
+            )
+            return
+        await self._request_approvals(session, incident, run, state)
+
+    async def _research(
+        self, items: list[Any], affected: set[uuid.UUID], state: MedicState, reused: bool
+    ) -> tuple[list[ResearchResult], list[str], str | None]:
+        if reused:
+            return [], [], "Skipped: a similar past incident was reused."
+        if self.deps.tavily is None:
+            return [], [], "Skipped: TAVILY_API_KEY is not set."
+        if state.tavily_calls >= self.settings.tavily_max_calls_per_incident:
+            return [], [], "Skipped: research cap for this incident reached."
+        scored = sorted(items, key=lambda i: -ev.score(i, affected))
+        query = next((q for i in scored if (q := search_query(i.line))), "")
+        if not query:
+            return [], [], "Skipped: no error line to search for."
+        state.tavily_calls += 1
+        try:
+            found = await self.deps.tavily.search(query)
+        except TavilyError as exc:
+            return [], [query], f"Research failed: {exc}"
+        return (
+            [ResearchResult(title=r.title, url=r.url, snippet=r.snippet) for r in found],
+            [query],
+            None,
+        )
+
+    async def _request_approvals(
+        self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
+    ) -> None:
+        for rec in state.fixes:
+            tool = rec.fix.action or OPEN_FIX_PR
+            plan_hash = (
+                rec.fix.plan.plan_hash()
+                if rec.fix.plan
+                else rec.draft.plan_hash()
+                if rec.draft
+                else ""
+            )
+            approval = Approval(
+                run_id=run.id,
+                workspace_id=incident.workspace_id,
+                tool_call_id=f"medic:{incident.id}:{rec.fix.fix_id}",
+                tool_name=tool,
+                policy=ToolPolicy.write if tool == OPEN_FIX_PR else ToolPolicy.emergency,
+                arguments={
+                    "plan_hash": plan_hash,
+                    "fix_id": rec.fix.fix_id,
+                    "summary": rec.fix.title,
+                },
+                status=ApprovalStatus.pending,
+            )
+            session.add(approval)
+            await session.flush()
+            rec.approval_id = approval.id
+            rec.fix = rec.fix.model_copy(update={"approval_id": approval.id})
+            rec.status = "waiting_approval"
+            await record_step(
+                session,
+                run,
+                kind="approval_requested",
+                tool_name=tool,
+                approval_id=approval.id,
+                output_summary=f"Waiting for approval of {rec.fix.title}",
+                data=FixApproval(incident_id=incident.id, fix=rec.fix),
+            )
+        state.phase = "waiting_approval"
+        _save(incident, state)
+        await self._status(session, incident, run, "waiting_approval")
+        run.status, run.stop_reason = RunStatus.waiting_approval, StopReason.waiting_approval
+        await session.commit()
+
+    # ------------------------------------------------------------------- resume
+
+    async def resume(self, run_id: uuid.UUID) -> None:
+        async with self.session_factory() as session:
+            loaded = await self._load(session, None, run_id)
+            if loaded is None:
+                return
+            incident, run, state = loaded
+            if run.status in TERMINAL_RUN_STATUSES or state.phase not in (
+                "waiting_approval",
+                "applying",
+            ):
+                return
+            run.status, run.stop_reason = RunStatus.running, None
+            await session.commit()
+            while True:
+                pending = await self._apply_decided(session, incident, run, state)
+                if pending is None:
+                    break
+                # Lock the run, then look again: decide_approval locks it too, so a decision
+                # either lands before this read or sees the run waiting and enqueues a resume.
+                await session.get(Run, run.id, with_for_update=True, populate_existing=True)
+                approval = await session.get(Approval, pending, populate_existing=True)
+                if approval is not None and approval.status == ApprovalStatus.pending:
+                    state.phase = "waiting_approval"
+                    _save(incident, state)
+                    await self._status(session, incident, run, "waiting_approval")
+                    run.status, run.stop_reason = (
+                        RunStatus.waiting_approval,
+                        StopReason.waiting_approval,
+                    )
+                    await session.commit()
+                    return
+                await session.commit()
+            await self._after_decisions(session, incident, run, state)
+
+    async def _apply_decided(
+        self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
+    ) -> uuid.UUID | None:
+        """Apply or skip fixes in order; the first still-pending approval's id, or None."""
+        for rec in sorted(state.fixes, key=lambda r: r.fix.order):
+            if rec.status in ("applied", "failed", "rejected") or rec.approval_id is None:
+                continue
+            approval = await session.get(Approval, rec.approval_id, populate_existing=True)
+            if approval is None or approval.status == ApprovalStatus.rejected:
+                rec.status = "rejected"
+                _save(incident, state)
+                await session.commit()
+                continue
+            if approval.status == ApprovalStatus.pending:
+                return rec.approval_id
+            await self._apply(session, incident, run, state, rec, approval)
+        return None
+
+    async def _apply(
+        self,
+        session: AsyncSession,
+        incident: Incident,
+        run: Run,
+        state: MedicState,
+        rec: FixRecord,
+        approval: Approval,
+    ) -> None:
+        rec.status, state.phase = "applying", "applying"
+        _save(incident, state)
+        await self._status(session, incident, run, "applying")
+        await session.commit()
+        tool = rec.fix.action or OPEN_FIX_PR
+        applied: FixApplied
+        try:
+            if rec.fix.kind == "emergency" and rec.fix.plan is not None:
+                if self.deps.actions is None:
+                    raise EmergencyActionError("Emergency actions are not available.")
+                token = await issue_approved_action(
+                    session,
+                    approval,
+                    run_id=run.id,
+                    action=rec.fix.plan.action,
+                    plan_hash=rec.fix.plan.plan_hash(),
+                    settings=self.settings,
+                )
+                result = await self.deps.actions.execute(rec.fix.plan, token, run_id=run.id)
+                applied = FixApplied(
+                    fix_id=rec.fix.fix_id,
+                    kind="emergency",
+                    ok=result.ok,
+                    action_result=result,
+                    error=result.error,
+                )
+            elif rec.draft is not None:
+                if self.deps.prs is None:
+                    raise RuntimeError("The GitHub App is not configured.")
+                token = await issue_approved_action(
+                    session,
+                    approval,
+                    run_id=run.id,
+                    action=OPEN_FIX_PR,
+                    plan_hash=rec.draft.plan_hash(),
+                    settings=self.settings,
+                )
+                ref = await self.deps.prs.open_fix_pr(rec.draft, token, run_id=run.id)
+                rec.pull_request = ref
+                applied = FixApplied(fix_id=rec.fix.fix_id, kind="pr", ok=True, pull_request=ref)
+            else:
+                raise RuntimeError("Nothing to apply for this fix.")
+        except Exception as exc:
+            logger.warning("medic fix failed", extra={"fix": rec.fix.fix_id}, exc_info=True)
+            applied = FixApplied(
+                fix_id=rec.fix.fix_id,
+                kind=rec.fix.kind,
+                ok=False,
+                error=redact(f"{type(exc).__name__}: {exc}")[:500],
+            )
+        rec.applied = applied
+        rec.status = "applied" if applied.ok else "failed"
+        _save(incident, state)
+        await record_step(
+            session,
+            run,
+            kind="fix_applied",
+            tool_name=tool,
+            approval_id=approval.id,
+            output_summary=(
+                f"Applied: {rec.fix.title}" if applied.ok else f"Failed: {applied.error}"
+            ),
+            data=applied,
+        )
+        await session.commit()
+
+    async def _after_decisions(
+        self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
+    ) -> None:
+        applied = [r for r in state.fixes if r.status == "applied"]
+        if not applied:
+            rejected = sum(1 for r in state.fixes if r.status == "rejected")
+            reason = (
+                "Every fix was rejected."
+                if rejected == len(state.fixes)
+                else "No fix could be applied."
+            )
+            await self._fail(
+                session,
+                incident,
+                run,
+                state,
+                reason,
+                run_status=RunStatus.succeeded,
+                stop=StopReason.completed,
+            )
+            return
+        now = self.deps.now()
+        state.phase, state.fixes_applied_at = "verifying", now
+        state.verify_deadline = now + timedelta(seconds=self.settings.medic_verify_timeout_seconds)
+        state.healthy_streak = 0
+        _save(incident, state)
+        await self._status(session, incident, run, "verifying")
+        await queue.enqueue(
+            session,
+            VERIFY_JOB,
+            {"incident_id": str(incident.id), "run_id": str(run.id)},
+            run_after=now + timedelta(seconds=self.settings.medic_verify_interval_seconds),
+            max_attempts=1,
+        )
+        await session.commit()
+
+    # ------------------------------------------------------------------- verify
+
+    async def verify(self, incident_id: uuid.UUID, run_id: uuid.UUID) -> None:
+        async with self.session_factory() as session:
+            loaded = await self._load(session, incident_id, run_id)
+            if loaded is None:
+                return
+            incident, run, state = loaded
+            if run.status in TERMINAL_RUN_STATUSES or state.phase != "verifying":
+                return
+            graph = await self._graph(session, incident)
+            now = self.deps.now()
+            services, databases, logs = self._verify_targets(graph, state)
+            readers: dict[str, AwsReader] = {}
+            for res in [*services, *databases]:
+                conn = graph.connections.get(res.connection_id) if res.connection_id else None
+                if conn is not None and str(conn.id) not in readers:
+                    try:
+                        readers[str(conn.id)] = await asyncio.to_thread(self.deps.reader_for, conn)
+                    except Exception:
+                        logger.warning("verify: no AWS session", exc_info=True)
+            since = state.fixes_applied_at or now
+            check_logs = any(s.rule == "log_error_spike" for s in _signals(incident))
+            result = await asyncio.to_thread(
+                run_checks,
+                readers,
+                services,
+                databases,
+                logs,
+                since=since,
+                now=now,
+                check_logs=check_logs,
+            )
+            state.verify = result
+            state.healthy_streak = state.healthy_streak + 1 if result.ok else 0
+            _save(incident, state)
+            await record_step(
+                session,
+                run,
+                kind="verify_result",
+                output_summary=("Healthy" if result.ok else "Still failing")
+                + f" (round {state.healthy_streak if result.ok else 'failed'})",
+                data=result,
+            )
+            await session.commit()
+            if result.ok and state.healthy_streak >= HEALTHY_ROUNDS:
+                await self._resolve(session, incident, run, state)
+            elif state.verify_deadline is not None and now >= state.verify_deadline:
+                await self._fail(
+                    session,
+                    incident,
+                    run,
+                    state,
+                    "Signals did not recover within "
+                    f"{self.settings.medic_verify_timeout_seconds} s.",
+                    still_failing=[c.detail for c in result.checks if not c.ok],
+                    stop=StopReason.completed,
+                )
+            else:
+                await queue.enqueue(
+                    session,
+                    VERIFY_JOB,
+                    {"incident_id": str(incident.id), "run_id": str(run.id)},
+                    run_after=now + timedelta(seconds=self.settings.medic_verify_interval_seconds),
+                    max_attempts=1,
+                )
+                await session.commit()
+
+    def _verify_targets(
+        self, graph: fx.Graph, state: MedicState
+    ) -> tuple[list[Resource], list[Resource], dict[str, list[str]]]:
+        ids = set(graph.affected)
+        acted = {
+            (r.fix.plan.params.get("service") or "")
+            for r in state.fixes
+            if r.status == "applied" and r.fix.plan is not None
+        }
+        services = [
+            r
+            for r in graph.resources.values()
+            if r.type == "ecs:service" and (r.id in ids or r.name in acted)
+        ]
+        databases = [r for r in graph.resources.values() if r.type == "rds:db" and r.id in ids]
+        logs: dict[str, list[str]] = {}
+        for e in graph.edges:
+            target = graph.resources.get(e.to_id)
+            if e.kind == "logs_to" and target is not None and target.type == "logs:log-group":
+                logs.setdefault(str(e.from_id), []).append(target.name)
+        return services, databases, logs
+
+    async def _resolve(
+        self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
+    ) -> None:
+        now = self.deps.now()
+        rc = state.root_cause
+        mem.remember(
+            incident, rc.summary if rc else incident.title, rc.root_cause if rc else "", None
+        )
+        state.phase = "done"
+        state.outcome = Outcome(
+            result="resolved", reason="Signals recovered for two checks in a row."
+        )
+        _save(incident, state)
+        await self._status(session, incident, run, "resolved", "signals recovered")
+        applied = [r for r in state.fixes if r.status == "applied"]
+        detect_ms = (
+            int((incident.created_at - incident.first_signal_at).total_seconds() * 1000)
+            if incident.first_signal_at and incident.created_at
+            else None
+        )
+        await record_step(
+            session,
+            run,
+            kind="incident_resolved",
+            output_summary="Resolved: signals recovered",
+            data=IncidentResolved(
+                incident_id=incident.id,
+                time_to_detect_ms=max(detect_ms, 0) if detect_ms is not None else None,
+                duration_ms=int((now - incident.created_at).total_seconds() * 1000),
+                fixes_applied=[r.fix.action or "pull_request" for r in applied],
+                pull_requests=[r.pull_request for r in applied if r.pull_request],
+                memory_reused=state.memory is not None,
+                cost_usd=float(run.cost_usd) if run.cost_usd is not None else None,
+                ultra_equiv_usd=float(run.ultra_equiv_usd)
+                if run.ultra_equiv_usd is not None
+                else None,
+            ),
+        )
+        await self._finish(
+            session,
+            run,
+            RunStatus.succeeded,
+            StopReason.completed,
+            result=rc.summary if rc else "Resolved",
+        )
+        await session.commit()
+
+
+async def fail_without_deps(
+    session_factory: SessionFactory, run_id: uuid.UUID, reason: str
+) -> None:
+    """The investigation cannot start (Token Factory not configured, ...): fail the incident
+    and its run instead of leaving them queued."""
+    async with session_factory() as session:
+        run = await session.get(Run, run_id)
+        incident = await session.get(Incident, run.incident_id) if run and run.incident_id else None
+        if run is None or incident is None or run.status in TERMINAL_RUN_STATUSES:
+            return
+        state = MedicState.model_validate(incident.state or {})
+        state.phase, state.error = "done", reason
+        state.outcome = Outcome(result="failed", reason=reason)
+        _save(incident, state)
+        now = datetime.now(UTC)
+        await set_status(session, incident, run, "failed", reason=reason, now=now)
+        await record_step(
+            session,
+            run,
+            kind="incident_failed",
+            output_summary=reason,
+            data=IncidentFailed(incident_id=incident.id, reason=reason),
+        )
+        run.status, run.stop_reason, run.error, run.finished_at = (
+            RunStatus.failed,
+            StopReason.error,
+            reason,
+            now,
+        )
+        await session.commit()

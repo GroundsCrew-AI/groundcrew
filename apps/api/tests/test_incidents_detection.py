@@ -28,7 +28,6 @@ from app.db.models import (
 )
 from app.db.session import SessionFactory, get_session_factory
 from app.incidents import rules
-from app.incidents.investigate import investigate_incident_job
 from app.incidents.store import (
     INVESTIGATE_JOB,
     ResourceNotFoundError,
@@ -500,29 +499,6 @@ async def test_only_one_watch_job_is_queued(session_factory: SessionFactory) -> 
         await _count(session_factory, Job, Job.kind == WATCH_JOB, Job.status == JobStatus.queued)
         == 1
     )
-
-
-async def test_interim_investigation_marks_it_investigating(
-    session_factory: SessionFactory, workspace: Workspace
-) -> None:
-    ids = await _demo(session_factory, workspace.id)
-    async with session_factory() as session:
-        opened = await open_incident(
-            session,
-            workspace_id=workspace.id,
-            resource_ids=[ids["api"]],
-            detected_by="user",
-            signals=[],
-            now=NOW,
-        )
-    await investigate_incident_job(
-        session_factory, {"incident_id": str(opened.incident.id), "run_id": str(opened.run.id)}
-    )
-    async with session_factory() as session:
-        incident = await session.get(Incident, opened.incident.id)
-        run = await session.get(Run, opened.run.id)
-        assert incident is not None and run is not None
-        assert incident.status == "investigating" and run.status == RunStatus.stopped
 
 
 # --- POST /incidents --------------------------------------------------------------------------
