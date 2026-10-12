@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.connectors.credentials import capabilities
 from app.db.models import Connection, Edge, Resource
 from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
 from app.graph.roles import role_of
@@ -30,6 +31,7 @@ ConnectionStatus = Literal["pending", "connected", "error"]
 # AWS access tier (infra/aws-connect.yaml, parameter Tier): observe = read-only discovery;
 # deploy = also the groundcrew-deploy role for deploys into the groundcrew-deploys cluster.
 AwsTier = Literal["observe", "deploy"]
+AwsCapability = Literal["observe", "deploy", "operate"]
 
 
 class LastDiscovery(BaseModel):
@@ -63,6 +65,10 @@ class ConnectionOut(BaseModel):
     # AWS: the stack's Tier, and the deploy role once verified (Tier=deploy).
     tier: AwsTier | None = None
     deploy_role_arn: str | None = None
+    # AWS (Phase 5): observe, deploy (verified deploy role), operate (verified operate role:
+    # approved emergency fixes). Null for other kinds.
+    capabilities: list[AwsCapability] | None = None
+    operate_role_arn: str | None = None
     # Kubernetes: namespaces the kubeconfig could list when it was verified.
     namespaces: int | None = None
     error: str | None = None
@@ -94,6 +100,8 @@ class ConnectionOut(BaseModel):
             server=c.get("server"),
             tier=(c.get("tier") or "observe") if conn.kind == "aws" else None,
             deploy_role_arn=c.get("deploy_role_arn"),
+            capabilities=capabilities(conn) if conn.kind == "aws" else None,
+            operate_role_arn=c.get("operate_role_arn"),
             namespaces=c.get("namespaces"),
             error=c.get("last_error"),
             resource_count=resource_count,
@@ -138,6 +146,12 @@ class AwsTemplateUrlOut(BaseModel):
 
 class AwsTierIn(BaseModel):
     tier: AwsTier
+
+
+class AwsOperateIn(BaseModel):
+    """Turn approved emergency fixes on (after the stack has EnableOperate=true) or off."""
+
+    enabled: bool
 
 
 class GitHubRepoOut(BaseModel):

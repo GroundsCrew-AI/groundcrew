@@ -6,6 +6,7 @@ Contract (docs/phase3-interfaces.md):
         def kubeconfig(self, connection_id: uuid.UUID) -> Path: ...
         def aws_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
         def aws_deploy_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
+        def aws_operate_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
         def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential: ...
 
 All three block (STS call, file write): call them with `asyncio.to_thread` from async code.
@@ -18,6 +19,9 @@ All three block (STS call, file write): call them with `asyncio.to_thread` from 
   customer. Always the read-only role, whatever the connection's tier.
 - aws_deploy_session: the groundcrew-deploy role (Tier=deploy only, else CredentialsError), in
   GC_AWS_REGION, guarded by AWS_DEPLOY_OPERATIONS. Proposed contract change for Phase 4.
+- aws_operate_session: the groundcrew-operate role (only when the connection has the operate
+  capability, else CredentialsError), in the first DISCOVERY_REGIONS region, guarded by
+  AWS_OPERATE_OPERATIONS. Phase 5 emergency fixes (app.actions).
 - kubeconfig: written to a private temp file (0600 in a 0700 dir), deleted by `close()`.
 - azure_credential: a client-secret credential (fixtures only for now, TODO(azure-live)).
 
@@ -40,7 +44,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.aws import (
     AWS_DEPLOY_OPERATIONS,
+    AWS_OPERATE_OPERATIONS,
     DEPLOY_SESSION_NAME,
+    OPERATE_SESSION_NAME,
     AwsSessions,
     get_sessions,
 )
@@ -80,7 +86,20 @@ class CredentialsProvider(Protocol):
     def kubeconfig(self, connection_id: uuid.UUID) -> Path: ...
     def aws_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
     def aws_deploy_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
+    def aws_operate_session(self, connection_id: uuid.UUID) -> boto3.Session: ...
     def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential: ...
+
+
+def capabilities(conn: Connection) -> list[str]:
+    """What an AWS connection may be used for: observe always, deploy with Tier=deploy and a
+    verified deploy role, operate with EnableOperate=true and a verified operate role."""
+    config = conn.config or {}
+    out = ["observe"]
+    if config.get("tier") == "deploy" and config.get("deploy_role_arn"):
+        out.append("deploy")
+    if config.get("operate_role_arn"):
+        out.append("operate")
+    return out
 
 
 class _TempFiles:
@@ -167,6 +186,23 @@ class ConnectionCredentialsProvider:
             session_name=DEPLOY_SESSION_NAME,
         )
 
+    def aws_operate_session(self, connection_id: uuid.UUID) -> boto3.Session:
+        conn = self._get(connection_id, "aws")
+        if "operate" not in capabilities(conn):
+            raise CredentialsError(
+                f"{conn.name} cannot run emergency fixes: update its groundcrew-read-only stack "
+                "with EnableOperate=true and the services and secrets Groundcrew may act on, "
+                "then turn on emergency fixes on the Connections page (docs/phase5-interfaces.md)."
+            )
+        sessions = self._sessions or get_sessions()
+        return sessions.assume(
+            str(conn.config["operate_role_arn"]),
+            str(conn.config["external_id"]),
+            operations=AWS_OPERATE_OPERATIONS,
+            region=sessions.settings.discovery_regions[0],
+            session_name=OPERATE_SESSION_NAME,
+        )
+
     def kubeconfig(self, connection_id: uuid.UUID) -> Path:
         conn = self._get(connection_id, "k8s")
         return self._temp.write(connection_id, self._secret(conn))
@@ -195,6 +231,7 @@ class EnvCredentialsProvider:
     - aws_session: GROUNDCREW_DEV_AWS_ROLE_ARN + GROUNDCREW_DEV_AWS_EXTERNAL_ID, assumed from
       the platform identity like a real connection (never a profile or ~/.aws)
     - aws_deploy_session: GROUNDCREW_DEV_AWS_DEPLOY_ROLE_ARN + GROUNDCREW_DEV_AWS_EXTERNAL_ID
+    - aws_operate_session: GROUNDCREW_DEV_AWS_OPERATE_ROLE_ARN + GROUNDCREW_DEV_AWS_EXTERNAL_ID
     - azure_credential: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
     """
 
@@ -231,6 +268,19 @@ class EnvCredentialsProvider:
             operations=AWS_DEPLOY_OPERATIONS,
             region=sessions.settings.gc_aws_region,
             session_name=DEPLOY_SESSION_NAME,
+        )
+
+    def aws_operate_session(self, connection_id: uuid.UUID) -> boto3.Session:
+        role_arn, external_id = self._need(
+            "GROUNDCREW_DEV_AWS_OPERATE_ROLE_ARN", "GROUNDCREW_DEV_AWS_EXTERNAL_ID"
+        )
+        sessions = self._sessions or get_sessions()
+        return sessions.assume(
+            role_arn,
+            external_id,
+            operations=AWS_OPERATE_OPERATIONS,
+            region=sessions.settings.discovery_regions[0],
+            session_name=OPERATE_SESSION_NAME,
         )
 
     def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential:

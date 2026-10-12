@@ -22,7 +22,7 @@ from app.accounts import NotFoundError, member_workspace
 from app.config import Settings
 from app.connectors import kubernetes as kube
 from app.connectors.aws import AwsError, get_sessions, new_external_id, parse_role_arn
-from app.connectors.deploy_infra import deploy_role_arn
+from app.connectors.deploy_infra import deploy_role_arn, operate_role_arn
 from app.connectors.github import GitHubError, check_repo_name, get_github_app
 from app.connectors.kubernetes import kubeconfig_summary
 from app.connectors.vercel import VercelClient, VercelError
@@ -32,6 +32,7 @@ from app.discovery.types import ConnectorError
 from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.discovery_schemas import (
     AwsCompleteIn,
+    AwsOperateIn,
     AwsStartIn,
     AwsStartOut,
     AwsTemplateUrlOut,
@@ -320,6 +321,47 @@ async def aws_set_tier(
         get_sessions().forget(deploy_role_arn(account), external_id)
     conn = await member_connection(session, user, connection_id, for_update=True)
     conn.config = {**conn.config, "tier": body.tier, "deploy_role_arn": deploy_role}
+    await session.commit()
+    return await _out(session, conn)
+
+
+def _verify_operate_role(account: str, external_id: str) -> str:
+    """The groundcrew-operate role, verified like the read-only one (ExternalId required)."""
+    role_arn = operate_role_arn(account)
+    try:
+        get_sessions().verify(role_arn, external_id)
+    except AwsError as exc:
+        raise AwsError(
+            f"The operate role {role_arn} could not be used: {exc} It exists only when the "
+            "groundcrew-read-only stack has EnableOperate=true: update the stack with it and "
+            "the services and secrets Groundcrew may act on, then try again."
+        ) from None
+    return role_arn
+
+
+@router.post("/{connection_id}/aws/operate")
+async def aws_set_operate(
+    connection_id: uuid.UUID, body: AwsOperateIn, user: CurrentUser, session: SessionDep
+) -> ConnectionOut:
+    """Turn approved emergency fixes on or off for a connected AWS account. On: verifies the
+    groundcrew-operate role first (nothing changes if it cannot be used). Off: Groundcrew stops
+    using the role at once; update the stack to EnableOperate=false to delete it. Every fix
+    still needs a person's approval."""
+    conn = await member_connection(session, user, connection_id, for_update=True)
+    if conn.kind != "aws" or conn.status != "connected":
+        raise _unprocessable("Only a connected AWS account can run emergency fixes.")
+    account, external_id = str(conn.config["account_id"]), str(conn.config["external_id"])
+    await session.commit()  # no transaction open during the STS calls
+    role = None
+    if body.enabled:
+        try:
+            role = await asyncio.to_thread(_verify_operate_role, account, external_id)
+        except AwsError as exc:
+            raise _unprocessable(str(exc)) from None
+    else:
+        get_sessions().forget(operate_role_arn(account), external_id)
+    conn = await member_connection(session, user, connection_id, for_update=True)
+    conn.config = {**conn.config, "operate_role_arn": role}
     await session.commit()
     return await _out(session, conn)
 

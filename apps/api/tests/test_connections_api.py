@@ -808,3 +808,39 @@ async def test_refresh_needs_a_finished_connection(
     ).json()
     r = await client.post(f"/connections/{start['connection_id']}/discover", headers=alice.headers)
     assert r.status_code == 409
+
+
+OPERATE_ROLE = "arn:aws:iam::881050425883:role/groundcrew-operate"
+
+
+async def test_aws_operate_switch(
+    client: httpx.AsyncClient, alice: Member, sessions: FakeSessions
+) -> None:
+    start = await _start(client, alice, "observe")
+    cid = start["connection_id"]
+    done = await client.post(
+        "/connections/aws/complete",
+        json={"connection_id": cid, "role_arn": ROLE},
+        headers=alice.headers,
+    )
+    assert done.json()["capabilities"] == ["observe"] and done.json()["operate_role_arn"] is None
+
+    sessions.missing.add(OPERATE_ROLE)  # the stack was not updated yet
+    refused = await client.post(
+        f"/connections/{cid}/aws/operate", json={"enabled": True}, headers=alice.headers
+    )
+    assert refused.status_code == 422 and "EnableOperate=true" in refused.json()["detail"]
+
+    sessions.missing.clear()
+    on = await client.post(
+        f"/connections/{cid}/aws/operate", json={"enabled": True}, headers=alice.headers
+    )
+    assert on.status_code == 200, on.text
+    assert on.json()["capabilities"] == ["observe", "operate"]
+    assert on.json()["operate_role_arn"] == OPERATE_ROLE
+    assert (OPERATE_ROLE, start["external_id"]) in sessions.verified
+
+    off = await client.post(
+        f"/connections/{cid}/aws/operate", json={"enabled": False}, headers=alice.headers
+    )
+    assert off.json()["capabilities"] == ["observe"] and OPERATE_ROLE in sessions.forgotten

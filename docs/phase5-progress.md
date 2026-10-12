@@ -1,6 +1,6 @@
 # Phase 5 progress (Medic)
 
-Owner: Ahmed. Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-interfaces.md`.
+Owner: Ahmed (all of Phase 5 since 2026-10-12, including the parts planned for Rizwan). Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-interfaces.md`.
 
 ## Status
 
@@ -10,7 +10,9 @@ Owner: Ahmed. Plan: `docs/prompts/phase5-ahmed.md`. Contract: `docs/phase5-inter
 | M1 Telemetry readers | `phase5-m1-telemetry` | #25 | Merged 2026-10-12 |
 | M2 Detection | `phase5-m2-detection` | #26 | Merged 2026-10-12 |
 | M3 Medic agent | `phase5-m3-medic` | #27 | Merged 2026-10-12 |
-| M4 Incidents API + wiring | `phase5-m4-incidents-api` | #28 (draft) | Done, in review |
+| M4 Incidents API + wiring | `phase5-m4-incidents-api` | #28 | Merged 2026-10-12 |
+| Operate tier (was Rizwan's) | `phase5-operate` | draft | Done, in review |
+| Incidents UI (was Rizwan's) | | | Next |
 | M5 Live verification | | | Needs Rizwan: checkout-demo rebuild, Operate role |
 
 ## M0 (2026-10-12)
@@ -201,6 +203,25 @@ Open issues:
 - M5 needs the checkout-demo stack rebuilt, the Operate role, and Rizwan's OK for live runs.
 
 Spend: $0.
+
+## Operate tier (2026-10-12)
+
+Ahmed took over Rizwan's Phase 5 parts. Done:
+- `infra/aws-connect.yaml`: `EnableOperate` (independent of `Tier`), `OperateServiceArns`,
+  `OperateSecretArns`, a Rule refusing operate without real ARNs, the `groundcrew-operate` role
+  (UpdateService and DescribeServices on the listed services; ListTaskDefinitions and
+  DescribeTaskDefinition on `*`; UpdateSecretVersionStage and DescribeSecret on the listed
+  secrets; the same explicit Deny on secret values), output `OperateRoleArn`. `cfn-lint` clean.
+  Observe and deploy render exactly as before (snapshot tests). API copy synced (test).
+- `AWS_OPERATE_OPERATIONS`, `aws_operate_session()` (both providers), `capabilities(conn)`,
+  `operate_role_arn()`, `POST /connections/{id}/aws/operate`, `ConnectionOut.capabilities`.
+- `app/actions/aws.py`: the three actions as plan (read) and execute (token first, state
+  re-check, then one write); `app.actions.get_emergency_actions` for Medic.
+- `make plan-emergency`: read-only dry run of the plans against a live connection.
+- Tests: template (5 new), sessions (3), route (1), actions on real boto3 clients with the
+  operate allowlist (5). Real botocore validation caught a short secret version id in a fixture.
+
+Not run live yet: the stack update with EnableOperate=true and `make plan-emergency` (M5).
 
 ## How to resume
 

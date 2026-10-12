@@ -92,3 +92,10 @@ For the Incidents UI (Rizwan). Contract: `docs/phase5-interfaces.md`.
   `incident_failed` steps follow `stopped` on the stream).
 - `fixes[].pull_request.state` and `pull_requests[].state` move from `open` to `merged` or
   `closed` as GitHub reports them.
+
+## Phase 5: Operate tier (emergency fixes)
+
+- `POST /connections/{connection_id}/aws/operate` with `{"enabled": true | false}`: turns approved
+  emergency fixes on (verifies the `groundcrew-operate` role) or off.
+- `ConnectionOut` adds `capabilities` (`observe`, `deploy`, `operate`; null for non-AWS) and
+  `operate_role_arn`. Suggested UI: an "Emergency fixes" toggle on the AWS card, next to deploys.

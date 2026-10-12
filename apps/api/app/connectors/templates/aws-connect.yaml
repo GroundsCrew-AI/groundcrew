@@ -6,7 +6,11 @@ Description: >-
   local Resource Explorer index in this region. Tier=deploy also creates the groundcrew-deploys
   ECS cluster, the groundcrew-task-execution role, and the groundcrew-deploy role, which may
   only create and change groundcrew-* resources tagged project=groundcrew (and write, never
-  read, groundcrew/* secrets). Delete this stack to remove all access.
+  read, groundcrew/* secrets). EnableOperate=true (independent of Tier) creates the
+  groundcrew-operate role for approved emergency fixes: roll an ECS service back to an existing
+  task definition revision, restart it, or move a secret's AWSCURRENT stage back to the previous
+  version, only on the services and secrets listed in OperateServiceArns / OperateSecretArns and
+  never reading a secret value. Delete this stack to remove all access.
 
 Parameters:
   GroundcrewPrincipalArn:
@@ -46,9 +50,42 @@ Parameters:
       Groundcrew deploy apps into a groundcrew-deploys ECS cluster, using only resources named
       groundcrew-* and tagged project=groundcrew. Switch by updating this stack.
 
+  EnableOperate:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      true: also create the groundcrew-operate role, so Groundcrew can run approved emergency
+      fixes (ECS rollback or restart, secret version rollback) on the resources listed below.
+      Independent of Tier. Every action still needs a person's approval in Groundcrew.
+  OperateServiceArns:
+    Type: CommaDelimitedList
+    Default: "arn:aws:ecs:*:*:service/none/none"
+    Description: >-
+      ECS services the operate role may update, as ARNs; a wildcard per cluster is allowed
+      (arn:aws:ecs:REGION:ACCOUNT:service/CLUSTER/*). Used only with EnableOperate=true.
+  OperateSecretArns:
+    Type: CommaDelimitedList
+    Default: "arn:aws:secretsmanager:*:*:secret:none"
+    Description: >-
+      Secrets Manager secrets whose version stages the operate role may move, as ARNs; a prefix
+      wildcard is allowed (arn:aws:secretsmanager:REGION:ACCOUNT:secret:checkout/*). Used only
+      with EnableOperate=true.
+
+Rules:
+  # The defaults above match nothing; turning operate on needs real ARNs in both lists.
+  OperateNeedsServicesAndSecrets:
+    RuleCondition: !Equals [!Ref EnableOperate, "true"]
+    Assertions:
+      - Assert: !Not [!Equals [!Join [",", !Ref OperateServiceArns], "arn:aws:ecs:*:*:service/none/none"]]
+        AssertDescription: With EnableOperate=true, list the ECS services Groundcrew may update in OperateServiceArns.
+      - Assert: !Not [!Equals [!Join [",", !Ref OperateSecretArns], "arn:aws:secretsmanager:*:*:secret:none"]]
+        AssertDescription: With EnableOperate=true, list the secrets Groundcrew may roll back in OperateSecretArns.
+
 Conditions:
   CreateIndex: !Equals [!Ref CreateResourceExplorerIndex, "true"]
   IsDeploy: !Equals [!Ref Tier, "deploy"]
+  IsOperate: !Equals [!Ref EnableOperate, "true"]
 
 Resources:
   GroundcrewRole:
@@ -465,6 +502,65 @@ Resources:
         - Key: project
           Value: groundcrew
 
+  # ------------------------------------------------------------------ EnableOperate=true only
+  # Approved emergency fixes on the customer's own resources. No create, delete, or IAM; a
+  # rollback reuses an existing task definition revision, so no iam:PassRole is needed.
+  OperateRole:
+    Type: AWS::IAM::Role
+    Condition: IsOperate
+    Properties:
+      RoleName: groundcrew-operate
+      Description: Groundcrew approved emergency fixes on the listed services and secrets (no secret values)
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: GroundcrewWithExternalId
+            Effect: Allow
+            Principal:
+              AWS: !Ref GroundcrewPrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: groundcrew-operate
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcsRollbackOrRestartListedServices
+                Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                Resource: !Ref OperateServiceArns
+              # No resource-level permissions exist for these; they only read.
+              - Sid: EcsReadTaskDefinitions
+                Effect: Allow
+                Action:
+                  - ecs:ListTaskDefinitions
+                  - ecs:DescribeTaskDefinition
+                Resource: "*"
+              - Sid: SecretsMoveVersionStagesOfListedSecrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:UpdateSecretVersionStage
+                  - secretsmanager:DescribeSecret
+                Resource: !Ref OperateSecretArns
+              # Explicit deny wins over any allow, including ones added to this role later.
+              - Sid: NeverReadSecretValuesOrData
+                Effect: Deny
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter*
+                  - kms:Decrypt
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: "*"
+      Tags:
+        - Key: project
+          Value: groundcrew
+
 Outputs:
   RoleArn:
     Description: Paste this into Groundcrew to finish connecting.
@@ -481,3 +577,7 @@ Outputs:
     Condition: IsDeploy
     Description: ECS task execution role for Groundcrew deploys (GC_TASK_EXECUTION_ROLE_ARN).
     Value: !GetAtt TaskExecutionRole.Arn
+  OperateRoleArn:
+    Condition: IsOperate
+    Description: The role Groundcrew runs approved emergency fixes with (EnableOperate=true).
+    Value: !GetAtt OperateRole.Arn

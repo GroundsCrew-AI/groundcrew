@@ -104,11 +104,11 @@ class MedicDeps:
 def _emergency_actions(
     session_factory: SessionFactory, settings: Settings
 ) -> EmergencyActions | None:
-    """Rizwan's Operate-tier actions, once app.actions provides `get_emergency_actions`."""
-    import app.actions as package
+    """The Operate-tier actions (app.actions); each plan checks the connection's operate
+    capability, so accounts without it get a note instead of an emergency action."""
+    from app.actions import get_emergency_actions
 
-    factory = getattr(package, "get_emergency_actions", None)
-    return factory(session_factory, settings) if callable(factory) else None
+    return get_emergency_actions(session_factory, settings)
 
 
 def default_deps(session_factory: SessionFactory, settings: Settings | None = None) -> MedicDeps:

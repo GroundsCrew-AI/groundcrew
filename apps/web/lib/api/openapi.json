@@ -401,6 +401,20 @@
         "title": "AwsCompleteIn",
         "type": "object"
       },
+      "AwsOperateIn": {
+        "description": "Turn approved emergency fixes on (after the stack has EnableOperate=true) or off.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AwsOperateIn",
+        "type": "object"
+      },
       "AwsStartIn": {
         "properties": {
           "tier": {
@@ -846,6 +860,25 @@
             ],
             "title": "Account"
           },
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "observe",
+                    "deploy",
+                    "operate"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -916,6 +949,17 @@
               }
             ],
             "title": "Namespaces"
+          },
+          "operate_role_arn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operate Role Arn"
           },
           "preview": {
             "title": "Preview",
@@ -7641,6 +7685,76 @@
           }
         },
         "summary": "Delete Connection",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/aws/operate": {
+      "post": {
+        "description": "Turn approved emergency fixes on or off for a connected AWS account. On: verifies the\ngroundcrew-operate role first (nothing changes if it cannot be used). Off: Groundcrew stops\nusing the role at once; update the stack to EnableOperate=false to delete it. Every fix\nstill needs a person's approval.",
+        "operationId": "aws_set_operate_connections__connection_id__aws_operate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AwsOperateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Aws Set Operate",
         "tags": [
           "connections"
         ]
