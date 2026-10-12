@@ -11,6 +11,9 @@ import { agentName, formatCost, formatDuration, formatTimestamp, formatTokens } 
 
 import { DeployPlanCard } from "@/components/deploy/plan-card";
 import { DeployStep, deployStepColor, hiddenDeploySteps, replacedPlans } from "@/components/deploy/deploy-step";
+import { FixApprovalCard } from "@/components/incidents/fix-approval-card";
+import { MedicStep, medicStepColor } from "@/components/incidents/medic-step";
+import { isMedicStep } from "@/lib/incidents";
 
 import { ApprovalCard, DecidedBy } from "./approval-card";
 import { PolicyTag, TierBadge } from "./badges";
@@ -23,6 +26,7 @@ const TIER_COLOR: Record<string, string> = {
 
 function nodeColor(step: Step, approval: Approval | undefined): string {
   if (step.kind !== "approval_requested" && step.kind !== "approval_decided") {
+    if (isMedicStep(step)) return medicStepColor(step);
     const deploy = deployStepColor(step);
     if (deploy) return deploy;
   }
@@ -222,6 +226,14 @@ export function Timeline({
                   onFixEnv={onFixEnv && ((fix) => onFixEnv(approval, fix))}
                   fixing={fixing === approval.id}
                 />
+              ) : step.kind === "approval_requested" && approval && step.data?.type === "fix_approval" ? (
+                <FixApprovalCard
+                  fix={step.data.fix}
+                  approval={approval}
+                  runEnded={ended}
+                  onDecide={(decision) => onDecide(approval, decision)}
+                  deciding={deciding?.id === approval.id ? deciding.decision : null}
+                />
               ) : step.kind === "approval_requested" && approval ? (
                 <ApprovalCard
                   approval={approval}
@@ -233,6 +245,8 @@ export function Timeline({
                 <div className="pt-px">
                   <DecidedBy approval={approval} />
                 </div>
+              ) : step.data && isMedicStep(step) ? (
+                <MedicStep step={step} />
               ) : step.data ? (
                 <DeployStep step={step} />
               ) : (

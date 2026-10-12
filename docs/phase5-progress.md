@@ -11,9 +11,9 @@ Owner: Ahmed (all of Phase 5 since 2026-10-12, including the parts planned for R
 | M2 Detection | `phase5-m2-detection` | #26 | Merged 2026-10-12 |
 | M3 Medic agent | `phase5-m3-medic` | #27 | Merged 2026-10-12 |
 | M4 Incidents API + wiring | `phase5-m4-incidents-api` | #28 | Merged 2026-10-12 |
-| Operate tier (was Rizwan's) | `phase5-operate` | #29 (draft) | Done, in review |
-| Incidents UI (was Rizwan's) | | | Next |
-| M5 Live verification | | | Needs Rizwan: checkout-demo rebuild, Operate role |
+| Operate tier (was Rizwan's) | `phase5-operate` | #29 | Merged 2026-10-13 |
+| Incidents UI (was Rizwan's) | `phase5-incidents-ui` | #30 (draft) | Done, in review |
+| M5 Live verification | | | Needs AWS CLI, Terraform, the groundcrew-demo profile, Tavily key, and an OK for live runs |
 
 ## M0 (2026-10-12)
 
@@ -222,6 +222,28 @@ Ahmed took over Rizwan's Phase 5 parts. Done:
   operate allowlist (5). Real botocore validation caught a short secret version id in a fixture.
 
 Not run live yet: the stack update with EnableOperate=true and `make plan-emergency` (M5).
+
+Spend: $0.
+
+## Incidents UI (2026-10-12)
+
+Done (`apps/web`):
+- `/incidents`: list with status tabs (all, needs approval, resolved, not resolved), severity,
+  affected resources, detector, time to resolve, cost; paging; **Report incident** dialog
+  (resources from the Map graph, what you see, severity) that opens the incident page.
+- `/incidents/[id]`: status, severity, detector, opened, time to detect and resolve, tokens and
+  cost, affected resources linked to the Map, memory reuse, outcome; the root cause with each
+  claim opening to the exact evidence lines it cites; what changed (deploys, commits, secret
+  changes on the window, first signal marked); fixes with PR links and state; the last
+  recovery check; research links; Stop; then the live Medic run timeline.
+- Shared timeline: Medic events render with `MedicStep`; fix approvals with `FixApprovalCard`
+  (emergency actions as before -> after lines, PRs as their diff; "Approve and run" /
+  "Approve and open PR"). `use-run-stream` now subscribes to the incident events (it only
+  listened to deploy events, so Medic steps would never have arrived live).
+- Tests: `components/incidents/incidents.test.tsx` (10). `tsc`, eslint, vitest (91), `next build`.
+
+Not done: the Connections page's "Emergency fixes" toggle (needs #29's API types); it lands
+after #29 merges.
 
 ## How to resume
 
