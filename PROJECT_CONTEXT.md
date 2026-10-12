@@ -490,6 +490,15 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
           `aws_deploy_session()`, temp `DOCKER_CONFIG`, `--password-stdin`); `NebiusSandbox` stub
           (`TODO(nebius-sandbox)`). Live: `legacy-flask-app` naive build fails on `pg_config`, fixed build
           passes smoke and pushes to kind
+    - [x] M3 Targets (`app/targets/`): `K8sTarget` and `EcsTarget` behind one protocol (discover, plan,
+          preflight, apply, verify, logs, rollback_plan, rollback). Nothing leaves the sandbox before
+          approval: the push is the first apply step (ECR repository first on ECS). `apply()` and
+          `rollback()` need a single-use `ApprovedAction` bound to run + plan hash
+          (`app/policy/actions.py`; rollback, including deleting a first deploy, needs an emergency
+          approval). k8s: gc-<app> -> RoleBinding -> Secret -> Deployment -> Service -> Ingress;
+          ECS: deploy role only, deploy_infra names and tags, task definitions never deregistered,
+          SG source `GC_INGRESS_CIDR`. Live on kind (deploy, redeploy, rollback, delete); ECS dry run
+          only (`make plan-target`)
 - [ ] Phase 5 — Medic + fixes
 - [ ] Phase 6 — Hardening + hosting
 - [ ] Phase 7 — Submission

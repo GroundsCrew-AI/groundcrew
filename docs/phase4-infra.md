@@ -380,3 +380,96 @@ found` (78 s); with `gcc libc6-dev libpq-dev` added it builds (97 s), the smoke 
 One capture failed instead with a PyPI broken pipe while installing build dependencies
 (`tests/fixtures/sandbox/pip-network-flake.log`): Builder must retry such failures without
 spending a fix attempt.
+
+## Targets (`app/targets/`)
+
+A target takes an image that was built and smoke-tested in the sandbox to a running app. One
+protocol for Kubernetes (`K8sTarget`) and AWS ECS (`EcsTarget`); `target_for(settings,
+credentials, connection)` picks one (`k8s`, or `aws` with `Tier=deploy`).
+
+| Call | What it does | Writes |
+|---|---|---|
+| `discover()` | What the target runs: `gc-*` namespaces and their objects (same external ids as discovery), or the services in `groundcrew-deploys` (by ARN) | no |
+| `plan(spec)` | `TargetPlan`: apply steps in order, rendered manifests or task definition (secrets `********`), `previous_revision`; `plan_hash()` binds the approval | no |
+| `preflight(plan)` | image built and smoke-tested, required env, port, names (exists and not Groundcrew's, or a namespace still terminating), ECS cluster active | no |
+| `apply(plan, spec, token, sandbox)` | push first, then the steps; `spec` must match the plan (`PlanMismatchError`) | yes, with `target_apply` |
+| `verify(deployment)` | rollout, then the health path and `/` over HTTP (`/` is recorded but does not decide when there is a health path) | no |
+| `logs(deployment, since)` | pod logs, or CloudWatch `/groundcrew/<app>`, redacted | no |
+| `rollback_plan(deployment)` | back to `previous_revision`, or delete a first deploy | no |
+| `rollback(plan, token)` | runs that plan | yes, with `target_rollback` |
+
+**Nothing leaves the sandbox before approval.** Preflight reads only. The first apply step is
+the image push (on ECS, after creating the ECR repository), so the approval comes before the
+image reaches any registry.
+
+**Approved actions.** `apply()` and `rollback()` refuse to run without an `ApprovedAction` from
+`app.policy.actions.issue_approved_action`: an approved, unused approval for the same run, with
+tool name `target_apply` (policy write) or `target_rollback` (policy emergency) and
+`arguments.plan_hash` equal to the plan's hash. Issuing marks the approval used; the target
+consumes the token before its first write. No token, a reused token, a token for another plan,
+run, or action, or a hand-made one all raise `PolicyViolationError`. Medic calls `rollback()`
+the same way, with its own emergency approval. A rollback, including deleting a first deploy,
+never runs on its own.
+
+### Kubernetes
+
+Credentials: `CredentialsProvider.kubeconfig()` (the `groundcrew-deployer` ServiceAccount).
+
+1. push to `GC_KIND_REGISTRY/<app>:<tag>` (pods pull the same name)
+2. Namespace `gc-<app>`, labels `project=groundcrew`, `groundcrew/deploy=<run>` (create only)
+3. RoleBinding `groundcrew-deployer` to `gc-namespace-admin` (create only)
+4. Secret `<app>-env` with the secret env vars (server-side apply, field manager `groundcrew`)
+5. Deployment (readiness probe on the health path, or TCP on the port; 250m / 512Mi)
+6. Service (port 80 to the app's port) and Ingress `<app>.GC_KIND_APP_DOMAIN` (class `nginx`)
+
+The deployer cannot read Secrets before the RoleBinding exists, so a plan for a new namespace
+does not look inside it. Writes right after the RoleBinding retry a 403 for a few seconds.
+Verify waits for the rollout (stopping early on `ErrImagePull`, `ImagePullBackOff`,
+`CreateContainerConfigError`, repeated `CrashLoopBackOff`, a `ReplicaFailure` condition, or
+`ProgressDeadlineExceeded`), then sends requests to `GC_KIND_INGRESS_URL` with the app's
+`Host` header. Rollback merges an earlier ReplicaSet's pod template back into the Deployment
+(like `kubectl rollout undo`); deleting a first deploy deletes the namespace.
+
+### AWS ECS
+
+Credentials: `CredentialsProvider.aws_deploy_session()` only (guarded by
+`AWS_DEPLOY_OPERATIONS`). Names from `deploy_infra` (`ecr_repository`, `log_group`,
+`task_family`, `ecs_service`, `secret_name`), and the required tags on everything created.
+
+1. ECR repository `groundcrew-<app>`, then push `<account>.dkr.ecr.<region>.amazonaws.com/groundcrew-<app>:<tag>`
+2. log group `/groundcrew/<app>`, `GC_LOG_RETENTION_DAYS` retention
+3. security group `groundcrew-<app>`: the app's port from `GC_INGRESS_CIDR` (0.0.0.0/0 for the demo)
+4. Secrets Manager `groundcrew/<app>/<VAR>` (create or put; never read back)
+5. task definition `groundcrew-<app>`, a new revision (0.25 vCPU / 0.5 GB, awslogs, secrets by ARN)
+6. service `<app>` in `groundcrew-deploys` (create, or update with `forceNewDeployment`)
+
+Task definitions are never deregistered: every revision stays available for a rollback.
+Verify waits for the primary deployment's `rolloutState` (stopping on `FAILED`, with the stopped
+tasks' reasons), finds the new task's public IP, and checks `http://<ip>:<port>`. Rollback
+points the service at the previous task definition; deleting a first deploy scales the
+service to 0 and deletes it (the image, log group, security group, and secrets stay for
+`make cleanup-deploys`).
+
+### Settings
+
+| Setting | Default | What it is |
+|---|---|---|
+| `GC_INGRESS_CIDR` | `0.0.0.0/0` | Source of the ECS security group rule |
+| `GC_KIND_APP_DOMAIN` | `localhost` | kind apps answer at `http://<app>.<domain>` |
+| `GC_KIND_INGRESS_URL` | `http://127.0.0.1` | Where verify reaches ingress-nginx (`http://groundcrew-control-plane` from Compose with `KIND=1`) |
+| `GC_VERIFY_TIMEOUT_SECONDS` | `300` | Rollout or stable-service wait |
+| `GC_LOG_RETENTION_DAYS` | `7` | The app's CloudWatch log group |
+
+### Checking it
+
+- `pytest tests/test_targets.py tests/test_approved_action.py`: both targets on fakes (order of
+  writes, tags, masking, tokens, verify, logs, rollback).
+- `RUN_LIVE_TESTS=1 pytest tests/test_targets_kind_live.py -s` (after `make kind-up` and
+  `make kind-kubeconfig`): build and smoke-test a small app, then plan, approve, apply, verify,
+  logs, a second deploy, a rollback, and the delete, on the live kind cluster.
+- `make plan-target CONNECTION=<id>`: the plan and preflight for a real connection, read-only.
+  Run it and get an OK before any live ECS apply.
+
+Live (2026-10-12, kind): first deploy verified in 8.0 s (rollout 1/1, `/health` 200), second
+deploy 6.0 s, rollback to revision 1 verified, namespace deleted. ECS: dry run only
+(`make plan-target`, account 881050425883): 7 apply steps, all preflight checks pass.
