@@ -69,3 +69,16 @@ The full contract is in `docs/deploys-contract.md`; the events are in `docs/even
 - New SSE event names for deploy runs: `stage_started`, `stage_finished`, `build_attempt`,
   `verify_result`, `live_url`, `rollback_offered`, `run_finished`. Each sends a `StepOut`.
   `approval_requested` for a deploy carries the plan in `step.data` (`type: "deploy_plan"`).
+
+## Phase 5 M0: incidents contract
+
+For the Incidents UI (Rizwan). Contract: `docs/phase5-interfaces.md`.
+
+- New routes `POST /incidents`, `GET /incidents`, `GET /incidents/{incident_id}`: typed, answer 501
+  until Phase 5 M4.
+- `StepOut.data` is now `DeployEventData | MedicEventData`: incident steps carry `IncidentOpened`,
+  `EvidenceCollected`, `MemoryChecked`, `ResearchDone`, `Diagnosis`, `FixProposed`, `FixApproval`,
+  `FixApplied`, `IncidentResolved`, or `IncidentFailed`, discriminated by `type`. Existing deploy
+  code that narrows on `data.type` is unaffected (web typecheck and tests pass unchanged).
+- `SseEventName` adds `incident_opened`, `evidence_collected`, `memory_checked`, `research_done`,
+  `diagnosis`, `fix_proposed`, `fix_applied`, `incident_resolved`, `incident_failed`.
