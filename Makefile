@@ -13,7 +13,7 @@ CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
 .PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
-	kind-up kind-down kind-kubeconfig kind-check kind-register plan-target live-ecs-target dind-check smoke-ecs cleanup-deploys
+	kind-up kind-down kind-kubeconfig kind-check kind-register plan-target live-ecs-target live-builder dind-check smoke-ecs cleanup-deploys
 
 # KIND=1 joins api and worker to the kind network (make kind-up first).
 COMPOSE := docker compose$(if $(filter 1,$(KIND)), -f docker-compose.yml -f docker-compose.kind.yml)
@@ -152,6 +152,11 @@ live-ecs-target:
 	@test -n "$(CONNECTION)" -a "$(CONFIRM)" = "881050425883" -a -n "$(APPROVED_BY)" || { echo "Usage: make live-ecs-target CONNECTION=<aws connection id> CONFIRM=881050425883 APPROVED_BY=<github login>"; exit 1; }
 	DATABASE_URL=$(DB_URL) $(UV) run --project $(API) python scripts/live_ecs_target.py --connection $(CONNECTION) \
 		--confirm $(CONFIRM) --approved-by $(APPROVED_BY) $(if $(RESUME),--resume $(RESUME))
+
+# Live Builder check: Scout + Builder on legacy-flask-app with real Token Factory calls and the
+# local Docker sandbox (nothing pushed). Spend capped by MAX_USD (default 0.10).
+live-builder:
+	$(UV) run --project $(API) python scripts/live_builder.py $(if $(MAX_USD),--max-usd $(MAX_USD))
 
 # Deletes what deploys left behind (project=groundcrew, older than HOURS) on AWS (every
 # deploy-tier connection, or CONNECTION) and in kind. Dry run unless APPLY=1 (docs/phase4-infra.md).

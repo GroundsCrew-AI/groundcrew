@@ -68,6 +68,9 @@ class FakeSandbox:
         self.pushed.append((image_ref, target))
         return PushResult(image=target.image, digest="sha256:" + "a" * 64, duration_ms=10)
 
+    async def image_id(self, image_ref: str) -> str:
+        return "sha256:" + "b" * 64
+
     async def cleanup(self, run_id: str) -> None:
         return None
 

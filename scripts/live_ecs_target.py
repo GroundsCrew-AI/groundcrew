@@ -27,9 +27,11 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "apps" / "api"))
@@ -87,7 +89,12 @@ async def run(args: argparse.Namespace) -> int:
     from app.connectors.credentials import ConnectionCredentialsProvider
     from app.db.models import Approval, ApprovalStatus, Connection, Run, RunStatus, ToolPolicy, User
     from app.db.session import get_session_factory
-    from app.policy.actions import TARGET_APPLY, TARGET_ROLLBACK, issue_approved_action
+    from app.policy.actions import (
+        TARGET_APPLY,
+        TARGET_ROLLBACK,
+        TargetAction,
+        issue_approved_action,
+    )
     from app.sandbox import DockerSandbox
     from app.sandbox.base import SmokeEnv
     from app.targets import EcsTarget, target_for
@@ -101,7 +108,7 @@ async def run(args: argparse.Namespace) -> int:
     def say(text: str) -> None:
         print(scrub(text), flush=True)
 
-    async def step(name: str, coro):  # type: ignore[no-untyped-def]
+    async def step(name: str, coro: Awaitable[Any]) -> Any:
         start = time.monotonic()
         try:
             result = await coro
@@ -173,7 +180,9 @@ async def run(args: argparse.Namespace) -> int:
     approved_by = args.approved_by
     try:
 
-        async def approval(action: str, plan_hash: str, policy: ToolPolicy, what: str):  # type: ignore[no-untyped-def]
+        async def approval(
+            action: TargetAction, plan_hash: str, policy: ToolPolicy, what: str
+        ) -> tuple[Any, str]:
             async with sf() as db:
                 row = Approval(
                     run_id=run_id,
@@ -190,7 +199,7 @@ async def run(args: argparse.Namespace) -> int:
                 await db.commit()
                 token = await issue_approved_action(
                     db, row, run_id=run_id, action=action, plan_hash=plan_hash
-                )  # type: ignore[arg-type]
+                )
             return token, f"approval {row.id} ({policy}), approved in chat by {approved_by}"
 
         if args.resume is None:
@@ -265,7 +274,7 @@ async def run(args: argparse.Namespace) -> int:
             )
 
             # 2. Plan and preflight (read only).
-            async def plan_and_check():  # type: ignore[no-untyped-def]
+            async def plan_and_check() -> tuple[Any, str]:
                 plan = await target.plan(spec)
                 checks = await target.preflight(plan)
                 failed = [c for c in checks if c.status == "fail" and not c.overridden]
@@ -297,7 +306,7 @@ async def run(args: argparse.Namespace) -> int:
             )
 
             # 3. Apply: ECR repository, push, then the rest.
-            async def apply():  # type: ignore[no-untyped-def]
+            async def apply() -> tuple[Any, str]:
                 report.secret_created = time.monotonic()
                 dep = await target.apply(plan, spec, token, sandbox)
                 report.service_started = time.monotonic()
@@ -308,7 +317,7 @@ async def run(args: argparse.Namespace) -> int:
 
             deployment = await step("6 apply (push first, token spent)", apply())
 
-            async def reuse():  # type: ignore[no-untyped-def]
+            async def reuse() -> tuple[Any, str]:
                 try:
                     await target.apply(plan, spec, token, sandbox)
                 except Exception as exc:
@@ -320,15 +329,15 @@ async def run(args: argparse.Namespace) -> int:
         else:
             # Resume after a stop at verify: the service is already there (no new writes).
             name = "legacy-flask-app"
-            service = await target._service(name)
-            if service is None:
+            live_service = await target._service(name)
+            if live_service is None:
                 raise RuntimeError(f"no ACTIVE service {name} to resume")
             report.service_started = (
-                time.monotonic() - (datetime.now(UTC) - service["createdAt"]).total_seconds()
+                time.monotonic() - (datetime.now(UTC) - live_service["createdAt"]).total_seconds()
             )
             report.secret_created = report.service_started - 30
             definition = await target._aws(
-                "ecs", "describe_task_definition", taskDefinition=service["taskDefinition"]
+                "ecs", "describe_task_definition", taskDefinition=live_service["taskDefinition"]
             )
             deployment = Deployment(
                 target="aws_ecs",
@@ -336,16 +345,16 @@ async def run(args: argparse.Namespace) -> int:
                 run_id=run_id,
                 app=name,
                 image=definition["taskDefinition"]["containerDefinitions"][0]["image"],
-                revision=service["taskDefinition"],
+                revision=live_service["taskDefinition"],
                 previous_revision=None,
                 location=f"{settings.gc_ecs_cluster}/{name}",
                 port=8000,
                 health_path="/health",
-                external_id=service["serviceArn"],
+                external_id=live_service["serviceArn"],
             )
-            say(f"  resumed at verify: {service['taskDefinition'].rsplit('/', 1)[-1]}")
+            say(f"  resumed at verify: {live_service['taskDefinition'].rsplit('/', 1)[-1]}")
 
-        async def verify():  # type: ignore[no-untyped-def]
+        async def verify() -> tuple[Any, str]:
             health = await target.verify(deployment)
             checks = ", ".join(f"{c.name} {c.detail}" for c in health.checks)
             if not health.ok:
@@ -355,7 +364,7 @@ async def run(args: argparse.Namespace) -> int:
         health = await step("8 verify (rollout, /health, /)", verify())
         live_url = health.live_url
 
-        async def logs():  # type: ignore[no-untyped-def]
+        async def logs() -> tuple[Any, str]:
             lines = await target.logs(deployment, datetime.now(UTC) - timedelta(minutes=15))
             if any(dummy in line.message or "postgresql://" in line.message for line in lines):
                 raise RuntimeError("a database URL appeared in the logs")
@@ -375,7 +384,7 @@ async def run(args: argparse.Namespace) -> int:
             ),
         )
 
-        async def roll():  # type: ignore[no-untyped-def]
+        async def roll() -> tuple[Any, str]:
             done = await target.rollback(rollback, rtoken)
             report.service_deleted = time.monotonic()
             return done, f"{done.status}: {rollback.steps[0].kind} {rollback.steps[0].name}"
