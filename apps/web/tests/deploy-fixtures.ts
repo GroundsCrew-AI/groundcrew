@@ -44,6 +44,7 @@ export function plan(overrides: Partial<DeployPlan> = {}): DeployPlan {
     target_connection_id: "conn-k8s",
     app: "legacy-flask-app",
     image: "kind-registry:5000/legacy-flask-app:abc",
+    source_image: "sha256:9c41e0d2b7a3",
     port: 8000,
     health_path: "/health",
     replicas: 1,
@@ -54,11 +55,12 @@ export function plan(overrides: Partial<DeployPlan> = {}): DeployPlan {
       { name: "MODE", secret: false, required: false, provided: true, value: "production" },
     ],
     resources: [
+      { kind: "image", name: "kind-registry:5000/legacy-flask-app:abc", action: "push", detail: null },
       { kind: "Namespace", name: "gc-legacy-flask-app", action: "create", detail: null },
       { kind: "Deployment", name: "legacy-flask-app", action: "create", detail: "1 replica" },
     ],
     preflight: [
-      { name: "image", status: "pass", detail: "pushed", overridden: false },
+      { name: "image", status: "pass", detail: "Built and smoke-tested (sha256:9c41e0d2b7a3)", overridden: false },
       { name: "env", status: "pass", detail: "All required env vars set", overridden: false },
     ],
     allow_missing_env: false,

@@ -115,9 +115,14 @@ export function deployView(steps: Step[], approvals: Record<string, Approval>): 
   };
 }
 
+/** Preflight checks that failed and were not overridden: while any remain, no approval. */
+export function failingChecks(plan: DeployPlan): DeployPlan["preflight"] {
+  return plan.preflight.filter((check) => check.status === "fail" && !check.overridden);
+}
+
 /** True when a preflight check failed and was not overridden: the plan cannot be approved. */
 export function planBlocked(plan: DeployPlan): boolean {
-  return plan.preflight.some((check) => check.status === "fail" && !check.overridden);
+  return failingChecks(plan).length > 0;
 }
 
 /** Masked display value for an env var on the approval card. */

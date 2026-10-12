@@ -10,7 +10,8 @@ export function PreviewBanner() {
       <FlaskConical aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
       <span>
         <span className="font-medium text-foreground">Preview.</span> The deploy pipeline is not connected yet,
-        so this run is simulated in your browser. Nothing is built or deployed, and it is gone after a reload.
+        so this run is simulated in your browser: it always deploys GroundsCrew-AI/legacy-flask-app, nothing is
+        built or deployed, and it is gone after a reload. Times are simulated too.
       </span>
     </p>
   );

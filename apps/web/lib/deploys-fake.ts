@@ -7,21 +7,31 @@
  *
  * Every value is typed with the real M1 schema (lib/api/schema.d.ts), and the scripted run
  * emits the same reducer actions as the SSE stream, so the page is built against the real
- * contract. The script is legacy-flask-app with one automatic build fix (docs/demo.md).
+ * contract. The script is GroundsCrew-AI/legacy-flask-app with one automatic build fix
+ * (docs/demo.md), whatever repository was picked.
+ *
+ * Time is simulated: each beat plays in a second or two but advances a clock by what the step
+ * would really take (a 97 s build, a 41 s ECS verify). Step times, stage durations, and the
+ * run's elapsed time all come from that clock, so they add up.
  */
 import type { Approval, Decision, RunDetail, Schemas, Step } from "@/lib/api/client";
+import type { EnvFix } from "@/lib/deploys";
 import type { TimelineAction } from "@/lib/timeline";
 
 type DeployCreate = Schemas["DeployCreate"];
 type DeploySummary = Schemas["DeploySummary"];
 type DeployDetail = Schemas["DeployDetail"];
 type DeployPlan = Schemas["DeployPlan"];
+type EnvVarView = Schemas["EnvVarView"];
+type Stage = Schemas["StageStarted"]["stage"];
+type StageAgent = Schemas["StageStarted"]["agent"];
 type TargetKind = DeployPlan["target"];
 type EventData = NonNullable<Step["data"]>;
 
 export type PreviewLabels = { repo: string; ref: string | null; targetName: string; targetKind: TargetKind };
 
-type Beat = { delay: number; run: () => void };
+/** `delay`: real ms before the beat plays. `ms`: simulated ms it stands for (default `delay`). */
+type Beat = { delay: number; ms?: number; pause?: boolean; run: () => void };
 
 type FakeDeploy = {
   detail: DeployDetail;
@@ -33,13 +43,27 @@ type FakeDeploy = {
   paused: boolean;
   listeners: Set<(action: TimelineAction) => void>;
   timer: ReturnType<typeof setTimeout> | null;
+  targetKind: TargetKind;
+  targetConnectionId: string;
+  // Env as the plan sees it. Secret values are never kept, only that one was given.
+  env: Map<string, { secret: boolean; provided: boolean; value: string | null }>;
+  allowMissing: boolean;
+  // Simulated clock: ms since `anchor` (epoch ms), advanced by each beat.
+  anchor: number;
+  clock: number;
+  startClock: number;
+  lastReal: number;
+  stageStart: Partial<Record<Stage, number>>;
 };
 
 const deploys = new Map<string, FakeDeploy>();
 const byRun = new Map<string, string>();
 
+const REPO = "GroundsCrew-AI/legacy-flask-app";
 const APP = "legacy-flask-app";
 const COMMIT = "3f2a9c1b7d4e5f60718293a4b5c6d7e8f9a0b1c2";
+const IMAGE_ID = "sha256:9c41e0d2b7a35f1e86c0a4d9e2b7f3c15a8d6e0f4b2c9a71d3e5f8b0c6a4d2e1";
+const REQUIRED = "DATABASE_URL";
 const NAIVE = `FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .
@@ -69,8 +93,8 @@ const FAILED_LOG = `#8 [4/5] RUN pip install --no-cache-dir -r requirements.txt
 
 type Resource = DeployPlan["resources"][number];
 
-function res(kind: string, name: string, detail: string | null = null): Resource {
-  return { kind, name, action: "create", detail };
+function res(kind: string, name: string, detail: string | null = null, action: Resource["action"] = "create"): Resource {
+  return { kind, name, action, detail };
 }
 
 function omit<T extends object, K extends keyof T>(value: T, ...keys: K[]): Omit<T, K> {
@@ -79,8 +103,16 @@ function omit<T extends object, K extends keyof T>(value: T, ...keys: K[]): Omit
   return copy;
 }
 
-function now(): string {
-  return new Date().toISOString();
+/** The simulated time now. */
+function vnow(d: FakeDeploy): string {
+  return new Date(d.anchor + d.clock).toISOString();
+}
+
+/** Moves the clock on by `ms`, or by the real time that passed if that is longer (a wait). */
+function advance(d: FakeDeploy, ms: number): void {
+  const real = Date.now() - d.lastReal;
+  d.clock += Math.max(ms, real);
+  d.lastReal = Date.now();
 }
 
 function step(d: FakeDeploy, kind: string, agent: string, extra: Partial<Step> = {}): Step {
@@ -101,7 +133,7 @@ function step(d: FakeDeploy, kind: string, agent: string, extra: Partial<Step> =
     latency_ms: null,
     cost_usd: null,
     data: null,
-    created_at: now(),
+    created_at: vnow(d),
     ...extra,
   };
 }
@@ -128,70 +160,106 @@ function setRun(d: FakeDeploy, patch: Partial<RunDetail>): void {
   emit(d, { type: "status", status: { ...status, result: d.run.result ?? null, error: d.run.error ?? null } });
 }
 
+function startStage(d: FakeDeploy, stage: Stage, agent: StageAgent): void {
+  d.stageStart[stage] = d.clock;
+  event(d, agent, { type: "stage_started", stage, agent });
+}
+
+function finishStage(
+  d: FakeDeploy,
+  stage: Stage,
+  agent: StageAgent,
+  summary: string,
+  status: Schemas["StageFinished"]["status"] = "succeeded",
+): void {
+  const duration = d.clock - (d.stageStart[stage] ?? d.clock);
+  event(d, agent, { type: "stage_finished", stage, agent, status, duration_ms: duration, summary });
+}
+
+/** A stage with nothing in between: `real` ms on screen standing for `sim` ms. */
+function stage(d: FakeDeploy, name: Stage, agent: StageAgent, summary: string, real: number, sim: number): Beat[] {
+  return [
+    { delay: 300, run: () => startStage(d, name, agent) },
+    { delay: real, ms: sim, run: () => finishStage(d, name, agent, summary) },
+  ];
+}
+
+const MODEL_ID = { nano: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B", super: "nvidia/nemotron-3-super-120b-a12b" };
+
+function llmLatency(tokens: [number, number]): number {
+  return 1800 + tokens[1];
+}
+
+/** A model call beat; its simulated time is the call's latency. */
 function llm(
   d: FakeDeploy,
+  delay: number,
   agent: string,
   tier: "nano" | "super",
   summary: string,
   tokens: [number, number],
   cost: number,
-): Step {
-  const s = push(
-    d,
-    step(d, "llm", agent, {
-      model_tier: tier,
-      model_id: tier === "nano" ? "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B" : "nvidia/nemotron-3-super-120b-a12b",
-      reasoning_mode: tier === "nano" ? "low" : "on",
-      prompt_tokens: tokens[0],
-      completion_tokens: tokens[1],
-      latency_ms: 1800 + tokens[1],
-      cost_usd: cost,
-      output_summary: summary,
-    }),
-  );
-  setRun(d, {
-    prompt_tokens: d.run.prompt_tokens + tokens[0],
-    completion_tokens: d.run.completion_tokens + tokens[1],
-    total_tokens: d.run.total_tokens + tokens[0] + tokens[1],
-    cost_usd: Number(((d.run.cost_usd ?? 0) + cost).toFixed(6)),
-  });
-  return s;
-}
-
-function stage(d: FakeDeploy, name: Schemas["StageStarted"]["stage"], agent: Schemas["StageStarted"]["agent"], summary: string, ms: number): Beat[] {
-  return [
-    { delay: 300, run: () => event(d, agent, { type: "stage_started", stage: name, agent }) },
-    {
-      delay: ms,
-      run: () =>
-        event(d, agent, { type: "stage_finished", stage: name, agent, status: "succeeded", duration_ms: ms, summary }),
+): Beat {
+  return {
+    delay,
+    ms: llmLatency(tokens),
+    run: () => {
+      push(
+        d,
+        step(d, "llm", agent, {
+          model_tier: tier,
+          model_id: MODEL_ID[tier],
+          reasoning_mode: tier === "nano" ? "low" : "on",
+          prompt_tokens: tokens[0],
+          completion_tokens: tokens[1],
+          latency_ms: llmLatency(tokens),
+          cost_usd: cost,
+          output_summary: summary,
+        }),
+      );
+      setRun(d, {
+        prompt_tokens: d.run.prompt_tokens + tokens[0],
+        completion_tokens: d.run.completion_tokens + tokens[1],
+        total_tokens: d.run.total_tokens + tokens[0] + tokens[1],
+        cost_usd: Number(((d.run.cost_usd ?? 0) + cost).toFixed(6)),
+      });
     },
-  ];
+  };
 }
 
-function plan(d: FakeDeploy, request: DeployCreate, labels: PreviewLabels): DeployPlan {
-  const k8s = labels.targetKind === "k8s";
-  const image = k8s
-    ? `kind-registry:5000/${APP}:${COMMIT.slice(0, 12)}`
-    : `881050425883.dkr.ecr.us-east-2.amazonaws.com/groundcrew-${APP}:${COMMIT.slice(0, 12)}`;
-  const given = new Map((request.env ?? []).map((v) => [v.name, v]));
-  const names = new Set(["DATABASE_URL", ...given.keys()]);
-  const env = [...names].sort().map((name) => {
-    const v = given.get(name);
-    const secret = v?.secret ?? name === "DATABASE_URL";
-    const provided = Boolean(v && v.value);
-    return { name, secret, required: name === "DATABASE_URL", provided, value: !secret && provided ? v!.value : null };
+function envViews(d: FakeDeploy): EnvVarView[] {
+  const names = new Set([REQUIRED, ...d.env.keys()]);
+  return [...names].sort().map((name) => {
+    const v = d.env.get(name);
+    const secret = v?.secret ?? name === REQUIRED;
+    const provided = v?.provided ?? false;
+    return { name, secret, required: name === REQUIRED, provided, value: !secret && provided ? (v?.value ?? null) : null };
   });
-  const missing = env.filter((v) => v.required && !v.provided).map((v) => v.name);
-  const allow = request.options?.allow_missing_env ?? false;
+}
+
+function missingEnv(d: FakeDeploy): string[] {
+  return envViews(d)
+    .filter((v) => v.required && !v.provided)
+    .map((v) => v.name);
+}
+
+function plan(d: FakeDeploy): DeployPlan {
+  const k8s = d.targetKind === "k8s";
+  const tag = COMMIT.slice(0, 12);
+  const image = k8s
+    ? `kind-registry:5000/${APP}:${tag}`
+    : `881050425883.dkr.ecr.us-east-2.amazonaws.com/groundcrew-${APP}:${tag}`;
+  const env = envViews(d);
+  const missing = missingEnv(d);
   const masked = env.map((v) => `${v.name}=${v.secret ? "********" : (v.value ?? "")}`);
+  const secrets = env.filter((v) => v.secret && v.provided);
+  const pushImage = res("image", image, `${IMAGE_ID.slice(0, 19)} from the sandbox`, "push");
   const rendered = k8s
     ? [
         `apiVersion: v1\nkind: Namespace\nmetadata:\n  name: gc-${APP}\n  labels: {project: groundcrew}`,
-        `apiVersion: v1\nkind: Secret\nmetadata: {name: ${APP}-env, namespace: gc-${APP}}\nstringData:\n${env
-          .filter((v) => v.secret && v.provided)
-          .map((v) => `  ${v.name}: "********"`)
-          .join("\n") || "  {}"}`,
+        `apiVersion: v1\nkind: Secret\nmetadata: {name: ${APP}-env, namespace: gc-${APP}}\nstringData:\n${
+          secrets.map((v) => `  ${v.name}: "********"`).join("\n") || "  {}"
+        }`,
         `apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: ${APP}, namespace: gc-${APP}}\nspec:\n  replicas: 1\n  template:\n    spec:\n      containers:\n        - name: ${APP}\n          image: ${image}\n          ports: [{containerPort: 8000}]\n          resources: {requests: {cpu: 250m, memory: 512Mi}}\n          readinessProbe: {httpGet: {path: /health, port: 8000}}\n          env: [${masked.join(", ")}]`,
         `apiVersion: v1\nkind: Service\nmetadata: {name: ${APP}, namespace: gc-${APP}}\nspec: {ports: [{port: 80, targetPort: 8000}]}`,
         `apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata: {name: ${APP}, namespace: gc-${APP}}\nspec: {rules: [{host: ${APP}.localhost}]}`,
@@ -208,9 +276,7 @@ function plan(d: FakeDeploy, request: DeployCreate, labels: PreviewLabels): Depl
                 image,
                 portMappings: [{ containerPort: 8000 }],
                 environment: env.filter((v) => !v.secret && v.provided).map((v) => ({ name: v.name, value: v.value })),
-                secrets: env
-                  .filter((v) => v.secret && v.provided)
-                  .map((v) => ({ name: v.name, valueFrom: `groundcrew/${APP}/${v.name}` })),
+                secrets: secrets.map((v) => ({ name: v.name, valueFrom: `groundcrew/${APP}/${v.name}` })),
               },
             ],
           },
@@ -221,47 +287,54 @@ function plan(d: FakeDeploy, request: DeployCreate, labels: PreviewLabels): Depl
       );
   return {
     type: "deploy_plan",
-    target: labels.targetKind,
-    target_connection_id: request.target_connection_id,
+    target: d.targetKind,
+    target_connection_id: d.targetConnectionId,
     app: APP,
     image,
+    source_image: IMAGE_ID,
     port: 8000,
     health_path: "/health",
     replicas: 1,
     cpu: k8s ? "250m" : "256",
     memory: k8s ? "512Mi" : "512",
     env,
+    // In apply order: nothing leaves the sandbox before approval, so the push comes first.
     resources: k8s
       ? [
+          pushImage,
           res("Namespace", `gc-${APP}`),
           res("RoleBinding", "groundcrew-deployer"),
-          ...(env.some((v) => v.secret && v.provided) ? [res("Secret", `${APP}-env`)] : []),
+          ...(secrets.length ? [res("Secret", `${APP}-env`)] : []),
           res("Deployment", APP, "1 replica, 250m / 512Mi"),
           res("Service", APP),
           res("Ingress", `${APP}.localhost`),
         ]
       : [
           res("ecr:Repository", `groundcrew-${APP}`),
+          pushImage,
           res("logs:LogGroup", `/groundcrew/${APP}`),
           res("ec2:SecurityGroup", `groundcrew-${APP}`, "tcp/8000 from 0.0.0.0/0"),
-          ...env
-            .filter((v) => v.secret && v.provided)
-            .map((v) => (res("secretsmanager:Secret", `groundcrew/${APP}/${v.name}`))),
+          ...secrets.map((v) => res("secretsmanager:Secret", `groundcrew/${APP}/${v.name}`)),
           res("ecs:TaskDefinition", `groundcrew-${APP}`, "0.25 vCPU / 0.5 GB"),
           res("ecs:Service", APP, "groundcrew-deploys, public IP"),
         ],
     preflight: [
-      { name: "image", status: "pass", detail: `${image} pushed`, overridden: false },
+      {
+        name: "image",
+        status: "pass",
+        detail: `Built and smoke-tested (${IMAGE_ID.slice(0, 19)}); pushed after approval`,
+        overridden: false,
+      },
       {
         name: "env",
         status: missing.length ? "fail" : "pass",
         detail: missing.length ? `Missing required: ${missing.join(", ")}` : "All required env vars set",
-        overridden: missing.length > 0 && allow,
+        overridden: missing.length > 0 && d.allowMissing,
       },
       { name: "port", status: "pass", detail: "8000 from the start command", overridden: false },
       { name: "name_collision", status: "pass", detail: `No existing ${k8s ? `gc-${APP}` : APP}`, overridden: false },
     ],
-    allow_missing_env: allow,
+    allow_missing_env: d.allowMissing,
     expected_url: k8s ? `http://${APP}.localhost` : null,
     rendered,
     rendered_format: k8s ? "yaml" : "json",
@@ -269,31 +342,65 @@ function plan(d: FakeDeploy, request: DeployCreate, labels: PreviewLabels): Depl
   };
 }
 
-function script(d: FakeDeploy, request: DeployCreate, labels: PreviewLabels): Beat[] {
-  const deployPlan = plan(d, request, labels);
-  const approvalId = crypto.randomUUID();
-  const k8s = labels.targetKind === "k8s";
+/** Renders the plan from the current env and asks for approval; the run pauses here. */
+function requestApproval(d: FakeDeploy): void {
+  const deployPlan = plan(d);
+  const id = crypto.randomUUID();
+  const approval: Approval = {
+    id,
+    run_id: d.run.id,
+    workspace_id: d.run.workspace_id,
+    run_agent: "deploy",
+    run_goal: d.run.goal,
+    tool_name: d.targetKind === "k8s" ? "k8s_apply" : "ecs_apply",
+    policy: "write",
+    arguments: { plan: deployPlan.app, target: deployPlan.target },
+    status: "pending",
+    decided_by: null,
+    decided_by_login: null,
+    decided_by_name: null,
+    decided_by_avatar_url: null,
+    decided_at: null,
+    executed_at: null,
+    created_at: vnow(d),
+  };
+  d.approvals[id] = approval;
+  d.detail = { ...d.detail, plan: deployPlan, status: "waiting_approval" };
+  startStage(d, "approval", "deployer");
+  const s = step(d, "approval_requested", "deployer", {
+    approval_id: id,
+    data: deployPlan,
+    tool_name: approval.tool_name,
+    tool_policy: "write",
+  });
+  d.steps.push(s);
+  emit(d, { type: "approval_requested", event: { step: s, approval } });
+  setRun(d, { status: "waiting_approval", stop_reason: "waiting_approval" });
+  d.paused = true;
+}
+
+function script(d: FakeDeploy): Beat[] {
+  const k8s = d.targetKind === "k8s";
   const url = k8s ? `http://${APP}.localhost` : "http://203.0.113.24:8000";
+  const writeTokens: [number, number] = [2210, 486];
+  const fixTokens: [number, number] = [3105, 940];
   return [
-    { delay: 400, run: () => setRun(d, { status: "running", started_at: now() }) },
-    { delay: 300, run: () => event(d, "scout", { type: "stage_started", stage: "scout", agent: "scout" }) },
-    { delay: 900, run: () => void llm(d, "scout", "nano", "Flask app, gunicorn on port 8000, health at /health", [1840, 212], 0.00016) },
     {
-      delay: 300,
-      run: () =>
-        event(d, "scout", {
-          type: "stage_finished",
-          stage: "scout",
-          agent: "scout",
-          status: "succeeded",
-          duration_ms: 1500,
-          summary: "Python 3.12, Flask, gunicorn on 8000, health /health",
-        }),
+      delay: 400,
+      run: () => {
+        d.startClock = d.clock;
+        setRun(d, { status: "running", started_at: vnow(d) });
+        d.detail = { ...d.detail, started_at: vnow(d) };
+      },
     },
-    { delay: 300, run: () => event(d, "builder", { type: "stage_started", stage: "build", agent: "builder" }) },
-    { delay: 1100, run: () => void llm(d, "builder", "super", "Wrote a Dockerfile: python:3.12-slim, pip install, gunicorn", [2210, 486], 0.0011) },
+    { delay: 300, run: () => startStage(d, "scout", "scout") },
+    llm(d, 900, "scout", "nano", "Flask app, gunicorn on port 8000, health at /health", [1840, 212], 0.00016),
+    { delay: 300, run: () => finishStage(d, "scout", "scout", "Python 3.12, Flask, gunicorn on 8000, health /health") },
+    { delay: 300, run: () => startStage(d, "build", "builder") },
+    llm(d, 1100, "builder", "super", "Wrote a Dockerfile: python:3.12-slim, pip install, gunicorn", writeTokens, 0.0011),
     {
       delay: 1600,
+      ms: 77600,
       run: () =>
         event(d, "builder", {
           type: "build_attempt",
@@ -311,19 +418,20 @@ function script(d: FakeDeploy, request: DeployCreate, labels: PreviewLabels): Be
           model_call: {
             task: "write_dockerfile",
             model_tier: "super",
-            model_id: "nvidia/nemotron-3-super-120b-a12b",
+            model_id: MODEL_ID.super,
             reasoning_mode: "low",
             escalated: false,
-            prompt_tokens: 2210,
-            completion_tokens: 486,
+            prompt_tokens: writeTokens[0],
+            completion_tokens: writeTokens[1],
             cost_usd: 0.0011,
             step_seq: d.steps.length,
           },
         }),
     },
-    { delay: 1200, run: () => void llm(d, "builder", "super", "Install gcc, libc6-dev, and libpq-dev before pip install", [3105, 940], 0.0018) },
+    llm(d, 1200, "builder", "super", "Install gcc, libc6-dev, and libpq-dev before pip install", fixTokens, 0.0018),
     {
       delay: 1800,
+      ms: 96900,
       run: () =>
         event(d, "builder", {
           type: "build_attempt",
@@ -341,82 +449,43 @@ function script(d: FakeDeploy, request: DeployCreate, labels: PreviewLabels): Be
           model_call: {
             task: "fix_build",
             model_tier: "super",
-            model_id: "nvidia/nemotron-3-super-120b-a12b",
+            model_id: MODEL_ID.super,
             reasoning_mode: "on",
             escalated: false,
-            prompt_tokens: 3105,
-            completion_tokens: 940,
+            prompt_tokens: fixTokens[0],
+            completion_tokens: fixTokens[1],
             cost_usd: 0.0018,
             step_seq: d.steps.length,
           },
         }),
     },
+    { delay: 300, run: () => finishStage(d, "build", "builder", "Built on attempt 2 after an automatic fix") },
+    ...stage(d, "smoke", "builder", `/health answered 200 in the sandbox (${IMAGE_ID.slice(0, 19)})`, 900, 4200),
+    { delay: 300, run: () => startStage(d, "plan", "deployer") },
+    llm(d, 900, "deployer", "super", "1 replica, 250m / 512Mi; DATABASE_URL is a secret", [1560, 310], 0.0007),
     {
       delay: 300,
       run: () =>
-        event(d, "builder", {
-          type: "stage_finished",
-          stage: "build",
-          agent: "builder",
-          status: "succeeded",
-          duration_ms: 176000,
-          summary: "Built on attempt 2 after an automatic fix",
-        }),
+        finishStage(d, "plan", "deployer", `${plan(d).resources.length} apply steps on ${k8s ? "Kubernetes" : "AWS ECS"}`),
     },
-    ...stage(d, "smoke", "builder", "/health answered 200 in the sandbox", 900),
-    ...stage(d, "push", "builder", `Pushed ${deployPlan.image}`, 700),
-    { delay: 300, run: () => event(d, "deployer", { type: "stage_started", stage: "plan", agent: "deployer" }) },
-    { delay: 900, run: () => void llm(d, "deployer", "super", "1 replica, 250m / 512Mi; DATABASE_URL is a secret", [1560, 310], 0.0007) },
-    {
-      delay: 300,
-      run: () =>
-        event(d, "deployer", {
-          type: "stage_finished",
-          stage: "plan",
-          agent: "deployer",
-          status: "succeeded",
-          duration_ms: 1300,
-          summary: `${deployPlan.resources.length} resources on ${k8s ? "Kubernetes" : "AWS ECS"}`,
-        }),
-    },
-    ...stage(d, "preflight", "deployer", "Image, env, port, and names checked", 600),
-    {
-      delay: 400,
-      run: () => {
-        const approval: Approval = {
-          id: approvalId,
-          run_id: d.run.id,
-          workspace_id: d.run.workspace_id,
-          run_agent: "deploy",
-          run_goal: d.run.goal,
-          tool_name: k8s ? "k8s_apply" : "ecs_apply",
-          policy: "write",
-          arguments: { plan: deployPlan.app, target: deployPlan.target },
-          status: "pending",
-          decided_by: null,
-          decided_by_login: null,
-          decided_by_name: null,
-          decided_by_avatar_url: null,
-          decided_at: null,
-          executed_at: null,
-          created_at: now(),
-        };
-        d.approvals[approvalId] = approval;
-        d.detail = { ...d.detail, plan: deployPlan, status: "waiting_approval" };
-        event(d, "deployer", { type: "stage_started", stage: "approval", agent: "deployer" });
-        const s = step(d, "approval_requested", "deployer", { approval_id: approvalId, data: deployPlan, tool_name: approval.tool_name, tool_policy: "write" });
-        d.steps.push(s);
-        emit(d, { type: "approval_requested", event: { step: s, approval } });
-        setRun(d, { status: "waiting_approval", stop_reason: "waiting_approval" });
-        d.paused = true;
-      },
-    },
+    ...stage(d, "preflight", "deployer", "Image built and smoke-tested; env, port, and names checked", 600, 1100),
+    { delay: 400, pause: true, run: () => requestApproval(d) },
     // Resumed by decide(); a rejection replaces the rest of the script (see decide()).
     { delay: 300, run: () => setRun(d, { status: "running", stop_reason: null }) },
-    ...stage(d, "apply", "deployer", k8s ? "Namespace, Deployment, Service, Ingress created" : "ECS service created", 1400),
-    { delay: 300, run: () => event(d, "deployer", { type: "stage_started", stage: "verify", agent: "deployer" }) },
+    ...stage(
+      d,
+      "apply",
+      "deployer",
+      k8s
+        ? "Pushed the image to kind-registry:5000, then created the namespace, Deployment, Service, and Ingress"
+        : "Created the ECR repository and pushed the image, then created the log group, security group, task definition, and service",
+      1400,
+      k8s ? 9000 : 48000,
+    ),
+    { delay: 300, run: () => startStage(d, "verify", "deployer") },
     {
       delay: 1500,
+      ms: k8s ? 6200 : 41000,
       run: () =>
         event(d, "deployer", {
           type: "verify_result",
@@ -436,26 +505,17 @@ function script(d: FakeDeploy, request: DeployCreate, labels: PreviewLabels): Be
           logs_tail: null,
         }),
     },
+    { delay: 300, run: () => finishStage(d, "verify", "deployer", "Rollout and /health passed") },
     {
       delay: 300,
-      run: () =>
-        event(d, "deployer", {
-          type: "stage_finished",
-          stage: "verify",
-          agent: "deployer",
-          status: "succeeded",
-          duration_ms: 1500,
-          summary: "Rollout and /health passed",
-        }),
+      run: () => event(d, "deployer", { type: "live_url", url, target: d.targetKind, app: APP, resource_id: null }),
     },
-    { delay: 300, run: () => event(d, "deployer", { type: "live_url", url, target: deployPlan.target, app: APP, resource_id: null }) },
     { delay: 300, run: () => finish(d, "live", url) },
   ];
 }
 
 function finish(d: FakeDeploy, outcome: "live" | "stopped", url: string | null, error: string | null = null): void {
-  const started = d.run.started_at ?? d.run.created_at;
-  const duration = Date.now() - new Date(started).getTime();
+  const duration = d.clock - d.startClock;
   const status = outcome === "live" ? "succeeded" : "stopped";
   const attempts = d.steps.filter((s) => s.data?.type === "build_attempt").length;
   event(d, "deploy", {
@@ -474,7 +534,7 @@ function finish(d: FakeDeploy, outcome: "live" | "stopped", url: string | null, 
     status,
     stop_reason: outcome === "live" ? "completed" : "stopped_by_user",
     error,
-    finished_at: now(),
+    finished_at: vnow(d),
     duration_ms: duration,
   });
   d.detail = {
@@ -500,9 +560,28 @@ function tick(d: FakeDeploy): void {
   d.timer = setTimeout(() => {
     d.timer = null;
     d.next += 1;
+    advance(d, beat.ms ?? beat.delay);
     beat.run();
     tick(d);
   }, beat.delay);
+}
+
+function pendingApproval(runId: string, approvalId: string): { d: FakeDeploy; approval: Approval } {
+  const d = deploys.get(byRun.get(runId) ?? "");
+  const approval = d?.approvals[approvalId];
+  if (!d || !approval || approval.status !== "pending") throw new Error("This approval was already decided.");
+  return { d, approval };
+}
+
+/** Closes the pending approval: approved, rejected, or replaced by a new plan (a rejection). */
+function close(d: FakeDeploy, approval: Approval, status: "approved" | "rejected"): Approval {
+  advance(d, 0);
+  const decided: Approval = { ...approval, status, decided_by_name: "You (preview)", decided_at: vnow(d) };
+  d.approvals[approval.id] = decided;
+  const s = step(d, "approval_decided", "deployer", { approval_id: approval.id });
+  d.steps.push(s);
+  emit(d, { type: "approval_decided", event: { step: s, approval: decided } });
+  return decided;
 }
 
 // --- API stand-ins ----------------------------------------------------------------------
@@ -510,17 +589,23 @@ function tick(d: FakeDeploy): void {
 export function createDeploy(request: DeployCreate, labels: PreviewLabels): Schemas["DeployCreated"] {
   const deployId = crypto.randomUUID();
   const runId = crypto.randomUUID();
-  const created = now();
+  // The script is legacy-flask-app, so the preview says so whichever repository was picked.
   const source =
     "fixture" in request.repo
       ? { kind: "fixture" as const, repo: request.repo.fixture, ref: null, connection_id: null, commit: null }
       : {
           kind: "github" as const,
-          repo: request.repo.repo,
+          repo: REPO,
           ref: request.repo.ref,
           connection_id: request.repo.connection_id,
           commit: COMMIT,
         };
+  const env = new Map(
+    (request.env ?? []).map((v) => {
+      const secret = v.secret ?? false;
+      return [v.name, { secret, provided: Boolean(v.value), value: secret ? null : v.value }] as const;
+    }),
+  );
   const d: FakeDeploy = {
     detail: {
       id: deployId,
@@ -540,17 +625,11 @@ export function createDeploy(request: DeployCreate, labels: PreviewLabels): Sche
       ultra_equiv_usd: null,
       error: null,
       created_by: null,
-      created_at: created,
-      started_at: created,
+      created_at: "",
+      started_at: null,
       finished_at: null,
       duration_ms: null,
-      env: (request.env ?? []).map((v) => ({
-        name: v.name,
-        secret: v.secret ?? false,
-        required: v.name === "DATABASE_URL",
-        provided: Boolean(v.value),
-        value: null,
-      })),
+      env: [],
       allow_missing_env: request.options?.allow_missing_env ?? false,
       stages: [],
       plan: null,
@@ -560,7 +639,7 @@ export function createDeploy(request: DeployCreate, labels: PreviewLabels): Sche
       id: runId,
       workspace_id: request.workspace_id,
       agent: "deploy",
-      goal: `Deploy ${labels.repo}${labels.ref ? `@${labels.ref}` : ""} to ${labels.targetName}`,
+      goal: `Deploy ${source.kind === "github" ? REPO : source.repo}${source.ref ? `@${source.ref}` : ""} to ${labels.targetName}`,
       status: "queued",
       stop_reason: null,
       result: null,
@@ -569,7 +648,7 @@ export function createDeploy(request: DeployCreate, labels: PreviewLabels): Sche
       completion_tokens: 0,
       total_tokens: 0,
       cost_usd: 0,
-      created_at: created,
+      created_at: "",
       started_at: null,
       finished_at: null,
       duration_ms: null,
@@ -584,8 +663,25 @@ export function createDeploy(request: DeployCreate, labels: PreviewLabels): Sche
     paused: false,
     listeners: new Set(),
     timer: null,
+    targetKind: labels.targetKind,
+    targetConnectionId: request.target_connection_id,
+    env,
+    allowMissing: request.options?.allow_missing_env ?? false,
+    anchor: 0,
+    clock: 0,
+    startClock: 0,
+    lastReal: Date.now(),
+    stageStart: {},
   };
-  d.beats = script(d, request, labels);
+  d.beats = script(d);
+  // Start the simulated clock in the past by the time the beats up to the approval stand for
+  // beyond what they take on screen, so the approval is requested about "now".
+  const pause = d.beats.findIndex((b) => b.pause);
+  const ahead = d.beats.slice(0, pause + 1).reduce((sum, b) => sum + (b.ms ?? b.delay) - b.delay, 0);
+  d.anchor = Date.now() - ahead;
+  const created = vnow(d);
+  d.detail = { ...d.detail, created_at: created, env: envViews(d).filter((v) => d.env.has(v.name)) };
+  d.run = { ...d.run, created_at: created };
   deploys.set(deployId, d);
   byRun.set(runId, deployId);
   return { deploy_id: deployId, run_id: runId };
@@ -594,7 +690,11 @@ export function createDeploy(request: DeployCreate, labels: PreviewLabels): Sche
 export function listDeploys(workspaceId: string): Schemas["DeployPage"] {
   const items: DeploySummary[] = [...deploys.values()]
     .filter((d) => d.detail.workspace_id === workspaceId)
-    .map((d) => omit(d.detail, "env", "allow_missing_env", "stages", "plan", "deploy"))
+    .map((d) => ({
+      ...omit(d.detail, "env", "allow_missing_env", "stages", "plan", "deploy"),
+      // Simulated time, like the run page (a real list computes it from started_at).
+      duration_ms: d.detail.duration_ms ?? elapsed(d.run.id),
+    }))
     .reverse();
   return { items, next_cursor: null };
 }
@@ -605,6 +705,21 @@ export function getDeploy(deployId: string): DeployDetail | null {
 
 export function isPreviewRun(runId: string): boolean {
   return byRun.has(runId);
+}
+
+/**
+ * The run's elapsed time on the simulated clock (the page's "Elapsed"). Between beats it moves
+ * at the pace of the beat being played, so a 97 s build counts up while it plays.
+ */
+export function elapsed(runId: string): number | null {
+  const d = deploys.get(byRun.get(runId) ?? "");
+  if (!d || !d.run.started_at) return null;
+  if (d.run.duration_ms !== null) return d.run.duration_ms;
+  const real = Date.now() - d.lastReal;
+  const beat = d.beats[d.next];
+  const ahead =
+    d.paused || !beat ? real : Math.min(real / Math.max(beat.delay, 1), 1) * (beat.ms ?? beat.delay);
+  return d.clock - d.startClock + ahead;
 }
 
 /** Replays the run so far into `listener`, then streams the rest. Returns an unsubscribe. */
@@ -624,27 +739,15 @@ export function subscribe(runId: string, listener: (action: TimelineAction) => v
 }
 
 export function decide(runId: string, approvalId: string, decision: Decision): Approval {
-  const d = deploys.get(byRun.get(runId) ?? "");
-  const approval = d?.approvals[approvalId];
-  if (!d || !approval || approval.status !== "pending") throw new Error("This approval was already decided.");
-  const decided: Approval = {
-    ...approval,
-    status: decision === "approve" ? "approved" : "rejected",
-    decided_by_name: "You (preview)",
-    decided_at: now(),
-  };
-  d.approvals[approvalId] = decided;
-  const s = step(d, "approval_decided", "deployer", { approval_id: approvalId });
-  d.steps.push(s);
-  emit(d, { type: "approval_decided", event: { step: s, approval: decided } });
-  event(d, "deployer", {
-    type: "stage_finished",
-    stage: "approval",
-    agent: "deployer",
-    status: decision === "approve" ? "succeeded" : "failed",
-    duration_ms: 0,
-    summary: decision === "approve" ? "Plan approved" : "Plan rejected; nothing was changed",
-  });
+  const { d, approval } = pendingApproval(runId, approvalId);
+  const decided = close(d, approval, decision === "approve" ? "approved" : "rejected");
+  finishStage(
+    d,
+    "approval",
+    "deployer",
+    decision === "approve" ? "Plan approved" : "Plan rejected; nothing was changed",
+    decision === "approve" ? "succeeded" : "failed",
+  );
   if (decision === "reject") {
     d.beats = d.beats.slice(0, d.next);
     finish(d, "stopped", null, "The plan was rejected. Nothing was deployed.");
@@ -652,4 +755,43 @@ export function decide(runId: string, approvalId: string, decision: Decision): A
   d.paused = false;
   tick(d);
   return decided;
+}
+
+/**
+ * Stand-in for POST /deploys/{id}/env (M6): set the missing values, or continue without them.
+ * The pending plan is replaced; only preflight runs again and the new plan reuses the image
+ * that was already built and smoke-tested (no rebuild). Secret values are not kept.
+ */
+export function updateEnv(runId: string, approvalId: string, fix: EnvFix): Approval {
+  const { d, approval } = pendingApproval(runId, approvalId);
+  const before = missingEnv(d);
+  for (const v of fix.env) {
+    const secret = v.secret ?? false;
+    d.env.set(v.name, { secret, provided: Boolean(v.value), value: secret ? null : v.value });
+  }
+  if (fix.allow_missing_env) d.allowMissing = true;
+  const set = fix.env.filter((v) => v.value).map((v) => v.name);
+  const still = missingEnv(d);
+  const reason = set.length
+    ? `${set.join(", ")} set`
+    : `continuing without ${before.filter((n) => still.includes(n)).join(", ") || "the missing env vars"}`;
+
+  const replaced = close(d, approval, "rejected");
+  finishStage(d, "approval", "deployer", `Plan replaced: ${reason}`, "skipped");
+  d.detail = {
+    ...d.detail,
+    env: envViews(d).filter((v) => d.env.has(v.name)),
+    allow_missing_env: d.allowMissing,
+    status: "running",
+  };
+  setRun(d, { status: "running", stop_reason: null });
+  d.beats = [
+    ...d.beats.slice(0, d.next),
+    ...stage(d, "preflight", "deployer", `Re-checked with ${reason}; same image, no rebuild`, 700, 900),
+    { delay: 400, run: () => requestApproval(d) },
+    ...d.beats.slice(d.next),
+  ];
+  d.paused = false;
+  tick(d);
+  return replaced;
 }

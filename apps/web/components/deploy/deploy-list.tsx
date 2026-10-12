@@ -67,7 +67,10 @@ export function DeployList({ deploys, now = Date.now() }: { deploys: DeploySumma
               <span>
                 <DeployStatePill state={d.status} />
               </span>
-              <span className="min-w-0 truncate">
+              <span
+                className="min-w-0 [overflow-wrap:anywhere]"
+                title={`${d.source.repo}${d.source.ref ? `@${d.source.ref}` : ""}`}
+              >
                 {d.source.repo}
                 {d.source.ref && <span className="text-muted-foreground">@{d.source.ref}</span>}
               </span>

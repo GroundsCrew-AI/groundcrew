@@ -1,16 +1,18 @@
 "use client";
 
 import { cn } from "cn";
-import { AlertTriangle, Check, ChevronRight, X } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, Check, ChevronRight, KeyRound, X } from "lucide-react";
+import { useId, useState } from "react";
 
 import { DecidedBy } from "@/components/runs/approval-card";
 import { PolicyTag } from "@/components/runs/badges";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Approval, Decision } from "@/lib/api/client";
-import { envDisplay, planBlocked } from "@/lib/deploy-view";
-import { type DeployPlan, targetLabel } from "@/lib/deploys";
+import { envDisplay, failingChecks } from "@/lib/deploy-view";
+import { type DeployPlan, type EnvFix, targetLabel } from "@/lib/deploys";
 import { formatRelative, formatTimestamp } from "@/lib/format";
 
 const CHECK_COLOR = { pass: "var(--status-ok)", warn: "var(--status-waiting)", fail: "var(--status-failed)" };
@@ -26,6 +28,9 @@ const CHECK_NAME: Record<DeployPlan["preflight"][number]["name"], string> = {
 /**
  * The approval card for a deploy (or a rollback): the exact rendered plan, with every secret
  * value masked. Approve is disabled while a preflight check fails and was not overridden.
+ * When only the env check fails, the card can set the missing values or continue without
+ * them (`onFixEnv`): preflight runs again with the same built image and a new plan replaces
+ * this one (`replaced`).
  */
 export function DeployPlanCard({
   plan,
@@ -33,19 +38,47 @@ export function DeployPlanCard({
   onDecide,
   deciding,
   runEnded = false,
+  replaced = false,
+  onFixEnv,
+  fixing = false,
 }: {
   plan: DeployPlan;
   approval: Approval;
   onDecide: (decision: Decision) => void;
   deciding: Decision | null;
   runEnded?: boolean;
+  replaced?: boolean;
+  onFixEnv?: (fix: EnvFix) => void;
+  fixing?: boolean;
 }) {
   const [showRendered, setShowRendered] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const pending = approval.status === "pending";
   const open = pending && !runEnded;
-  const blocked = planBlocked(plan);
+  const failing = failingChecks(plan);
+  const blocked = failing.length > 0;
+  const missing = plan.env.filter((v) => v.required && !v.provided).map((v) => v.name);
+  // Fixable here only when the env check is the one in the way.
+  const fixable = open && blocked && Boolean(onFixEnv) && failing.every((c) => c.name === "env") && missing.length > 0;
+  const busy = deciding !== null || fixing;
   const rollback = Boolean(plan.rollback_to_revision);
   const title = rollback ? "Roll back" : `Deploy ${plan.app} to ${targetLabel(plan.target)}`;
+  const blockedReason = failing.map((c) => `${CHECK_NAME[c.name]}: ${c.detail}`).join("; ");
+
+  if (replaced) {
+    return (
+      <section aria-label="Replaced deploy plan" className="rounded-lg border border-dashed px-3 py-2 text-[12.5px]">
+        <p className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-medium text-[13px]">{title}</span>
+          <span className="text-muted-foreground">Replaced</span>
+        </p>
+        <p className="mt-0.5 text-muted-foreground">
+          The env vars changed, so preflight ran again and the plan below replaced this one. The image was not
+          rebuilt.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section
@@ -113,17 +146,51 @@ export function DeployPlanCard({
                 </tr>
               </thead>
               <tbody>
-                {plan.env.map((v) => (
-                  <tr key={v.name} className="align-baseline">
-                    <td className="py-0.5 pr-3 font-mono">{v.name}</td>
-                    <td className={cn("py-0.5 pr-3 font-mono break-all", !v.provided && "text-[var(--status-failed)]")}>
-                      {envDisplay(v)}
-                    </td>
-                    <td className="py-0.5 text-muted-foreground">
-                      {[v.secret ? "secret" : "plain", v.required ? "required" : null].filter(Boolean).join(", ")}
-                    </td>
-                  </tr>
-                ))}
+                {plan.env.map((v) => {
+                  const canSet = fixable && v.required && !v.provided;
+                  return (
+                    <tr key={v.name} className="align-baseline">
+                      <td className="py-0.5 pr-3 font-mono">{v.name}</td>
+                      <td className="py-0.5 pr-3">
+                        {editing === v.name && onFixEnv ? (
+                          <EnvValueForm
+                            name={v.name}
+                            busy={busy}
+                            onCancel={() => setEditing(null)}
+                            onSave={(value) => {
+                              setEditing(null);
+                              onFixEnv({
+                                env: [{ name: v.name, value, secret: v.secret }],
+                                allow_missing_env: plan.allow_missing_env,
+                              });
+                            }}
+                          />
+                        ) : (
+                          <span className="flex flex-wrap items-baseline gap-x-2">
+                            <span className={cn("font-mono break-all", !v.provided && "text-[var(--status-failed)]")}>
+                              {envDisplay(v)}
+                            </span>
+                            {canSet && (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={() => setEditing(v.name)}
+                                aria-label={`Set a value for ${v.name}`}
+                              >
+                                <KeyRound aria-hidden="true" />
+                                Set value
+                              </Button>
+                            )}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-0.5 text-muted-foreground">
+                        {[v.secret ? "secret" : "plain", v.required ? "required" : null].filter(Boolean).join(", ")}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -161,18 +228,70 @@ export function DeployPlanCard({
         {open ? (
           <div className="space-y-2">
             {blocked && (
-              <p className="flex items-start gap-1.5 text-[12.5px] text-[var(--status-failed)]" role="alert">
+              <p
+                id={`${approval.id}-blocked`}
+                className="flex items-start gap-1.5 text-[12.5px] text-[var(--status-failed)]"
+                role="alert"
+              >
                 <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-                A preflight check failed, so this plan cannot be approved. Reject it and deploy again with
-                the missing values, or with &quot;Deploy with missing env vars&quot; checked.
+                {fixable ? (
+                  <span>
+                    {missing.join(", ")} {missing.length === 1 ? "is" : "are"} required and not set. Set{" "}
+                    {missing.length === 1 ? "a value" : "the values"}, or continue without{" "}
+                    {missing.length === 1 ? "it" : "them"}. Only preflight runs again; the image is not rebuilt.
+                  </span>
+                ) : (
+                  <span>
+                    A preflight check failed, so this plan cannot be approved. Reject it and deploy again with
+                    the missing values, or with &quot;Deploy with missing env vars&quot; checked.
+                  </span>
+                )}
               </p>
             )}
-            <div className="flex items-center gap-2">
-              <Button size="sm" onClick={() => onDecide("approve")} disabled={deciding !== null || blocked}>
-                <Check aria-hidden="true" />
-                {deciding === "approve" ? "Approving" : rollback ? "Approve rollback" : "Approve and deploy"}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => onDecide("reject")} disabled={deciding !== null}>
+            {fixing && (
+              <p role="status" className="text-[12.5px] text-muted-foreground">
+                Running preflight again with the same image
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {blocked ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {/* A disabled button gets no pointer events, so the wrapper carries the tooltip. */}
+                    <span
+                      tabIndex={0}
+                      aria-describedby={`${approval.id}-blocked`}
+                      className="inline-flex cursor-not-allowed rounded-[min(var(--radius-md),12px)] outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      <Button
+                        size="sm"
+                        disabled
+                        className="border-border bg-muted text-muted-foreground hover:bg-muted disabled:opacity-100"
+                      >
+                        <Check aria-hidden="true" />
+                        {rollback ? "Approve rollback" : "Approve and deploy"}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>Blocked by preflight. {blockedReason}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button size="sm" onClick={() => onDecide("approve")} disabled={busy}>
+                  <Check aria-hidden="true" />
+                  {deciding === "approve" ? "Approving" : rollback ? "Approve rollback" : "Approve and deploy"}
+                </Button>
+              )}
+              {fixable && onFixEnv && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => onFixEnv({ env: [], allow_missing_env: true })}
+                >
+                  Continue without {missing.length === 1 ? missing[0] : "them"}
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => onDecide("reject")} disabled={busy}>
                 <X aria-hidden="true" />
                 {deciding === "reject" ? "Rejecting" : "Reject"}
               </Button>
@@ -185,6 +304,52 @@ export function DeployPlanCard({
         )}
       </div>
     </section>
+  );
+}
+
+/** Masked input for one missing env value. The value is sent once and never shown again. */
+function EnvValueForm({
+  name,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  name: string;
+  busy: boolean;
+  onSave: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const id = useId();
+  const [value, setValue] = useState("");
+  return (
+    <form
+      className="flex flex-wrap items-center gap-1.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (value) onSave(value);
+      }}
+    >
+      <label htmlFor={id} className="sr-only">
+        Value for {name}
+      </label>
+      <Input
+        id={id}
+        type="password"
+        autoComplete="off"
+        spellCheck={false}
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => e.key === "Escape" && onCancel()}
+        className="h-7 w-56 font-mono text-[12px]"
+      />
+      <Button type="submit" size="xs" disabled={busy || !value}>
+        Save
+      </Button>
+      <Button type="button" size="xs" variant="ghost" onClick={onCancel}>
+        Cancel
+      </Button>
+    </form>
   );
 }
 

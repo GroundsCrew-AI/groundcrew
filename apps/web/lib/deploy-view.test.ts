@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { attempt, dstep, plan } from "@/tests/deploy-fixtures";
 import { approval, runDetail } from "@/tests/fixtures";
 
+import { hiddenDeploySteps, replacedPlans } from "@/components/deploy/deploy-step";
+
 import { deployView, envDisplay, planBlocked } from "./deploy-view";
 import { initialTimeline, timelineReducer } from "./timeline";
 
@@ -101,5 +103,24 @@ describe("planBlocked and envDisplay", () => {
     expect(envDisplay(secret)).toBe("********");
     expect(envDisplay({ ...secret, provided: false })).toBe("not set");
     expect(envDisplay({ ...secret, secret: false, value: "plain" })).toBe("plain");
+  });
+});
+
+describe("repeated stages and replaced plans", () => {
+  it("hides a stage start only once that run of the stage has finished", () => {
+    const pf = (seq: number, kind: "start" | "end") =>
+      kind === "start"
+        ? dstep(seq, { type: "stage_started", stage: "preflight", agent: "deployer" })
+        : dstep(seq, { type: "stage_finished", stage: "preflight", agent: "deployer", status: "succeeded", duration_ms: 1, summary: null });
+    expect([...hiddenDeploySteps([pf(1, "start"), pf(2, "end"), pf(3, "start")])]).toEqual([1]);
+  });
+
+  it("marks every deploy plan but the last as replaced", () => {
+    const steps = [
+      dstep(1, plan(), { kind: "approval_requested", approval_id: "a1" }),
+      dstep(2, plan(), { kind: "approval_requested", approval_id: "a2" }),
+      dstep(3, plan({ rollback_to_revision: "1" }), { kind: "approval_requested", approval_id: "r1" }),
+    ];
+    expect([...replacedPlans(steps)]).toEqual(["a1"]);
   });
 });

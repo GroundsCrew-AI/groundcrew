@@ -979,7 +979,7 @@ export interface components {
             run_status: components["schemas"]["RunStatus"];
             source: components["schemas"]["DeploySourceOut"];
             /** Stage */
-            stage: ("scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback") | null;
+            stage: ("scout" | "build" | "smoke" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback") | null;
             /** Stages */
             stages: components["schemas"]["StageOut"][];
             /** Started At */
@@ -1081,6 +1081,8 @@ export interface components {
              * @default null
              */
             rollback_to_revision: string | null;
+            /** Source Image */
+            source_image: string | null;
             /**
              * Target
              * @enum {string}
@@ -1201,7 +1203,7 @@ export interface components {
             run_status: components["schemas"]["RunStatus"];
             source: components["schemas"]["DeploySourceOut"];
             /** Stage */
-            stage: ("scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback") | null;
+            stage: ("scout" | "build" | "smoke" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback") | null;
             /** Started At */
             started_at: string | null;
             /**
@@ -1488,13 +1490,17 @@ export interface components {
             /** Type */
             type: string;
         };
-        /** PlannedResource */
+        /**
+         * PlannedResource
+         * @description One step of apply. DeployPlan.resources is in apply order: the image push (and the ECR
+         *     repository before it) comes first, because nothing leaves the sandbox before approval.
+         */
         PlannedResource: {
             /**
              * Action
              * @enum {string}
              */
-            action: "create" | "update" | "unchanged" | "delete";
+            action: "create" | "update" | "unchanged" | "delete" | "push";
             /**
              * Detail
              * @default null
@@ -1502,6 +1508,8 @@ export interface components {
             detail: string | null;
             /**
              * Kind
+             * @example image
+             * @example ecr:Repository
              * @example Deployment
              * @example ecs:Service
              */
@@ -1893,7 +1901,7 @@ export interface components {
              * Stage
              * @enum {string}
              */
-            stage: "scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
+            stage: "scout" | "build" | "smoke" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
             /**
              * Status
              * @enum {string}
@@ -1920,7 +1928,7 @@ export interface components {
              * Stage
              * @enum {string}
              */
-            stage: "scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
+            stage: "scout" | "build" | "smoke" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
             /** Started At */
             started_at?: string | null;
             /**
@@ -1940,7 +1948,7 @@ export interface components {
              * Stage
              * @enum {string}
              */
-            stage: "scout" | "build" | "smoke" | "push" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
+            stage: "scout" | "build" | "smoke" | "plan" | "preflight" | "approval" | "apply" | "verify" | "rollback";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

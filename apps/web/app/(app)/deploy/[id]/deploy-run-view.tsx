@@ -14,7 +14,7 @@ import { EmptyState, ErrorState } from "@/components/states/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, type Approval, type Decision, type RunDetail } from "@/lib/api/client";
 import { type DeployView, deployView } from "@/lib/deploy-view";
-import { type DeployState, targetLabel, useDeploy } from "@/lib/deploys";
+import { type DeployState, type EnvFix, targetLabel, useDeploy } from "@/lib/deploys";
 // TODO(M6): remove with lib/deploys-fake.ts.
 import * as preview from "@/lib/deploys-fake";
 import { elapsedMs, formatCost, formatDuration, formatTokens } from "@/lib/format";
@@ -43,11 +43,13 @@ function useNow(active: boolean): number {
   return now;
 }
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+function Fact({ label, children, title }: { label: string; children: React.ReactNode; title?: string }) {
   return (
     <div className="min-w-0">
       <dt className="text-[11.5px] text-subtle">{label}</dt>
-      <dd className="tabular mt-0.5 truncate text-[13px]">{children}</dd>
+      <dd className="tabular mt-0.5 text-[13px] [overflow-wrap:anywhere]" title={title}>
+        {children}
+      </dd>
     </div>
   );
 }
@@ -68,6 +70,7 @@ export function DeployRunView({ deployId }: { deployId: string }) {
   const [state, dispatch] = useReducer(timelineReducer, initialTimeline);
   const [loadedSeq, setLoadedSeq] = useState<number | null>(null);
   const [deciding, setDeciding] = useState<{ id: string; decision: Decision } | null>(null);
+  const [fixing, setFixing] = useState<string | null>(null);
   const decide = useDecide();
 
   // Real deploys: the run as stored, then the live stream. Preview: the scripted run.
@@ -120,6 +123,27 @@ export function DeployRunView({ deployId }: { deployId: string }) {
     [decide, isPreview, runId],
   );
 
+  const onFixEnv = useCallback(
+    (approval: Approval, fix: EnvFix) => {
+      // TODO(M6): POST /deploys/{id}/env (docs/deploys-contract.md). Until then only the
+      // preview can do this, and every deploy is a preview while /deploys answers 501.
+      if (!isPreview) {
+        toast.error("Setting env vars from the approval card arrives with the deploy pipeline.");
+        return;
+      }
+      setFixing(approval.id);
+      try {
+        preview.updateEnv(runId, approval.id, fix);
+        toast.success(fix.env.length ? "Value saved. Running preflight again." : "Running preflight again.");
+      } catch (error) {
+        toast.error((error as Error).message);
+      } finally {
+        setFixing(null);
+      }
+    },
+    [isPreview, runId],
+  );
+
   const parent = <Link href="/deploy" className="hover:text-foreground">Deploy</Link>;
   if (deploy.isLoading || (!isPreview && detail.isLoading) || (deploy.data && !run && !detail.error)) {
     return (
@@ -155,7 +179,10 @@ export function DeployRunView({ deployId }: { deployId: string }) {
 
   const d = deploy.data;
   const status = deployState(run, view);
-  const elapsed = elapsedMs(run.started_at ?? run.created_at, run.finished_at, now);
+  // The preview runs on a simulated clock so elapsed time matches the step durations.
+  const elapsed = isPreview
+    ? (preview.elapsed(run.id) ?? 0)
+    : elapsedMs(run.started_at ?? run.created_at, run.finished_at, now);
   const cost = formatCost(run.cost_usd);
   const ended = ["succeeded", "failed", "stopped"].includes(run.status);
 
@@ -179,11 +206,12 @@ export function DeployRunView({ deployId }: { deployId: string }) {
         {isPreview && <PreviewBanner />}
         <div className="space-y-4 border-b pb-5">
           <StageStrip stages={view.stages} current={view.current} />
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-6">
+          <dl className="flex flex-wrap gap-x-8 gap-y-3">
             <Fact label="Status">
               <DeployStatePill state={status} />
             </Fact>
-            <Fact label="Source">
+            {/* Never truncated: the repo name wraps instead. */}
+            <Fact label="Source" title={`${d.source.repo}${d.source.ref ? `@${d.source.ref}` : ""}`}>
               {d.source.repo}
               {d.source.ref && <span className="text-muted-foreground">@{d.source.ref}</span>}
             </Fact>
@@ -221,6 +249,8 @@ export function DeployRunView({ deployId }: { deployId: string }) {
           deciding={deciding}
           animateAfter={loadedSeq ?? Number.MAX_SAFE_INTEGER}
           runAgent="deploy"
+          onFixEnv={onFixEnv}
+          fixing={fixing}
         />
         {ended && state.steps.length === 0 && <p className="text-muted-foreground">This deploy has no steps.</p>}
       </PageBody>

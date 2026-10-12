@@ -26,6 +26,14 @@ export type RollbackOffered = Schemas["RollbackOffered"];
 export type RunFinished = Schemas["RunFinished"];
 export type DeployEventData = NonNullable<Step["data"]>;
 
+/**
+ * Fixing a failed env preflight from the approval card: set values, or continue without the
+ * missing ones. Only preflight runs again and the plan is re-rendered with the same built
+ * image (no rebuild); the pending approval is replaced by a new one.
+ * TODO(M6): becomes Schemas["DeployEnvUpdate"] for POST /deploys/{id}/env (deploys-contract.md).
+ */
+export type EnvFix = { env: EnvVarIn[]; allow_missing_env: boolean };
+
 /** SSE event names a deploy run adds (docs/events.md). Each carries a StepOut with `data`. */
 export const DEPLOY_EVENTS = [
   "stage_started",
@@ -37,12 +45,14 @@ export const DEPLOY_EVENTS = [
   "run_finished",
 ] as const;
 
-/** Stages in pipeline order; rollback only appears after a failed verify. */
+/**
+ * Stages in pipeline order; rollback only appears after a failed verify. There is no push
+ * stage: nothing leaves the sandbox before approval, so the push is the first step of apply.
+ */
 export const STAGES: DeployStage[] = [
   "scout",
   "build",
   "smoke",
-  "push",
   "plan",
   "preflight",
   "approval",

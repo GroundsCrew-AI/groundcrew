@@ -32,14 +32,33 @@ export function deployStepColor(step: Step): string | null {
   }
 }
 
-/** Steps the timeline hides: a stage start once that stage has finished (its row says it all). */
+/**
+ * Steps the timeline hides: a stage start once that stage has finished (its row says it all).
+ * A stage can run again (preflight after the env changed), so only a later finish counts.
+ */
 export function hiddenDeploySteps(steps: Step[]): Set<number> {
-  const finished = new Set(
-    steps.flatMap((s) => (s.data?.type === "stage_finished" ? [s.data.stage] : [])),
-  );
-  return new Set(
-    steps.filter((s) => s.data?.type === "stage_started" && finished.has(s.data.stage)).map((s) => s.seq),
-  );
+  const hidden = new Set<number>();
+  const open = new Map<string, number>();
+  for (const s of [...steps].sort((a, b) => a.seq - b.seq)) {
+    if (s.data?.type === "stage_started") open.set(s.data.stage, s.seq);
+    if (s.data?.type === "stage_finished") {
+      const started = open.get(s.data.stage);
+      if (started !== undefined) hidden.add(started);
+      open.delete(s.data.stage);
+    }
+  }
+  return hidden;
+}
+
+/**
+ * Approvals whose deploy plan was replaced by a later one (the env changed at the approval
+ * card, so preflight ran again). Their cards collapse to a note instead of "Rejected".
+ */
+export function replacedPlans(steps: Step[]): Set<string> {
+  const plans = [...steps]
+    .sort((a, b) => a.seq - b.seq)
+    .filter((s) => s.data?.type === "deploy_plan" && !s.data.rollback_to_revision && s.approval_id);
+  return new Set(plans.slice(0, -1).map((s) => s.approval_id!));
 }
 
 /** A deploy event in the run timeline, rendered from its typed `data`. */
