@@ -68,6 +68,9 @@ class FakeSandbox:
         self.pushed.append((image_ref, target))
         return PushResult(image=target.image, digest="sha256:" + "a" * 64, duration_ms=10)
 
+    async def image_id(self, image_ref: str) -> str:
+        return "sha256:" + "b" * 64
+
     async def cleanup(self, run_id: str) -> None:
         return None
 
@@ -189,6 +192,7 @@ class FakeAws:
         self.revisions: dict[str, int] = {}
         self.task_definitions: dict[str, dict[str, Any]] = {}
         self.rollout = "COMPLETED"
+        self._settling: dict[str, int] = {}
 
     def client(self, name: str, region_name: str | None = None) -> Any:
         aws = self
@@ -313,6 +317,10 @@ class FakeAws:
     def _arn(self, service: str) -> str:
         return f"arn:aws:ecs:us-east-2:{ACCOUNT}:service/groundcrew-deploys/{service}"
 
+    # Real ECS: the first describes after CreateService / UpdateService show the new deployment
+    # IN_PROGRESS with 0 of 0 tasks; verify must not call that stable.
+    settling = 2
+
     def ecs__describe_services(
         self, cluster: str, services: list[str], include: list[str]
     ) -> dict[str, Any]:
@@ -320,7 +328,13 @@ class FakeAws:
         for name in services:
             name = name.rsplit("/", 1)[-1]
             if name in self.services:
-                out.append(copy.deepcopy(self.services[name]))
+                state = copy.deepcopy(self.services[name])
+                if self._settling.get(name, 0) > 0:
+                    self._settling[name] -= 1
+                    state["deployments"][0].update(
+                        rolloutState="IN_PROGRESS", runningCount=0, desiredCount=0
+                    )
+                out.append(state)
         return {"services": out}
 
     def ecs__list_services(self, cluster: str) -> dict[str, Any]:
@@ -349,6 +363,7 @@ class FakeAws:
             "deployments": [
                 {
                     "status": "PRIMARY",
+                    "taskDefinition": task_definition,
                     "rolloutState": self.rollout,
                     "rolloutStateReason": "tasks failed to start"
                     if self.rollout == "FAILED"
@@ -366,6 +381,7 @@ class FakeAws:
         )
         state["tags"] = kwargs["tags"]
         self.services[kwargs["serviceName"]] = state
+        self._settling[kwargs["serviceName"]] = self.settling
         return {"service": {"serviceArn": state["serviceArn"]}}
 
     def ecs__update_service(self, service: str, **kwargs: Any) -> dict[str, Any]:
@@ -373,6 +389,8 @@ class FakeAws:
         current = self.services[service]
         if "taskDefinition" in kwargs:
             current["taskDefinition"] = kwargs["taskDefinition"]
+            current["deployments"][0]["taskDefinition"] = kwargs["taskDefinition"]
+            self._settling[service] = self.settling
         if "desiredCount" in kwargs:
             current["desiredCount"] = kwargs["desiredCount"]
         return {"service": {"serviceArn": current["serviceArn"]}}

@@ -335,6 +335,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deploys/{deploy_id}/env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update Env
+         * @description Set missing env values, or continue without them. The pending plan approval is
+         *     replaced: only preflight runs again and the plan is re-rendered with the same built image
+         *     (no rebuild). Values are handled like POST /deploys: encrypted in the job, never echoed.
+         */
+        post: operations["update_env_deploys__deploy_id__env_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -616,6 +638,11 @@ export interface components {
             decided_by_login: string | null;
             /** Decided By Name */
             decided_by_name: string | null;
+            /**
+             * Decided Via
+             * @default null
+             */
+            decided_via: string | null;
             /** Executed At */
             executed_at: string | null;
             /**
@@ -998,6 +1025,33 @@ export interface components {
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /**
+         * DeployEnvUpdate
+         * @description POST /deploys/{id}/env: fix a failed env preflight at the approval card. The pending
+         *     plan approval is replaced; only preflight runs again, with the same built image.
+         */
+        DeployEnvUpdate: {
+            /**
+             * Allow Missing Env
+             * @default false
+             */
+            allow_missing_env: boolean;
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /** Env */
+            env?: components["schemas"]["EnvVarIn"][];
+        };
+        /** DeployEnvUpdated */
+        DeployEnvUpdated: {
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
         };
         /** DeployOptions */
         DeployOptions: {
@@ -2684,13 +2738,6 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description The deploy pipeline is not wired up yet. */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
         };
     };
     create_deploy_deploys_post: {
@@ -2733,13 +2780,6 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description The deploy pipeline is not wired up yet. */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
         };
     };
     get_deploy_deploys__deploy_id__get: {
@@ -2773,12 +2813,49 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description The deploy pipeline is not wired up yet. */
-            501: {
+        };
+    };
+    update_env_deploys__deploy_id__env_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deploy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeployEnvUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployEnvUpdated"];
+                };
+            };
+            /** @description The approval is not this deploy's pending plan. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

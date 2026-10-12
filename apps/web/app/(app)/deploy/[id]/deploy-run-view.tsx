@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { toast } from "sonner";
 
 import { DeployStatePill } from "@/components/deploy/deploy-list";
-import { PreviewBanner } from "@/components/deploy/preview-banner";
 import { StageStrip } from "@/components/deploy/stage-strip";
 import { Timeline } from "@/components/runs/timeline";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
@@ -14,9 +13,7 @@ import { EmptyState, ErrorState } from "@/components/states/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, type Approval, type Decision, type RunDetail } from "@/lib/api/client";
 import { type DeployView, deployView } from "@/lib/deploy-view";
-import { type DeployState, type EnvFix, targetLabel, useDeploy } from "@/lib/deploys";
-// TODO(M6): remove with lib/deploys-fake.ts.
-import * as preview from "@/lib/deploys-fake";
+import { type DeployState, type EnvFix, targetLabel, useDeploy, useUpdateEnv } from "@/lib/deploys";
 import { elapsedMs, formatCost, formatDuration, formatTokens } from "@/lib/format";
 import { useDecide, useRunDetail } from "@/lib/queries";
 import { initialTimeline, timelineReducer, totalTokens } from "@/lib/timeline";
@@ -65,29 +62,24 @@ function StreamNote({ state }: { state: StreamState }) {
 
 export function DeployRunView({ deployId }: { deployId: string }) {
   const deploy = useDeploy(deployId);
-  const isPreview = deploy.data?.preview ?? false;
   const runId = deploy.data?.run_id ?? "";
   const [state, dispatch] = useReducer(timelineReducer, initialTimeline);
   const [loadedSeq, setLoadedSeq] = useState<number | null>(null);
   const [deciding, setDeciding] = useState<{ id: string; decision: Decision } | null>(null);
   const [fixing, setFixing] = useState<string | null>(null);
   const decide = useDecide();
+  const updateEnv = useUpdateEnv(deployId);
 
-  // Real deploys: the run as stored, then the live stream. Preview: the scripted run.
-  const detail = useRunDetail(runId, { enabled: Boolean(runId) && !isPreview });
+  // The run as stored, then the live stream.
+  const detail = useRunDetail(runId, { enabled: Boolean(runId) });
   useEffect(() => {
     if (detail.data) {
       dispatch({ type: "loaded", run: detail.data });
       setLoadedSeq((seq) => seq ?? detail.data.steps.at(-1)?.seq ?? 0);
     }
   }, [detail.data]);
-  useEffect(() => {
-    if (!isPreview || !runId) return;
-    setLoadedSeq((seq) => seq ?? 0);
-    return preview.subscribe(runId, dispatch);
-  }, [isPreview, runId]);
   const stream = useRunStream(runId, {
-    enabled: !isPreview && Boolean(state.run) && !state.done,
+    enabled: Boolean(state.run) && !state.done,
     lastSeq: state.lastSeq,
     dispatch,
   });
@@ -99,14 +91,6 @@ export function DeployRunView({ deployId }: { deployId: string }) {
 
   const onDecide = useCallback(
     (approval: Approval, decision: Decision) => {
-      if (isPreview) {
-        try {
-          preview.decide(runId, approval.id, decision);
-        } catch (error) {
-          toast.error((error as Error).message);
-        }
-        return;
-      }
       setDeciding({ id: approval.id, decision });
       decide.mutate(
         { approval, decision },
@@ -120,32 +104,27 @@ export function DeployRunView({ deployId }: { deployId: string }) {
         },
       );
     },
-    [decide, isPreview, runId],
+    [decide],
   );
 
   const onFixEnv = useCallback(
     (approval: Approval, fix: EnvFix) => {
-      // TODO(M6): POST /deploys/{id}/env (docs/deploys-contract.md). Until then only the
-      // preview can do this, and every deploy is a preview while /deploys answers 501.
-      if (!isPreview) {
-        toast.error("Setting env vars from the approval card arrives with the deploy pipeline.");
-        return;
-      }
       setFixing(approval.id);
-      try {
-        preview.updateEnv(runId, approval.id, fix);
-        toast.success(fix.env.length ? "Value saved. Running preflight again." : "Running preflight again.");
-      } catch (error) {
-        toast.error((error as Error).message);
-      } finally {
-        setFixing(null);
-      }
+      updateEnv.mutate(
+        { approvalId: approval.id, fix },
+        {
+          onSuccess: () =>
+            toast.success(fix.env?.length ? "Value saved. Running preflight again." : "Running preflight again."),
+          onError: (error) => toast.error(error.message),
+          onSettled: () => setFixing(null),
+        },
+      );
     },
-    [isPreview, runId],
+    [updateEnv],
   );
 
   const parent = <Link href="/deploy" className="hover:text-foreground">Deploy</Link>;
-  if (deploy.isLoading || (!isPreview && detail.isLoading) || (deploy.data && !run && !detail.error)) {
+  if (deploy.isLoading || detail.isLoading || (deploy.data && !run && !detail.error)) {
     return (
       <>
         <PageHeader parent={parent} title="Deploy" />
@@ -166,8 +145,7 @@ export function DeployRunView({ deployId }: { deployId: string }) {
         <PageBody className="max-w-3xl">
           {missing ? (
             <EmptyState title="Deploy not found">
-              It does not exist, it belongs to a workspace you are not a member of, or it was a preview run
-              that ended when the page reloaded.
+              It does not exist, or it belongs to a workspace you are not a member of.
             </EmptyState>
           ) : (
             <ErrorState error={error} onRetry={() => void (deploy.error ? deploy.refetch() : detail.refetch())} />
@@ -179,10 +157,7 @@ export function DeployRunView({ deployId }: { deployId: string }) {
 
   const d = deploy.data;
   const status = deployState(run, view);
-  // The preview runs on a simulated clock so elapsed time matches the step durations.
-  const elapsed = isPreview
-    ? (preview.elapsed(run.id) ?? 0)
-    : elapsedMs(run.started_at ?? run.created_at, run.finished_at, now);
+  const elapsed = elapsedMs(run.started_at ?? run.created_at, run.finished_at, now);
   const cost = formatCost(run.cost_usd);
   const ended = ["succeeded", "failed", "stopped"].includes(run.status);
 
@@ -194,16 +169,13 @@ export function DeployRunView({ deployId }: { deployId: string }) {
         actions={
           <>
             <StreamNote state={stream} />
-            {!isPreview && (
-              <Link href={`/runs/${run.id}`} className="text-[12.5px] text-muted-foreground hover:text-foreground">
-                Open as run
-              </Link>
-            )}
+            <Link href={`/runs/${run.id}`} className="text-[12.5px] text-muted-foreground hover:text-foreground">
+              Open as run
+            </Link>
           </>
         }
       />
       <PageBody className="max-w-4xl space-y-6">
-        {isPreview && <PreviewBanner />}
         <div className="space-y-4 border-b pb-5">
           <StageStrip stages={view.stages} current={view.current} />
           <dl className="flex flex-wrap gap-x-8 gap-y-3">

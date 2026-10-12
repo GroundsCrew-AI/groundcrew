@@ -133,6 +133,8 @@ function StepTitle({ step }: { step: Step }) {
       return <span className="font-medium">Budget reached</span>;
     case "stopped":
       return <span className="font-medium">Stopped</span>;
+    case "note":
+      return <span className="font-medium text-muted-foreground">Note</span>;
     default:
       return <span className="font-medium">{step.kind.replaceAll("_", " ")}</span>;
   }

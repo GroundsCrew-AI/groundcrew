@@ -70,6 +70,18 @@
             ],
             "title": "Decided By Name"
           },
+          "decided_via": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Decided Via"
+          },
           "executed_at": {
             "anyOf": [
               {
@@ -1124,6 +1136,49 @@
           "deploy"
         ],
         "title": "DeployDetail",
+        "type": "object"
+      },
+      "DeployEnvUpdate": {
+        "additionalProperties": false,
+        "description": "POST /deploys/{id}/env: fix a failed env preflight at the approval card. The pending\nplan approval is replaced; only preflight runs again, with the same built image.",
+        "properties": {
+          "allow_missing_env": {
+            "default": false,
+            "title": "Allow Missing Env",
+            "type": "boolean"
+          },
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/EnvVarIn"
+            },
+            "maxItems": 100,
+            "title": "Env",
+            "type": "array"
+          }
+        },
+        "required": [
+          "approval_id"
+        ],
+        "title": "DeployEnvUpdate",
+        "type": "object"
+      },
+      "DeployEnvUpdated": {
+        "properties": {
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id"
+        ],
+        "title": "DeployEnvUpdated",
         "type": "object"
       },
       "DeployOptions": {
@@ -5437,9 +5492,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "description": "The deploy pipeline is not wired up yet."
           }
         },
         "summary": "List Deploys",
@@ -5501,9 +5553,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "description": "The deploy pipeline is not wired up yet."
           }
         },
         "summary": "Create Deploy",
@@ -5564,12 +5613,82 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "description": "The deploy pipeline is not wired up yet."
           }
         },
         "summary": "Get Deploy",
+        "tags": [
+          "deploys"
+        ]
+      }
+    },
+    "/deploys/{deploy_id}/env": {
+      "post": {
+        "description": "Set missing env values, or continue without them. The pending plan approval is\nreplaced: only preflight runs again and the plan is re-rendered with the same built image\n(no rebuild). Values are handled like POST /deploys: encrypted in the job, never echoed.",
+        "operationId": "update_env_deploys__deploy_id__env_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployEnvUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployEnvUpdated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The approval is not this deploy's pending plan."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Env",
         "tags": [
           "deploys"
         ]

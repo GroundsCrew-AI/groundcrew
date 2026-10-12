@@ -50,7 +50,6 @@ describe("DeployForm", () => {
       target_connection_id: "aws-deploy",
       env: [{ name: "DATABASE_URL", value: "postgresql://x", secret: true }],
       options: { allow_missing_env: true },
-      labels: { repo: "GroundsCrew-AI/legacy-flask-app", ref: "main", targetName: "AWS 881050425883", targetKind: "aws_ecs" },
     });
   });
 
@@ -73,6 +72,23 @@ describe("DeployForm", () => {
     await userEvent.click(screen.getByRole("button", { name: /^deploy$/i }));
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByText(/not starting with a digit/)).toBeInTheDocument();
+  });
+
+  it("takes a typed owner/name when the connection lists no repositories", async () => {
+    const empty = connection({ id: "gh2", kind: "github", name: "GroundsCrew-AI", repos: [], tier: null });
+    const onSubmit = setup([empty, kind]);
+    const repo = screen.getByPlaceholderText("owner/name");
+    await userEvent.type(repo, "not a repo");
+    await userEvent.click(screen.getByRole("button", { name: /^deploy$/i }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    await userEvent.clear(repo);
+    await userEvent.type(repo, "GroundsCrew-AI/legacy-flask-app");
+    await userEvent.click(screen.getByRole("button", { name: /^deploy$/i }));
+    expect(onSubmit.mock.calls[0][0].repo).toEqual({
+      connection_id: "gh2",
+      repo: "GroundsCrew-AI/legacy-flask-app",
+      ref: "main",
+    });
   });
 
   it("asks for a GitHub connection when there is none", () => {

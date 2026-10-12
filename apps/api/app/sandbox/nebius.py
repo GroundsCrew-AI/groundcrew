@@ -40,5 +40,8 @@ class NebiusSandbox:
     async def push(self, image_ref: str, target: PushTarget) -> PushResult:
         raise SandboxError(_TODO)
 
+    async def image_id(self, image_ref: str) -> str:
+        raise SandboxError(_TODO)
+
     async def cleanup(self, run_id: str) -> None:
         raise SandboxError(_TODO)

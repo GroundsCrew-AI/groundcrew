@@ -490,6 +490,17 @@ Feature freeze: **Oct 25.** Cut order if late: Navigator/migration → Docker Co
           `aws_deploy_session()`, temp `DOCKER_CONFIG`, `--password-stdin`); `NebiusSandbox` stub
           (`TODO(nebius-sandbox)`). Live: `legacy-flask-app` naive build fails on `pg_config`, fixed build
           passes smoke and pushes to kind
+    - [x] M3 Targets (`app/targets/`): `K8sTarget` and `EcsTarget` behind one protocol (discover, plan,
+          preflight, apply, verify, logs, rollback_plan, rollback). Nothing leaves the sandbox before
+          approval: the push is the first apply step (ECR repository first on ECS). `apply()` and
+          `rollback()` need an `ApprovedAction` (`app/policy/actions.py`) bound to run + plan hash,
+          signed with `APPROVAL_TOKEN_KEY` and spent once in the database (`approvals.used_at`), so
+          it works across workers and restarts; rollback (also deleting a first deploy) needs an
+          emergency approval. k8s: gc-<app> -> RoleBinding -> Secret -> Deployment -> Service ->
+          Ingress; ECS: deploy role only, deploy_infra names and tags, task definitions never
+          deregistered, SG source `GC_INGRESS_CIDR`. Live on kind (deploy, redeploy, rollback,
+          delete) and ECS (legacy-flask-app deployed, verified, deleted by an emergency rollback,
+          `cleanup-deploys RUN=` removed the rest; about $0.001)
     - [x] M7 Deploy page (`apps/web`): source picker (GitHub connection, repo, ref), target picker (kind / AWS
           deploy tier; observe tier disabled with "Turn on deploys"), env rows with a secret toggle,
           allow_missing_env; live view at `/deploy/[id]` on the shared run timeline (stage strip, build

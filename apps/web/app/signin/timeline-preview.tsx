@@ -37,6 +37,7 @@ function fixture(now: number): { steps: Step[]; approval: Approval } {
     decided_by_login: "you",
     decided_by_name: "You",
     decided_by_avatar_url: null,
+    decided_via: null,
     decided_at: at(40),
     executed_at: at(39),
     created_at: at(52),

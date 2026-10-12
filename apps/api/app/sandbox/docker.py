@@ -250,6 +250,15 @@ class DockerSandbox:
         digest = _DIGEST.search(pushed.output)
         return PushResult(target.image, digest.group(1) if digest else None, _ms(start))
 
+    async def image_id(self, image_ref: str) -> str:
+        """The image's content ID (sha256:...), which the approved plan pins."""
+        found = await self._docker(
+            ["image", "inspect", "--format", "{{.Id}}", image_ref], timeout=30
+        )
+        if found.returncode != 0 or not found.stdout.strip().startswith("sha256:"):
+            raise SandboxError(f"Could not read the ID of {image_ref}.")
+        return found.stdout.strip()
+
     # --- cleanup ----------------------------------------------------------------------------
 
     async def cleanup(self, run_id: str) -> None:

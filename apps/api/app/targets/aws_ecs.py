@@ -654,10 +654,15 @@ class EcsTarget:
                 (d for d in found.get("deployments", []) if d.get("status") == "PRIMARY"), {}
             )
             state = primary.get("rolloutState")
-            running, want = primary.get("runningCount", 0), primary.get("desiredCount", 1)
-            if state == "COMPLETED" or (
-                len(found.get("deployments", [])) == 1 and running >= want and state != "FAILED"
-            ):
+            # Right after CreateService the deployment's counts are still 0 of 0: stable means
+            # the service's own desired count of tasks runs the new task definition.
+            want = max(int(found.get("desiredCount") or 0), 1)
+            running = int(primary.get("runningCount") or 0)
+            ours = not deployment.revision or primary.get("taskDefinition") == deployment.revision
+            settled = state == "COMPLETED" or (
+                state is None and len(found.get("deployments", [])) == 1
+            )
+            if ours and settled and running >= want:
                 rollout = VerifyCheck(
                     name="rollout", ok=True, detail=f"service stable, {running} task running"
                 )

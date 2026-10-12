@@ -284,12 +284,14 @@ def test_pipeline_state_keeps_a_deploy_record() -> None:
 
 def test_openapi_has_the_deploy_contract() -> None:
     schema = app.openapi()
-    assert {"/deploys", "/deploys/{deploy_id}"} <= set(schema["paths"])
-    assert "501" in schema["paths"]["/deploys"]["post"]["responses"]
+    assert {"/deploys", "/deploys/{deploy_id}", "/deploys/{deploy_id}/env"} <= set(schema["paths"])
+    assert "409" in schema["paths"]["/deploys"]["post"]["responses"]
     components = schema["components"]["schemas"]
     for name in (
         "DeployCreate",
         "DeployCreated",
+        "DeployEnvUpdate",
+        "DeployEnvUpdated",
         "DeployPage",
         "DeploySummary",
         "DeployOut",  # the Map's recent deploys (discovery_schemas), unchanged
@@ -311,7 +313,7 @@ def test_openapi_has_the_deploy_contract() -> None:
     assert "data" not in components["StepOut"].get("required", [])
 
 
-# --- routes (501 until Milestone 6) -------------------------------------------------------
+# --- routes (the pipeline itself: tests/test_pipeline.py) ---------------------------------
 
 
 async def test_routes_need_sign_in(client: httpx.AsyncClient) -> None:
@@ -331,13 +333,15 @@ async def test_non_members_get_404(client: httpx.AsyncClient, alice: Member) -> 
     assert resp.status_code == 404
 
 
-async def test_members_get_501(client: httpx.AsyncClient, alice: Member) -> None:
-    body = _body(workspace_id=str(alice.workspace_id))
-    assert (await client.post("/deploys", json=body, headers=alice.headers)).status_code == 501
+async def test_members_get_real_answers(client: httpx.AsyncClient, alice: Member) -> None:
     params = {"workspace_id": str(alice.workspace_id)}
-    assert (await client.get("/deploys", params=params, headers=alice.headers)).status_code == 501
+    resp = await client.get("/deploys", params=params, headers=alice.headers)
+    assert resp.status_code == 200 and resp.json() == {"items": [], "next_cursor": None}
     resp = await client.get(f"/deploys/{uuid.uuid4()}", headers=alice.headers)
-    assert resp.status_code == 501
+    assert resp.status_code == 404
+    # A connection that is not in the workspace.
+    body = _body(workspace_id=str(alice.workspace_id))
+    assert (await client.post("/deploys", json=body, headers=alice.headers)).status_code == 404
 
 
 async def test_bad_body_is_422_and_does_not_echo_secrets(

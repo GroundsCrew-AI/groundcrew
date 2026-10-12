@@ -55,8 +55,11 @@ services:
       DOCKER_CERT_PATH: /certs/client
       # Containers started for a smoke test publish their ports on dind, not on localhost.
       SANDBOX_SMOKE_HOST: dind
+      # `{"fixture": name}` deploy sources (APP_ENV=dev only).
+      DEPLOY_FIXTURES_DIR: /app/demo-fixtures
     volumes:
       - ./apps/api/app:/app/app
+      - ./demo/fixtures:/app/demo-fixtures:ro
       # The GitHub App private key (GITHUB_APP_PRIVATE_KEY_PATH=secrets/...), read-only.
       - ./secrets:/app/secrets:ro
       - dind-certs-client:/certs/client:ro

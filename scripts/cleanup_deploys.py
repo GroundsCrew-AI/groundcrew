@@ -4,6 +4,7 @@ than --hours, on AWS (every deploy-tier connection, or --connection) and in kind
     make cleanup-deploys HOURS=24                      # dry run: list and decide, read only
     make cleanup-deploys HOURS=24 APPLY=1              # delete what the dry run lists as DELETE
     make cleanup-deploys HOURS=24 CONNECTION=<id>      # one AWS connection only
+    make cleanup-deploys HOURS=0 RUN=<run id>          # only what that run created
 
 AWS calls use only ConnectionCredentialsProvider.aws_deploy_session() for each connection
 (Groundcrew's platform identity assumes groundcrew-deploy; never a profile or ~/.aws). A dry
@@ -101,6 +102,15 @@ def _check_identity(session: boto3.Session, account: str, settings: Settings) ->
     return ""
 
 
+def only_run(resources: list[dc.Resource], run: str | None) -> None:
+    """With --run, keep everything not tagged groundcrew:deploy=<run> (decided before apply)."""
+    if not run:
+        return
+    for r in resources:
+        if r.run_id != run and r.delete:
+            r.delete, r.note = False, f"another run ({r.run_id or 'untagged'})"
+
+
 def _aws(
     connection_id: uuid.UUID | None,
     expect_account: str,
@@ -108,6 +118,7 @@ def _aws(
     older: timedelta,
     now: datetime,
     apply: bool,
+    run: str | None = None,
 ) -> list[Target]:
     targets = []
     for label, account, session, error in asyncio.run(
@@ -123,6 +134,7 @@ def _aws(
             if target.error:
                 continue
             target.resources = dc.find_aws(reader, settings, older_than=older, now=now)
+            only_run(target.resources, run)
             if apply:
                 dc.apply_aws(session, settings, target.resources)
         except Exception as exc:
@@ -131,7 +143,12 @@ def _aws(
 
 
 def _kind(
-    kubeconfig: Path, settings: Settings, older: timedelta, now: datetime, apply: bool
+    kubeconfig: Path,
+    settings: Settings,
+    older: timedelta,
+    now: datetime,
+    apply: bool,
+    run: str | None = None,
 ) -> Target:
     target = Target("kind (groundcrew-deployer)")
     if not kubeconfig.exists():
@@ -140,6 +157,7 @@ def _kind(
     try:
         namespaces = dc.KubeNamespaces(str(kubeconfig))
         target.resources = dc.find_kind(namespaces, settings, older_than=older, now=now)
+        only_run(target.resources, run)
         if apply:
             dc.apply_kind(namespaces, target.resources)
     except Exception as exc:  # cluster down, kubeconfig stale: say so, keep going
@@ -174,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--account", default="", help="refuse to run unless the platform identity is in it"
     )
+    parser.add_argument("--run", help="only resources tagged groundcrew:deploy=<run>")
     parser.add_argument("--kubeconfig", type=Path, default=KUBECONFIG)
     args = parser.parse_args(argv)
     if args.hours < 0:
@@ -195,10 +214,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: the platform identity is in account {found}, not {args.account}.")
             return 1
         print(f"Platform identity: account {found} (checked before any role is assumed)")
-    targets = _aws(args.connection, args.account, settings, older, now, args.apply)
+    if args.run:
+        print(f"Only resources tagged groundcrew:deploy={args.run}")
+    targets = _aws(args.connection, args.account, settings, older, now, args.apply, args.run)
     if not targets:
         print("\nNo AWS connection with tier deploy.")
-    targets.append(_kind(args.kubeconfig, settings, older, now, args.apply))
+    targets.append(_kind(args.kubeconfig, settings, older, now, args.apply, args.run))
     print("\n".join(render(targets, now)))
     planned = [r for t in targets for r in t.resources if r.delete]
     failed = [r for r in planned if r.result == "FAIL"]

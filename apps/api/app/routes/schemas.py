@@ -256,6 +256,8 @@ class ApprovalOut(BaseModel):
     decided_by_login: str | None
     decided_by_name: str | None
     decided_by_avatar_url: str | None
+    # Who decided when it was not a signed-in user: "script:<name> (dev)".
+    decided_via: str | None = None
     decided_at: datetime | None
     executed_at: datetime | None
     created_at: datetime
@@ -280,8 +282,9 @@ class ApprovalOut(BaseModel):
             status=approval.status,
             decided_by=approval.decided_by,
             decided_by_login=decider.github_login if decider else None,
-            decided_by_name=decider.name if decider else None,
+            decided_by_name=decider.name if decider else approval.decided_via,
             decided_by_avatar_url=decider.avatar_url if decider else None,
+            decided_via=approval.decided_via,
             decided_at=approval.decided_at,
             executed_at=approval.executed_at,
             created_at=approval.created_at,

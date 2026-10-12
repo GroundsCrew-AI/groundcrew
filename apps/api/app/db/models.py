@@ -344,6 +344,9 @@ class Approval(TimestampMixin, Base):
     # Set atomically when an ApprovedAction for this approval is consumed by a deploy target
     # (UPDATE ... WHERE used_at IS NULL), so a token works once across workers and restarts.
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set instead of decided_by when no signed-in user decided: "script:<name> (dev)" for the
+    # dev-only self-approve path (app/policy/self_approve.py).
+    decided_via: Mapped[str | None] = mapped_column(String(100))
 
 
 class Event(TimestampMixin, Base):

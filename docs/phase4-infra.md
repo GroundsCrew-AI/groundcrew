@@ -475,7 +475,37 @@ service to 0 and deletes it (the image, log group, security group, and secrets s
   logs, a second deploy, a rollback, and the delete, on the live kind cluster.
 - `make plan-target CONNECTION=<id>`: the plan and preflight for a real connection, read-only.
   Run it and get an OK before any live ECS apply.
+- `make live-ecs-target CONNECTION=<id> CONFIRM=881050425883 APPROVED_BY=<login>`: real AWS
+  writes, only with an OK in the chat. Builds `legacy-flask-app` (psycopg2 fix by hand until
+  M4), smoke-tests it, then plan, approval, apply with the token, verify, logs, and the
+  first-deploy rollback (emergency approval, service deleted). `RESUME=<run>` continues a run
+  that stopped after apply, from verify. Then
+  `make cleanup-deploys HOURS=0 APPLY=1 CONNECTION=<id> RUN=<run>` removes what that run left.
 
-Live (2026-10-12, kind): first deploy verified in 8.0 s (rollout 1/1, `/health` 200), second
-deploy 6.0 s, rollback to revision 1 verified, namespace deleted. ECS: dry run only
-(`make plan-target`, account 881050425883): 7 apply steps, all preflight checks pass.
+Live on kind (2026-10-12): first deploy verified in 8.0 s (rollout 1/1, `/health` 200), second
+deploy 6.0 s, rollback to revision 1 verified, namespace deleted.
+
+Live on ECS (2026-10-12, account 881050425883, us-east-2, run
+`121d27b7-e36c-4a93-b6ba-cca28c9e14a2`, commit `be9a75d04d07`):
+
+| Step | Result | Time | Note |
+|---|---|---|---|
+| build in the sandbox | PASS | 102 s | psycopg2 fix applied by hand (Builder is M4) |
+| smoke test in the sandbox | PASS | 1.6 s | `/health` 200, `/` 404 (recorded only) |
+| plan and preflight (read only) | PASS | 9.7 s | 7 steps, all checks pass |
+| approval `target_apply` (write) | PASS | 0 s | approved in chat |
+| apply, push first | PASS | 51 s | ECR repository, push, log group, SG, secret, task definition `:1`, service |
+| same token again | PASS | 0 s | refused: already used |
+| verify | PASS (2nd try) | 5.1 s | `http://3.21.12.187:8000`: 1 task running, `/health` 200, `/` 404 |
+| logs | PASS | 1.9 s | 4 lines from `/groundcrew/legacy-flask-app`, no database URL |
+| approval `target_rollback` (emergency) | PASS | 0 s | approved in chat |
+| rollback of the first deploy | PASS | 1.9 s | service deleted |
+| `cleanup-deploys RUN=...` | PASS | | SG, log group, ECR repository (with image), secret deleted |
+
+The first verify stopped at once: right after `CreateService`, ECS reports the new deployment
+with 0 of 0 tasks, which verify took as stable. Verify now waits until the service's desired
+count runs the new task definition (a unit test reproduces the 0 of 0 state), and the run was
+resumed from verify. The task ran 155 s, the service existed 180 s: estimated cost $0.001
+(Fargate 0.25 vCPU / 0.5 GB, public IPv4, the secret for a few minutes; ECR storage and the
+inbound push are negligible). Left by design: task definition `groundcrew-legacy-flask-app:1`
+(never deregistered, free).
