@@ -475,10 +475,14 @@ async def test_ecs_verify_finds_the_task_ip_and_checks_health(
     session_factory: SessionFactory, workspace: Workspace
 ) -> None:
     seen: list[httpx.Request] = []
-    target, _, deployment = await _deployed_ecs(
+    target, aws, deployment = await _deployed_ecs(
         session_factory, workspace, [], http=http(200, seen)
     )
+    before = len(aws.calls)
     health = await target.verify(deployment)
+    describes = [c for c in aws.calls[before:] if c[1] == "describe_services"]
+    # ECS first reports the new deployment as 0 of 0 tasks; verify waits past that.
+    assert len(describes) == 3
     assert health.ok, health
     assert health.live_url == "http://203.0.113.9:8000"
     assert str(seen[0].url) == "http://203.0.113.9:8000/health"

@@ -427,3 +427,16 @@ def test_the_wrong_platform_account_stops_before_any_role_is_assumed(
     monkeypatch.setattr(module, "get_settings", _settings)
     assert module.main(["--hours", "1", "--account", ACCOUNT]) == 1
     assert f"account 111122223333, not {ACCOUNT}" in capsys.readouterr().out
+
+
+def test_run_limits_deletes_to_that_runs_resources() -> None:
+    module = _script()
+    mine = dc.Resource("log group", "/groundcrew/a", "/groundcrew/a", run_id="run-1", delete=True)
+    other = dc.Resource("log group", "/groundcrew/b", "/groundcrew/b", run_id="run-2", delete=True)
+    untagged = dc.Resource("log group", "/groundcrew/c", "/groundcrew/c", delete=True)
+    module.only_run([mine, other, untagged], "run-1")
+    assert (mine.delete, other.delete, untagged.delete) == (True, False, False)
+    assert other.note == "another run (run-2)" and untagged.note == "another run (untagged)"
+    everything = dc.Resource("log group", "/groundcrew/d", "/groundcrew/d", run_id="x", delete=True)
+    module.only_run([everything], None)
+    assert everything.delete
