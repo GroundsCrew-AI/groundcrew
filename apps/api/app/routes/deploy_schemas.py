@@ -55,6 +55,15 @@ class EnvVarIn(BaseModel):
     secret: bool = False
 
 
+def _unique(env: list[EnvVarIn]) -> list[EnvVarIn]:
+    seen: set[str] = set()
+    for var in env:
+        if var.name in seen:
+            raise ValueError(f"env var {var.name} is listed twice")
+        seen.add(var.name)
+    return env
+
+
 class DeployOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -76,12 +85,31 @@ class DeployCreate(BaseModel):
     @field_validator("env")
     @classmethod
     def _unique_names(cls, env: list[EnvVarIn]) -> list[EnvVarIn]:
-        seen: set[str] = set()
-        for var in env:
-            if var.name in seen:
-                raise ValueError(f"env var {var.name} is listed twice")
-            seen.add(var.name)
-        return env
+        return _unique(env)
+
+
+class DeployEnvUpdate(BaseModel):
+    """POST /deploys/{id}/env: fix a failed env preflight at the approval card. The pending
+    plan approval is replaced; only preflight runs again, with the same built image."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The deploy's pending plan approval (409 when it is not).
+    approval_id: uuid.UUID
+    # Merged by name into the deploy's env. Same rules as POST /deploys.
+    env: list[EnvVarIn] = Field(default_factory=list, max_length=MAX_ENV_VARS)
+    # "Continue without it": the env check stays failed but overridden.
+    allow_missing_env: bool = False
+
+    @field_validator("env")
+    @classmethod
+    def _unique_names(cls, env: list[EnvVarIn]) -> list[EnvVarIn]:
+        return _unique(env)
+
+
+class DeployEnvUpdated(BaseModel):
+    # The approval that was replaced; a new approval_requested follows on the run stream.
+    approval_id: uuid.UUID
 
 
 class DeployCreated(BaseModel):
