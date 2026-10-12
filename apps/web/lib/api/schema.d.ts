@@ -411,7 +411,8 @@ export interface paths {
         };
         /**
          * Get Incident
-         * @description An incident with its root cause (cited), fixes, and verify result.
+         * @description An incident with its signals, evidence (cited by id), change markers, root cause, fixes
+         *     with their approvals and PR links, verify result, memory, and research.
          */
         get: operations["get_incident_incidents__incident_id__get"];
         put?: never;
@@ -3879,13 +3880,6 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Incidents are not wired up yet. */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
         };
     };
     create_incident_incidents_post: {
@@ -3960,13 +3954,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
-            };
-            /** @description Incidents are not wired up yet. */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

@@ -96,7 +96,7 @@ def test_incident_create_needs_resources_and_rejects_unknown_fields() -> None:
             IncidentCreate.model_validate(bad)
 
 
-# --- routes: 501 behind auth and membership -----------------------------------------------
+# --- routes behind auth and membership ------------------------------------------------------
 
 
 async def test_incident_routes_need_sign_in(client: httpx.AsyncClient) -> None:
@@ -105,7 +105,7 @@ async def test_incident_routes_need_sign_in(client: httpx.AsyncClient) -> None:
     assert (await client.get(f"/incidents/{uuid.uuid4()}")).status_code == 401
 
 
-async def test_incident_routes_are_501_for_members_and_404_for_others(
+async def test_incident_routes_answer_members_and_404_others(
     client: httpx.AsyncClient, alice: Member, bob: Member
 ) -> None:
     body = _create(workspace_id=str(alice.workspace_id))
@@ -116,10 +116,11 @@ async def test_incident_routes_are_501_for_members_and_404_for_others(
         f"/incidents?workspace_id={alice.workspace_id}&status=resolved&severity=high"
         f"&resource={uuid.uuid4()}&since=2026-10-19T00:00:00Z"
     )
-    assert (await client.get(listing, headers=alice.headers)).status_code == 501
+    page = await client.get(listing, headers=alice.headers)
+    assert page.status_code == 200 and page.json() == {"items": [], "next_cursor": None}
     assert (await client.get(listing, headers=bob.headers)).status_code == 404
     detail = await client.get(f"/incidents/{uuid.uuid4()}", headers=alice.headers)
-    assert detail.status_code == 501
+    assert detail.status_code == 404
 
 
 def test_incident_routes_and_payloads_are_in_openapi() -> None:

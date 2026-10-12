@@ -666,7 +666,13 @@ class MedicRunner:
             return
         now = self.deps.now()
         state.phase, state.fixes_applied_at = "verifying", now
-        state.verify_deadline = now + timedelta(seconds=self.settings.medic_verify_timeout_seconds)
+        pr_only = all(r.fix.kind == "pr" for r in applied)
+        window = (
+            self.settings.medic_pr_verify_timeout_seconds
+            if pr_only
+            else self.settings.medic_verify_timeout_seconds
+        )
+        state.verify_deadline = now + timedelta(seconds=window)
         state.healthy_streak = 0
         _save(incident, state)
         await self._status(session, incident, run, "verifying")
@@ -732,8 +738,7 @@ class MedicRunner:
                     incident,
                     run,
                     state,
-                    "Signals did not recover within "
-                    f"{self.settings.medic_verify_timeout_seconds} s.",
+                    "Signals did not recover before the verify deadline.",
                     still_failing=[c.detail for c in result.checks if not c.ok],
                     stop=StopReason.completed,
                 )

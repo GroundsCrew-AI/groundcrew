@@ -293,3 +293,32 @@ async def count_open(session: AsyncSession, workspace_id: uuid.UUID) -> int:
         )
         or 0
     )
+
+
+async def close_for_stopped_run(session: AsyncSession, run: Run, who: str) -> None:
+    """A person stopped the incident's Medic run: the incident fails with that reason (its
+    pending fix approvals were already rejected by the stop). The caller commits."""
+    from app.agents.medic.events import IncidentFailed
+    from app.agents.medic.state import MedicState, Outcome
+
+    if run.incident_id is None or run.agent != MEDIC_AGENT:
+        return
+    incident = await session.get(Incident, run.incident_id, with_for_update=True)
+    if incident is None or incident.status not in OPEN_STATUSES:
+        return
+    reason = f"Stopped by {who}."
+    state = MedicState.model_validate(incident.state or {})
+    state.phase, state.error = "done", reason
+    state.outcome = Outcome(result="failed", reason=reason)
+    for rec in state.fixes:
+        if rec.status in ("proposed", "waiting_approval"):
+            rec.status = "rejected"
+    incident.state = state.model_dump(mode="json")
+    await set_status(session, incident, run, "failed", reason=reason)
+    await record_step(
+        session,
+        run,
+        kind="incident_failed",
+        output_summary=reason,
+        data=IncidentFailed(incident_id=incident.id, reason=reason),
+    )

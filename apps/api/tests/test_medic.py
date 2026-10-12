@@ -793,7 +793,7 @@ async def test_verify_gives_up_and_says_what_still_fails(
     llm = FakeLLM(
         reply(oom_root_cause(ev)),
         reply(oom_fix()),
-        settings=settings(medic_verify_timeout_seconds=0),
+        settings=settings(medic_verify_timeout_seconds=0, medic_pr_verify_timeout_seconds=0),
     )
     broken = {
         "ecs:DescribeServices": {

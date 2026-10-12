@@ -36,6 +36,7 @@ from app.db.models import (
     User,
 )
 from app.db.session import SessionFactory
+from app.incidents.store import close_for_stopped_run
 from app.pipeline.events import DEPLOY_EVENT_NAMES
 from app.routes.deps import CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
 from app.routes.schemas import (
@@ -177,6 +178,8 @@ async def stop_run(run_id: uuid.UUID, user: CurrentUser, session: SessionDep) ->
     await record_step(
         session, run, kind="stopped", output_summary=f"Stopped by {user.github_login or user.id}"
     )
+    # A Medic run: its incident is closed too, so it does not wait for approvals forever.
+    await close_for_stopped_run(session, run, str(user.github_login or user.id))
     await session.commit()
     counts = await rejected_counts(session, [run.id])
     return RunOut.build(run, rejected_actions=counts.get(run.id, 0))
