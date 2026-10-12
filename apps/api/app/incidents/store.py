@@ -2,8 +2,9 @@
 
 One open incident per resource group. An incident's group is its affected resources plus their
 graph neighbors, one hop in either direction (the api's secret, log group, database, and its
-callers). A report or watcher signal for a resource already in an open incident's group joins
-that incident (its signals are appended) instead of opening a second one. Opening takes a
+callers). A report or watcher signal whose group overlaps an open incident's group joins that
+incident (its signals are appended) instead of opening a second one: the api and the worker
+share the database, so their problems are one incident whichever is reported first. Opening takes a
 per-workspace advisory lock, so two watchers or a watcher and a person cannot race.
 
 Every incident has a run (`agent = "medic"`, `runs.incident_id`). Its first step is
@@ -122,15 +123,16 @@ async def latest_run(session: AsyncSession, incident_id: uuid.UUID) -> Run | Non
 
 
 async def find_open(
-    session: AsyncSession, workspace_id: uuid.UUID, resource_ids: list[uuid.UUID]
+    session: AsyncSession, workspace_id: uuid.UUID, group: list[uuid.UUID]
 ) -> Incident | None:
-    """The oldest open incident whose group contains any of these resources."""
+    """The oldest open incident whose group overlaps `group` (a report's own group, so the
+    answer does not depend on which of two related reports came first)."""
     return await session.scalar(
         select(Incident)
         .where(
             Incident.workspace_id == workspace_id,
             Incident.status.in_(OPEN_STATUSES),
-            Incident.group_resource_ids.overlap(resource_ids),
+            Incident.group_resource_ids.overlap(group),
         )
         .order_by(Incident.created_at)
         .limit(1)
@@ -168,7 +170,8 @@ async def open_incident(
                 at=now,
             )
         ]
-    existing = await find_open(session, workspace_id, unique_ids)
+    group = await resource_group(session, workspace_id, unique_ids)
+    existing = await find_open(session, workspace_id, group)
     if existing is not None:
         existing.signals = [*existing.signals, *(s.model_dump(mode="json") for s in signals)][
             -MAX_SIGNALS:
@@ -206,7 +209,7 @@ async def open_incident(
         window_start=start,
         first_signal_at=first_at,
         affected_resource_ids=unique_ids,
-        group_resource_ids=await resource_group(session, workspace_id, unique_ids),
+        group_resource_ids=group,
         signals=[s.model_dump(mode="json") for s in signals],
         state={},
     )
