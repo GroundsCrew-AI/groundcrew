@@ -1018,7 +1018,6 @@
                   "scout",
                   "build",
                   "smoke",
-                  "push",
                   "plan",
                   "preflight",
                   "approval",
@@ -1347,6 +1346,17 @@
             "default": null,
             "title": "Rollback To Revision"
           },
+          "source_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Image"
+          },
           "target": {
             "enum": [
               "k8s",
@@ -1372,6 +1382,7 @@
           "target_connection_id",
           "app",
           "image",
+          "source_image",
           "port",
           "health_path",
           "replicas",
@@ -1678,7 +1689,6 @@
                   "scout",
                   "build",
                   "smoke",
-                  "push",
                   "plan",
                   "preflight",
                   "approval",
@@ -2451,13 +2461,15 @@
         "type": "object"
       },
       "PlannedResource": {
+        "description": "One step of apply. DeployPlan.resources is in apply order: the image push (and the ECR\nrepository before it) comes first, because nothing leaves the sandbox before approval.",
         "properties": {
           "action": {
             "enum": [
               "create",
               "update",
               "unchanged",
-              "delete"
+              "delete",
+              "push"
             ],
             "title": "Action",
             "type": "string"
@@ -2476,6 +2488,8 @@
           },
           "kind": {
             "examples": [
+              "image",
+              "ecr:Repository",
               "Deployment",
               "ecs:Service"
             ],
@@ -3616,7 +3630,6 @@
               "scout",
               "build",
               "smoke",
-              "push",
               "plan",
               "preflight",
               "approval",
@@ -3695,7 +3708,6 @@
               "scout",
               "build",
               "smoke",
-              "push",
               "plan",
               "preflight",
               "approval",
@@ -3763,7 +3775,6 @@
               "scout",
               "build",
               "smoke",
-              "push",
               "plan",
               "preflight",
               "approval",
