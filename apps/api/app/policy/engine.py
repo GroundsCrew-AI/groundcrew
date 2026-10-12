@@ -179,9 +179,14 @@ async def decide_approval(
     session: AsyncSession,
     approval_id: uuid.UUID,
     decision: Decision,
-    decided_by: uuid.UUID,
+    decided_by: uuid.UUID | None,
+    *,
+    via: str | None = None,
 ) -> Approval:
-    """Record a decision by user `decided_by` and enqueue a job that resumes the run. Commits."""
+    """Record a decision by user `decided_by` (or, with no user, `via`: the dev self-approve
+    path) and enqueue a job that resumes the run. Commits."""
+    if decided_by is None and not via:
+        raise ApprovalStateError("A decision needs a user or a recorded source.")
     approval = await session.get(Approval, approval_id, with_for_update=True)
     if approval is None:
         raise ApprovalNotFoundError("Approval not found.")
@@ -190,13 +195,14 @@ async def decide_approval(
     run = await session.get_one(Run, approval.run_id, with_for_update=True)
     if run.status in TERMINAL_RUN_STATUSES:
         raise ApprovalStateError(f"The run is already {run.status}.")
-    decider = await session.get(User, decided_by)
-    label = (decider.github_login or decider.name) if decider else None
+    decider = await session.get(User, decided_by) if decided_by is not None else None
+    label = via or ((decider.github_login or decider.name) if decider else None)
 
     approval.status = (
         ApprovalStatus.approved if decision == Decision.approve else ApprovalStatus.rejected
     )
     approval.decided_by = decided_by
+    approval.decided_via = via
     approval.decided_at = datetime.now(UTC)
 
     await record_step(

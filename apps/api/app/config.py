@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     # valid in another and after a restart. Required outside APP_ENV=dev; dev derives one from
     # SECRETS_KEY when unset. Generate one: secrets.token_urlsafe(48) (see .env.example).
     approval_token_key: SecretStr | None = None
+    # Dev only: lets a live test script approve its own deploy (POST /approvals/{id}/self-approve),
+    # recorded as "script:<name> (dev)". Ignored unless APP_ENV=dev.
+    live_script_self_approve: bool = False
 
     # Repositories (Phase 4 before the GitHub App lands): local paths or public git URLs.
     # Optional token for private HTTPS clones; sent as an HTTP header through git's environment,
