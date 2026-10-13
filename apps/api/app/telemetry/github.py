@@ -64,6 +64,8 @@ async def read_repo(
                 at=at,
                 label=f"{sha[:7]} {subject}"[:120],
                 url=c.get("html_url"),
+                commit=sha,
+                repo=full,
             )
         )
     runs: dict[str, Any] = await app.get(
@@ -78,7 +80,8 @@ async def read_repo(
             continue
         path = str(r.get("path") or r.get("name") or "?").rsplit("/", 1)[-1]
         run = f"workflow run {path} #{r.get('run_number', r.get('id'))}"
-        sha = str(r.get("head_sha", ""))[:7]
+        head = str(r.get("head_sha", ""))
+        sha = head[:7]
         out.lines.append(
             line(
                 at,
@@ -97,6 +100,8 @@ async def read_repo(
                 at=created,
                 label=f"{path} {r.get('conclusion') or r.get('status')} at {sha}",
                 url=r.get("html_url"),
+                commit=head or None,
+                repo=full,
             )
         )
     if not out.lines:

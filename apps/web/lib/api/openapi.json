@@ -729,6 +729,18 @@
             "title": "At",
             "type": "string"
           },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Commit"
+          },
           "kind": {
             "enum": [
               "commit",
@@ -751,6 +763,21 @@
           "ref": {
             "title": "Ref",
             "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "examples": [
+              "acme/checkout"
+            ],
+            "title": "Repo"
           },
           "resource_id": {
             "anyOf": [
@@ -5243,6 +5270,22 @@
             "description": "What broke and why",
             "title": "Root Cause",
             "type": "string"
+          },
+          "search_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A short web search for the root cause's mechanism, no names or ids",
+            "examples": [
+              "postgres missing index full table scan"
+            ],
+            "title": "Search Query"
           },
           "summary": {
             "description": "One or two sentences a person reads first",

@@ -93,6 +93,9 @@ class ChangeMarker(BaseModel):
     resource_id: uuid.UUID | None = None
     label: str = Field(examples=["abc1234 Lower worker memory", "checkout/database-url changed"])
     url: str | None = None
+    # GitHub changes: the full commit SHA (a deploy's head commit) and the owner/name repo.
+    commit: str | None = None
+    repo: str | None = Field(default=None, examples=["acme/checkout"])
 
 
 class IncidentOpened(BaseModel):

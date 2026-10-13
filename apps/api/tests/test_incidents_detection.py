@@ -591,7 +591,8 @@ async def test_a_related_outage_takes_over_the_incident_medic_just_failed(
         assert incident is not None
         assert incident.affected_resource_ids == [ids["api"], ids["worker"]]
         assert [s["rule"] for s in incident.signals] == ["log_error_spike", "health_check"]
-        assert incident.first_signal_at == ago(2)
+        # Detection is timed from the signal that opened this incident, not the merged one.
+        assert incident.first_signal_at == ago(1)
         opened = await session.scalar(
             select(RunStep).where(RunStep.run_id == api.run.id, RunStep.kind == "incident_opened")
         )

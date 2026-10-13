@@ -1010,6 +1010,11 @@ export interface components {
              */
             at: string;
             /**
+             * Commit
+             * @default null
+             */
+            commit: string | null;
+            /**
              * Kind
              * @enum {string}
              */
@@ -1022,6 +1027,12 @@ export interface components {
             label: string;
             /** Ref */
             ref: string;
+            /**
+             * Repo
+             * @default null
+             * @example acme/checkout
+             */
+            repo: string | null;
             /**
              * Resource Id
              * @default null
@@ -2669,6 +2680,13 @@ export interface components {
              * @description What broke and why
              */
             root_cause: string;
+            /**
+             * Search Query
+             * @description A short web search for the root cause's mechanism, no names or ids
+             * @default null
+             * @example postgres missing index full table scan
+             */
+            search_query: string | null;
             /**
              * Summary
              * @description One or two sentences a person reads first

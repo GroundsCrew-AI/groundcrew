@@ -236,9 +236,9 @@ async def open_incident(
         prior_signals.extend(prior.signals)
         unique_ids += [i for i in prior.affected_resource_ids if i not in unique_ids]
         group = sorted(set(group) | set(prior.group_resource_ids))
-    first_at = min(
-        [s.at for s in signals] + [p.first_signal_at for p in merged if p.first_signal_at]
-    )
+    # Detection is timed from the signal that opens this incident; a merged incident's earlier
+    # signals may be an unrelated spike (a load test before the bad deploy).
+    first_at = min(s.at for s in signals)
     rule: DetectorRule = signals[0].rule
     ranked: list[Severity] = sorted((_SEVERITY[s.rule] for s in signals), key=_RANK.__getitem__)
     level: Severity = severity if severity is not None else ranked[0]

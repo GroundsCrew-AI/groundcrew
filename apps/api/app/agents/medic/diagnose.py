@@ -9,6 +9,7 @@ diagnosis with no cited claim left is marked low confidence.
 
 import json
 import re
+from datetime import UTC, datetime, timedelta
 
 from app.agents.medic.events import ChangeMarker, MemoryHit, ResearchResult, Signal
 from app.agents.medic.schemas import EvidenceItem, RootCause
@@ -36,10 +37,42 @@ Rules:
   (ecs_rollback_service to the previous task definition, secret_rollback_version to the
   previous secret version, force_redeploy so tasks re-read config), and a pull_request that
   fixes the cause in the repository when the cause is in code, a task definition, or a migration.
+- A metric spike that starts before the triggering change was not caused by it (a load test,
+  a batch job): do not cite it for this incident.
+- `search_query` is a short web search for the root cause's mechanism, with no names, ids, or
+  numbers, e.g. "postgres missing index full table scan".
 - Research results and past incidents are background, not evidence: never cite them.
 - Use "other" or null when nothing fits. Never ask for or reveal secret values."""
 
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
+# Metric points are per minute and stamped at the minute's start.
+SPIKE_BUCKET = timedelta(minutes=1)
+
+
+def _time(at: str | None) -> datetime | None:
+    if not at:
+        return None
+    try:
+        parsed = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def change_at(root_cause: RootCause) -> datetime | None:
+    change = root_cause.triggering_change
+    return _time(change.at) if change is not None else None
+
+
+def _before_change(item: EvidenceItem, at: datetime | None) -> bool:
+    """A spike whose whole minute ended before the triggering change."""
+    stamp = _time(item.timestamp)
+    return (
+        at is not None
+        and stamp is not None
+        and "[SPIKE]" in item.line
+        and (stamp + SPIKE_BUCKET <= at)
+    )
 
 
 def _evidence_block(items: list[EvidenceItem]) -> str:
@@ -100,11 +133,16 @@ def check(
     valid = {i.id for i in items}
     dropped: list[str] = []
     claims = []
+    at = change_at(root_cause)
+    earlier = {i.id for i in items if _before_change(i, at)}
     for claim in root_cause.claims:
-        ids = [i for i in claim.evidence_ids if i in valid]
+        ids = [i for i in claim.evidence_ids if i in valid and i not in earlier]
         unknown = [i for i in claim.evidence_ids if i not in valid]
         if unknown:
             dropped.append(f"unknown evidence ids removed: {', '.join(unknown[:5])}")
+        before = [i for i in claim.evidence_ids if i in earlier]
+        if before:
+            dropped.append(f"spikes before the triggering change removed: {', '.join(before[:5])}")
         if ids:
             claims.append(claim.model_copy(update={"evidence_ids": ids}))
         else:

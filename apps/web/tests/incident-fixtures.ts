@@ -37,6 +37,7 @@ export const ROOT_CAUSE: RootCause = {
   affected_resources: ["checkout-worker"],
   confidence: "high",
   fix_options: [],
+  search_query: "linux oom killer exit code 137",
 };
 
 export const ROLLBACK: ProposedFix = {

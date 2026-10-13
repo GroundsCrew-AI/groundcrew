@@ -7,6 +7,8 @@ incident (TAVILY_MAX_CALLS_PER_INCIDENT). Tests use a MockTransport, never the A
 
 import json
 import re
+from collections import Counter
+from collections.abc import Iterable
 from typing import Any
 
 import httpx
@@ -111,3 +113,24 @@ def search_query(line: str) -> str:
     if message.startswith("{"):
         message = _json_message(message)
     return " ".join(_IDS.sub(" ", message).split())[:200]
+
+
+_ERROR = re.compile(
+    r"(?i)\b(error|exception|traceback|timeout|timed out|failed|failure|fatal|refused|panic)\b"
+)
+# Reader notes and request summaries are Groundcrew's lines, not the application's errors.
+_NOT_APP = ("latency summary", "reader failed", "reader timed out")
+
+
+def dominant_error(lines: Iterable[str]) -> str:
+    """The query for the application's most frequent error. Lines that differ only in ids,
+    times and numbers are the same error. Empty when no line is an error."""
+    counts: Counter[str] = Counter()
+    for line in lines:
+        message = line.split(" | ")[-1].strip()
+        if message.startswith(_NOT_APP) or not _ERROR.search(message):
+            continue
+        query = search_query(message)
+        if query:
+            counts[query] += 1
+    return counts.most_common(1)[0][0] if counts else ""
