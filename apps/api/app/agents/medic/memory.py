@@ -3,9 +3,9 @@
 With embeddings (Qwen3-Embedding-8B, 1024 dims), similarity is pgvector cosine over
 `incidents.embedding` of resolved incidents in the same workspace. Without them (no
 PRICE_EMBED_PER_M), a fallback compares the detector rules and affected resources, so a re-run of
-the same scenario still finds its predecessor. A hit at or above MEDIC_MEMORY_THRESHOLD is
-reused: the past diagnosis and fix go into the prompt, research is skipped, and the diagnosis
-runs on the cheaper `confirm_root_cause` route.
+the same scenario still finds its predecessor. Test incidents are never found. A hit at or above
+MEDIC_MEMORY_THRESHOLD is reused: the past diagnosis and fix go into the prompt, research is
+skipped, and the diagnosis runs on the cheaper `confirm_root_cause` route.
 """
 
 from typing import Any
@@ -71,6 +71,8 @@ async def similar(
         Incident.workspace_id == incident.workspace_id,
         Incident.id != incident.id,
         Incident.status == "resolved",
+        # Test incidents (POST /incidents with test: true) are never reused for real ones.
+        Incident.is_test.is_(False),
     )
     if vector is not None:
         distance = Incident.embedding.cosine_distance(vector)
@@ -102,8 +104,11 @@ def reusable(hits: list[MemoryHit], threshold: float) -> MemoryHit | None:
 
 
 def remember(incident: Incident, summary: str, root_cause: str, vector: list[float] | None) -> None:
-    """Store what future incidents compare against. The caller commits."""
+    """Store what future incidents compare against. The caller commits. A test incident keeps
+    its summary but no embedding, so nothing can find it."""
     incident.summary = summary
     incident.root_cause = root_cause
-    if vector is not None:
+    if incident.is_test:
+        incident.embedding = None
+    elif vector is not None:
         incident.embedding = vector

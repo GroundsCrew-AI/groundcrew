@@ -89,6 +89,7 @@ export function incidentSummary(overrides: Partial<IncidentSummary> = {}): Incid
     severity: "high",
     detected_by: "watcher",
     detector_rule: "ecs_tasks_stopped",
+    test: false,
     opened_at: "2026-10-12T10:00:00Z",
     resolved_at: null,
     window: { start: "2026-10-12T09:30:00Z", end: null },

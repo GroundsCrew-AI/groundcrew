@@ -76,6 +76,7 @@ export function IncidentList({ incidents, now = Date.now() }: { incidents: Incid
                 <SeverityTag severity={i.severity} />
                 <span className="truncate">{i.affected_resources.map((r) => r.name).join(", ")}</span>
                 {i.memory_reused && <span className="text-subtle">seen before</span>}
+                {i.test && <span className="rounded border px-1 text-[11px] text-subtle">Test</span>}
               </span>
             </span>
             <span className="hidden min-w-0 truncate text-[12.5px] text-muted-foreground sm:block">

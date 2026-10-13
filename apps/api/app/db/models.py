@@ -264,6 +264,9 @@ class Incident(TimestampMixin, Base):
     signals: Mapped[list[JSON]] = mapped_column(JSONB, default=list, server_default="[]")
     # Medic's results for the API (evidence items, root cause, fixes, memory, outcome).
     state: Mapped[JSON] = mapped_column(JSONB, default=dict, server_default="{}")
+    # A test incident (POST /incidents with test: true): never in Medic's memory, never
+    # deduped or merged with real incidents.
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class Run(TimestampMixin, Base):

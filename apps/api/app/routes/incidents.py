@@ -75,6 +75,7 @@ async def create_incident(
             description=body.description,
             severity=body.severity,
             since=body.since,
+            is_test=body.test,
         )
     except ResourceNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from None

@@ -41,6 +41,7 @@ export function ReportIncidentDialog() {
   const [selected, setSelected] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [severity, setSeverity] = useState<Severity | "auto">("auto");
+  const [test, setTest] = useState(false);
 
   const resources = useMemo<Resource[]>(
     () =>
@@ -63,6 +64,7 @@ export function ReportIncidentDialog() {
         resource_ids: selected,
         description: description.trim() || null,
         severity: severity === "auto" ? null : severity,
+        test,
       },
       {
         onSuccess: (created) => {
@@ -142,6 +144,15 @@ export function ReportIncidentDialog() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="flex items-start gap-2">
+            <Checkbox id="report-test" checked={test} onCheckedChange={(checked) => setTest(checked === true)} />
+            <Label htmlFor="report-test" className="flex-col items-start gap-0.5 font-normal">
+              This is a test
+              <span className="text-[12px] text-muted-foreground">
+                Medic investigates as usual, but the incident is never reused as incident memory.
+              </span>
+            </Label>
           </div>
           <DialogFooter>
             <Button type="submit" disabled={selected.length === 0 || report.isPending}>
