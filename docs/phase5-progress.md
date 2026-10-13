@@ -255,3 +255,26 @@ cd ~/Personal/groundcrew && git fetch && git checkout <branch>
 make db
 cd apps/api && UV_PROJECT_ENVIRONMENT=~/Personal/envs/groundcrew uv run pytest -q -m "not docker"
 ```
+
+## Connect template fix: Rules functions (2026-10-13)
+
+The published template failed in CloudFormation: "Following functions are not supported in the
+Rules block of the template: [Fn::Join]". `cfn-lint` 1.57.2 did not catch it; `validate-template`
+does. Fixed:
+- `OperateNeedsServicesAndSecrets` asserts `!Not [!Contains [<list>, <placeholder ARN>]]` instead
+  of joining the list. Same effect (and it also refuses the placeholder mixed with real ARNs).
+  Only the Rules block changed; every Tier x CreateResourceExplorerIndex x EnableOperate
+  combination renders exactly as before. API copy synced.
+- `test_rules_use_only_supported_functions`: any `Fn::` under Rules outside Equals, Not, And, Or,
+  Contains, EachMemberEquals, EachMemberIn, RefAll, ValueOf, ValueOfAll fails the test.
+- `make publish-connect-template` now runs the template tests, `cfn-lint`, uploads to
+  `staging/aws-connect.yaml`, runs `validate-template --template-url` on it, and only then copies
+  it to the live key. Any failure stops before the live key is written.
+
+Checked without changing anything in AWS: `validate-template --template-body` rejects the old
+template with the error above and accepts the new one; `cfn-lint` clean; Access Analyzer
+`ValidatePolicy` has no findings for any role's permission or trust policy (Tier=deploy,
+EnableOperate=true); `SimulateCustomPolicy` on the operate role: UpdateService allowed on
+`service/checkout/*`, implicit deny elsewhere and for DeleteService / RegisterTaskDefinition;
+UpdateSecretVersionStage allowed on `secret:checkout/*`, implicit deny on other secrets and for
+PutSecretValue; GetSecretValue explicit deny.

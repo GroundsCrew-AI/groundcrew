@@ -343,5 +343,30 @@ def test_operate_needs_real_scopes() -> None:
     defaults = {
         TEMPLATE["Parameters"][p]["Default"] for p in ("OperateServiceArns", "OperateSecretArns")
     }
-    asserted = {a["Assert"]["Fn::Not"][0]["Fn::Equals"][1] for a in rule["Assertions"]}
+    asserted = {a["Assert"]["Fn::Not"][0]["Fn::Contains"][1] for a in rule["Assertions"]}
     assert asserted == defaults
+
+
+# CloudFormation rejects the whole template ("Following functions are not supported in the Rules
+# block") if a rule uses any other function, e.g. Fn::Join.
+RULE_FUNCTIONS = {
+    "Fn::Equals", "Fn::Not", "Fn::And", "Fn::Or", "Fn::Contains", "Fn::EachMemberEquals",
+    "Fn::EachMemberIn", "Fn::RefAll", "Fn::ValueOf", "Fn::ValueOfAll",
+}  # fmt: skip
+
+
+def _functions(node: Any) -> set[str]:
+    if isinstance(node, list):
+        return set().union(*map(_functions, node)) if node else set()
+    if not isinstance(node, dict):
+        return set()
+    found = {k for k in node if k.startswith("Fn::")}
+    return found.union(*map(_functions, node.values()))
+
+
+def test_rules_use_only_supported_functions() -> None:
+    assert TEMPLATE["Rules"]
+    assert _functions(TEMPLATE["Rules"]) - RULE_FUNCTIONS == set()
+    assert _functions({"Rules": {"R": {"Assertions": [{"Assert": {"Fn::Join": []}}]}}}) == {
+        "Fn::Join"
+    }
