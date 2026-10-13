@@ -74,12 +74,14 @@ Parameters:
 
 Rules:
   # The defaults above match nothing; turning operate on needs real ARNs in both lists.
+  # Rules only allow Ref and the Fn::Equals/Not/And/Or/Contains/EachMember*/RefAll/ValueOf*
+  # functions (test_rules_use_only_supported_functions).
   OperateNeedsServicesAndSecrets:
     RuleCondition: !Equals [!Ref EnableOperate, "true"]
     Assertions:
-      - Assert: !Not [!Equals [!Join [",", !Ref OperateServiceArns], "arn:aws:ecs:*:*:service/none/none"]]
+      - Assert: !Not [!Contains [!Ref OperateServiceArns, "arn:aws:ecs:*:*:service/none/none"]]
         AssertDescription: With EnableOperate=true, list the ECS services Groundcrew may update in OperateServiceArns.
-      - Assert: !Not [!Equals [!Join [",", !Ref OperateSecretArns], "arn:aws:secretsmanager:*:*:secret:none"]]
+      - Assert: !Not [!Contains [!Ref OperateSecretArns, "arn:aws:secretsmanager:*:*:secret:none"]]
         AssertDescription: With EnableOperate=true, list the secrets Groundcrew may roll back in OperateSecretArns.
 
 Conditions:

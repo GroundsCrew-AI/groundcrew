@@ -95,6 +95,8 @@ models:
 	$(UV) run --project $(API) python scripts/test_models.py
 
 # Uses your own AWS CLI credentials (not the platform identity), only after checking the account.
+# Publishes only if the template tests, cfn-lint, and CloudFormation's validate-template (run on a
+# staging/ copy) all pass; the live key is never written with a template that fails them.
 publish-connect-template:
 	@account=$$(aws sts get-caller-identity --query Account --output text) || exit 1; \
 	if [ "$$account" != "$(CONNECT_TEMPLATE_ACCOUNT)" ]; then \
@@ -103,8 +105,16 @@ publish-connect-template:
 	fi
 	cmp -s infra/aws-connect.yaml $(API)/app/connectors/templates/aws-connect.yaml || \
 	  { echo "infra/aws-connect.yaml and the API's copy differ; copy it over first."; exit 1; }
-	aws s3 cp infra/aws-connect.yaml s3://$(CONNECT_TEMPLATE_BUCKET)/aws-connect.yaml \
+	cd $(API) && $(UV) run pytest -q tests/test_aws_connect_template.py
+	$(UV) tool run cfn-lint infra/aws-connect.yaml
+	aws s3 cp infra/aws-connect.yaml s3://$(CONNECT_TEMPLATE_BUCKET)/staging/aws-connect.yaml \
 	  --region $(CONNECT_TEMPLATE_REGION) --content-type text/yaml
+	aws cloudformation validate-template --region $(CONNECT_TEMPLATE_REGION) --output text \
+	  --query Description --template-url \
+	  https://$(CONNECT_TEMPLATE_BUCKET).s3.$(CONNECT_TEMPLATE_REGION).amazonaws.com/staging/aws-connect.yaml
+	aws s3 cp s3://$(CONNECT_TEMPLATE_BUCKET)/staging/aws-connect.yaml \
+	  s3://$(CONNECT_TEMPLATE_BUCKET)/aws-connect.yaml \
+	  --region $(CONNECT_TEMPLATE_REGION) --content-type text/yaml --metadata-directive REPLACE
 	@echo "AWS_CONNECT_TEMPLATE_URL=https://$(CONNECT_TEMPLATE_BUCKET).s3.$(CONNECT_TEMPLATE_REGION).amazonaws.com/aws-connect.yaml"
 
 kind-up:
