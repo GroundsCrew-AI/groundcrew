@@ -99,3 +99,19 @@ For the Incidents UI (Rizwan). Contract: `docs/phase5-interfaces.md`.
   emergency fixes on (verifies the `groundcrew-operate` role) or off.
 - `ConnectionOut` adds `capabilities` (`observe`, `deploy`, `operate`; null for non-AWS) and
   `operate_role_arn`. Suggested UI: an "Emergency fixes" toggle on the AWS card, next to deploys.
+
+## Phase 5: broken-env fixes (2026-10-13)
+
+All additive.
+- `ProposedFix.depends_on` (fix ids): a restart depends on the secret rollback.
+  `POST /approvals/{id}/decide` with `approve` answers 409 while a prerequisite is not applied
+  ("Fix 1 (...) must be applied before this one."); `reject` is always allowed. If a
+  prerequisite is rejected or fails, the dependent fix is closed without running: its approval
+  becomes `rejected` with `decided_via` "Medic: fix 1 was rejected", and a `fix_applied` step
+  with `ok: false` says why.
+- `IncidentOpened.merged_from` and `IncidentUpdated.merged_into`: an incident on related
+  resources that failed in the last 30 minutes (not stopped by a person) is taken over by the
+  next one: its signals and resources join the new incident, and its run gets an
+  `incident_updated` step (status stays `failed`) pointing at the new one.
+- `rds_cpu_latency` also fires on slow queries (request p50 + database CPU); the name is
+  unchanged.

@@ -132,8 +132,11 @@ def plan_lines(plan: ActionPlan) -> list[PlanLine]:
     ]
 
 
-def _emergency_record(plan: ActionPlan, order: int, title: str, rationale: str) -> FixRecord:
+def _emergency_record(
+    plan: ActionPlan, order: int, title: str, rationale: str, depends_on: list[str] | None = None
+) -> FixRecord:
     fix = ProposedFix(
+        depends_on=depends_on or [],
         fix_id=f"fix-{order}",
         kind="emergency",
         order=order,
@@ -219,14 +222,13 @@ async def emergency(
             plan = await actions.plan_secret_rollback_version(
                 secret.connection_id, secret.external_id
             )
-            out.records.append(
-                _emergency_record(
-                    plan,
-                    order,
-                    f"Roll back {secret.name} to its previous version",
-                    "The secret changed right before the failures; the previous version worked.",
-                )
+            rollback = _emergency_record(
+                plan,
+                order,
+                f"Roll back {secret.name} to its previous version",
+                "The secret changed right before the failures; the previous version worked.",
             )
+            out.records.append(rollback)
             order += 1
             for svc in graph.users_of(secret.id):
                 if svc.type != "ecs:service" or svc.connection_id is None:
@@ -238,7 +240,8 @@ async def emergency(
                         plan,
                         order,
                         f"Restart {svc.name} so it reads the restored secret",
-                        "ECS tasks read secrets only when they start.",
+                        "ECS tasks read secrets only when they start. Runs after the rollback.",
+                        depends_on=[rollback.fix.fix_id],
                     )
                 )
                 order += 1

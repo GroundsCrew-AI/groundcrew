@@ -106,6 +106,9 @@ class IncidentOpened(BaseModel):
     signals: list[Signal]
     affected_resources: list[ResourceRef]
     window: TimeWindow
+    # Recently failed incidents on related resources that this one took over (their signals
+    # and resources are part of it): one outage, one incident.
+    merged_from: list[uuid.UUID] = Field(default_factory=list)
 
 
 class IncidentUpdated(BaseModel):
@@ -117,6 +120,8 @@ class IncidentUpdated(BaseModel):
     previous_status: IncidentStatus | None
     at: datetime
     reason: str | None = None
+    # Set on a failed incident when a newer one took it over (IncidentOpened.merged_from).
+    merged_into: uuid.UUID | None = None
 
 
 class EvidenceSourceSummary(BaseModel):
@@ -224,6 +229,9 @@ class ProposedFix(BaseModel):
     # kind = pr
     pull_request: PullRequestView | None = None
     approval_id: uuid.UUID | None = None
+    # Fixes (fix_id) that must be applied first, e.g. a restart needs the secret rollback: it
+    # cannot be approved before they are applied, and is not run if one is rejected or fails.
+    depends_on: list[str] = Field(default_factory=list)
 
 
 class FixProposed(BaseModel):

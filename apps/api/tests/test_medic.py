@@ -39,7 +39,7 @@ from app.db.session import SessionFactory
 from app.incidents.store import open_incident
 from app.llm.fake import FakeLLM, reply
 from app.pipeline.resume import resume_run_job
-from app.policy.engine import Decision, decide_approval
+from app.policy.engine import ApprovalStateError, Decision, decide_approval
 from app.telemetry.collect import Evidence
 from app.telemetry.evidence import line
 from app.tools.github_pr import (
@@ -652,9 +652,14 @@ async def test_broken_env_rolls_back_the_secret_then_restarts_its_users(
     }
     assert len(llm.calls) == 1  # no PR: nothing in git changed
     assert state.research == [] and not state.research_queries
+    assert [f.fix.depends_on for f in state.fixes] == [[], ["fix-1"], ["fix-1"]]
+    # A restart cannot be approved before the rollback is applied (it would restart on the
+    # bad secret); rejecting is always allowed.
+    with pytest.raises(ApprovalStateError, match=r"Fix 1 .* must be applied before this one"):
+        await _decide(sf, workspace, state.fixes[2].approval_id, Decision.approve)
     for fix in state.fixes:
         await _decide(sf, workspace, fix.approval_id, Decision.approve)
-    await resume_run_job(sf, {"run_id": str(run_id), "approval_id": "x"})
+        await resume_run_job(sf, {"run_id": str(run_id), "approval_id": "x"})
     incident, state, _ = await _state(sf, incident_id)
     assert incident.status == "verifying"
     assert actions.secrets[SECRET_ARN].holding("AWSCURRENT") == "v-good"
@@ -663,6 +668,59 @@ async def test_broken_env_rolls_back_the_secret_then_restarts_its_users(
         "force_redeploy",
         "force_redeploy",
     ]
+
+
+async def test_rejecting_the_secret_rollback_closes_the_restarts_without_running_them(
+    session_factory: SessionFactory, workspace: Workspace, use_deps: Any
+) -> None:
+    sf = session_factory
+    ids = await demo_graph(sf, workspace.id)
+    ev = env_evidence(ids, _now())
+    secret_line = eid(ev, "secrets:checkout/database-url", "last changed")
+    rc = json.dumps(
+        {
+            "summary": "The DATABASE_URL secret changed to an unreachable host.",
+            "root_cause": "checkout/database-url changed; no commit.",
+            "claims": [{"text": "Secret changed in the window.", "evidence_ids": [secret_line]}],
+            "triggering_change": {
+                "kind": "secret_change",
+                "ref": f"{SECRET_ARN}:v-bad",
+                "evidence_ids": [secret_line],
+            },
+            "affected_resources": ["checkout-api"],
+            "confidence": "high",
+            "fix_options": [],
+        }
+    )
+    actions = FakeEmergencyActions(
+        sf,
+        services={
+            "checkout/checkout-api": FakeService(revisions=[f"{TD}/checkout-api:17"]),
+            "checkout/checkout-worker": FakeService(revisions=[f"{TD}/checkout-worker:41"]),
+        },
+        secrets={
+            SECRET_ARN: FakeSecret(versions={"v-good": ["AWSPREVIOUS"], "v-bad": ["AWSCURRENT"]})
+        },
+    )
+    use_deps(Harness(sf, ev, FakeLLM(reply(rc), settings=settings()), actions=actions))
+    incident_id, run_id = await _open(
+        sf, workspace.id, ids["api"], "health_check", "2 tasks failed health checks"
+    )
+    await investigate_incident_job(sf, {"incident_id": str(incident_id), "run_id": str(run_id)})
+    _, state, _ = await _state(sf, incident_id)
+    await _decide(sf, workspace, state.fixes[0].approval_id, Decision.reject)
+    await resume_run_job(sf, {"run_id": str(run_id), "approval_id": "x"})
+    incident, state, _ = await _state(sf, incident_id)
+    assert actions.executed == []
+    assert [f.status for f in state.fixes] == ["rejected", "rejected", "rejected"]
+    assert state.fixes[1].applied is not None and state.fixes[1].applied.error == (
+        "Not run: fix 1 (Roll back checkout/database-url to its previous version) was rejected."
+    )
+    assert incident.status == "failed"
+    async with sf() as session:
+        restart = await session.get(Approval, state.fixes[1].approval_id)
+        assert restart is not None and restart.status == ApprovalStatus.rejected
+        assert restart.decided_via == "Medic: fix 1 was rejected"
 
 
 # --- missing-index: no emergency, a PR with a new migration -------------------------------------

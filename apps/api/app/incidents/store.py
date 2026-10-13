@@ -33,7 +33,7 @@ from app.agents.medic.events import (
     TimeWindow,
 )
 from app.config import get_settings
-from app.db.models import Edge, Incident, Resource, Run, RunStatus
+from app.db.models import Edge, Incident, Resource, Run, RunStatus, StopReason
 from app.steps import record_step
 
 MEDIC_AGENT: Final = "medic"
@@ -113,6 +113,20 @@ def _title(signals: list[Signal], resources: list[Resource]) -> str:
     return f"Reported problem on {names}"[:300]
 
 
+async def _merged_resources(
+    session: AsyncSession, ids: list[uuid.UUID], known: list[Resource]
+) -> list[Resource]:
+    """The resources merged in from failed incidents (not already in `known`), in `ids` order."""
+    have = {r.id for r in known}
+    wanted = [i for i in ids if i not in have]
+    if not wanted:
+        return []
+    found = {
+        r.id: r for r in await session.scalars(select(Resource).where(Resource.id.in_(wanted)))
+    }
+    return [found[i] for i in wanted if i in found]
+
+
 async def latest_run(session: AsyncSession, incident_id: uuid.UUID) -> Run | None:
     return await session.scalar(
         select(Run)
@@ -137,6 +151,33 @@ async def find_open(
         .order_by(Incident.created_at)
         .limit(1)
     )
+
+
+async def find_recent_failed(
+    session: AsyncSession, workspace_id: uuid.UUID, group: list[uuid.UUID], now: datetime
+) -> list[Incident]:
+    """Incidents on related resources that failed in the last LEAD_TIME, not stopped by a
+    person: an outage Medic could not fix from one symptom (a worker's error spike) that shows
+    up again on a neighbor (the api's health checks) is the same outage."""
+    found = list(
+        await session.scalars(
+            select(Incident)
+            .where(
+                Incident.workspace_id == workspace_id,
+                Incident.status == "failed",
+                Incident.window_end >= now - LEAD_TIME,
+                Incident.group_resource_ids.overlap(group),
+            )
+            .order_by(Incident.created_at)
+            .with_for_update()
+        )
+    )
+    out = []
+    for incident in found:
+        run = await latest_run(session, incident.id)
+        if run is None or run.stop_reason != StopReason.stopped_by_user:
+            out.append(incident)
+    return out
 
 
 async def open_incident(
@@ -189,7 +230,15 @@ async def open_incident(
             raise RuntimeError(f"Incident {existing.id} has no run.")
         return Opened(existing, run, deduped=True)
 
-    first_at = min(s.at for s in signals)
+    merged = await find_recent_failed(session, workspace_id, group, now)
+    prior_signals: list[dict[str, object]] = []
+    for prior in merged:
+        prior_signals.extend(prior.signals)
+        unique_ids += [i for i in prior.affected_resource_ids if i not in unique_ids]
+        group = sorted(set(group) | set(prior.group_resource_ids))
+    first_at = min(
+        [s.at for s in signals] + [p.first_signal_at for p in merged if p.first_signal_at]
+    )
     rule: DetectorRule = signals[0].rule
     ranked: list[Severity] = sorted((_SEVERITY[s.rule] for s in signals), key=_RANK.__getitem__)
     level: Severity = severity if severity is not None else ranked[0]
@@ -198,6 +247,8 @@ async def open_incident(
         if detected_by == "watcher"
         else now - timedelta(minutes=get_settings().incident_default_window_minutes)
     )
+    if merged:
+        start = min([start, *(p.window_start for p in merged)])
     incident = Incident(
         workspace_id=workspace_id,
         title=title or _title(signals, resources),
@@ -210,7 +261,7 @@ async def open_incident(
         first_signal_at=first_at,
         affected_resource_ids=unique_ids,
         group_resource_ids=group,
-        signals=[s.model_dump(mode="json") for s in signals],
+        signals=[*prior_signals, *(s.model_dump(mode="json") for s in signals)][-MAX_SIGNALS:],
         state={},
     )
     session.add(incident)
@@ -236,10 +287,29 @@ async def open_incident(
             detected_by=detected_by,
             detector_rule=rule,
             signals=signals,
-            affected_resources=[_ref(r) for r in resources],
+            affected_resources=[_ref(r) for r in resources]
+            + [_ref(r) for r in await _merged_resources(session, unique_ids, resources)],
             window=TimeWindow(start=start),
+            merged_from=[p.id for p in merged],
         ),
     )
+    for prior in merged:
+        prior_run = await latest_run(session, prior.id)
+        if prior_run is not None:
+            await record_step(
+                session,
+                prior_run,
+                kind="incident_updated",
+                output_summary=f"Merged into a newer incident: {incident.title}"[:300],
+                data=IncidentUpdated(
+                    incident_id=prior.id,
+                    status="failed",
+                    previous_status="failed",
+                    at=now,
+                    reason="The same outage showed up on a related resource.",
+                    merged_into=incident.id,
+                ),
+            )
     await queue.enqueue(
         session,
         INVESTIGATE_JOB,

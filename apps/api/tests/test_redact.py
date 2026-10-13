@@ -4,7 +4,7 @@ import logging
 import pytest
 
 from app.log import JsonFormatter
-from app.security.redact import REDACTED, redact, summarize, truncate
+from app.security.redact import REDACTED, redact, redact_json, summarize, truncate
 
 
 @pytest.mark.parametrize(
@@ -87,3 +87,22 @@ def test_redact_json_hides_secret_keys_and_values() -> None:
     assert out["name"] == "api" and out["password"] == REDACTED
     assert out["nested"][0]["token"] == REDACTED
     assert "abcdefgh123" not in out["nested"][1]
+
+
+def test_arns_and_secret_identifiers_are_kept() -> None:
+    arn = "arn:aws:secretsmanager:us-east-2:881050425883:secret:checkout/database-url-AbCdEf"
+    assert (
+        redact(f"unable to pull secrets: {arn} failed") == f"unable to pull secrets: {arn} failed"
+    )
+    assert redact("secret_id=checkout/database-url password=hunter2") == (
+        f"secret_id=checkout/database-url password={REDACTED}"
+    )
+    assert redact('{"SecretName": "checkout/database-url", "secret": "abc123xyz"}') == (
+        f'{{"SecretName": "checkout/database-url", "secret": "{REDACTED}"}}'
+    )
+    assert redact_json({"SecretId": "checkout/db", "client_secret": "x"}) == {
+        "SecretId": "checkout/db",
+        "client_secret": REDACTED,
+    }
+    # An ARN does not shield what follows it.
+    assert "hunter2" not in redact("arn:aws:s3:::bucket?password=hunter2")
