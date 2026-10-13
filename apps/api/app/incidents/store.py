@@ -12,6 +12,7 @@ Every incident has a run (`agent = "medic"`, `runs.incident_id`). Its first step
 incident on the run stream (docs/phase5-interfaces.md, section 7).
 """
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -38,6 +39,10 @@ from app.steps import record_step
 
 MEDIC_AGENT: Final = "medic"
 INVESTIGATE_JOB: Final = "investigate_incident"
+REDIAGNOSE_JOB: Final = "rediagnose_incident"
+# An error spike this many times bigger than any before it is new evidence, not a repeat.
+SPIKE_GROWTH = 3.0
+_ERROR_LINES = re.compile(r"^(\d+) error lines")
 OPEN_STATUSES: frozenset[str] = frozenset(
     s for s in get_args(IncidentStatus) if s not in ("resolved", "failed")
 )
@@ -180,6 +185,35 @@ async def find_recent_failed(
     return out
 
 
+def _signal_key(signal: dict[str, object]) -> tuple[object, ...]:
+    return (signal.get("rule"), signal.get("resource_id"), signal.get("detail"), signal.get("at"))
+
+
+def _error_lines(signal: dict[str, object]) -> int:
+    found = _ERROR_LINES.match(str(signal.get("detail") or ""))
+    return int(found.group(1)) if found else 0
+
+
+def material_signals(
+    existing: list[dict[str, object]], fresh: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    """New signals that change the picture: a rule the incident has not seen (slow queries,
+    health checks after an error spike), or an error spike SPIKE_GROWTH times the largest
+    before it (8 error lines, then 112)."""
+    rules = {s.get("rule") for s in existing}
+    largest = max((_error_lines(s) for s in existing), default=0)
+    out = []
+    for signal in fresh:
+        if signal.get("rule") not in rules or (
+            signal.get("rule") == "log_error_spike"
+            and _error_lines(signal) >= max(SPIKE_GROWTH * largest, largest + 1)
+        ):
+            out.append(signal)
+        rules.add(signal.get("rule"))
+        largest = max(largest, _error_lines(signal))
+    return out
+
+
 async def open_incident(
     session: AsyncSession,
     *,
@@ -214,9 +248,24 @@ async def open_incident(
     group = await resource_group(session, workspace_id, unique_ids)
     existing = await find_open(session, workspace_id, group)
     if existing is not None:
-        existing.signals = [*existing.signals, *(s.model_dump(mode="json") for s in signals)][
-            -MAX_SIGNALS:
-        ]
+        known = {_signal_key(s) for s in existing.signals}
+        fresh = [d for s in signals if _signal_key(d := s.model_dump(mode="json")) not in known]
+        material = material_signals(existing.signals, fresh)
+        existing.signals = [*existing.signals, *fresh][-MAX_SIGNALS:]
+        if material and existing.status in ("investigating", "waiting_approval"):
+            # The diagnosis (or the fixes waiting for approval) predates this evidence.
+            run = await latest_run(session, existing.id)
+            if run is not None:
+                await queue.enqueue(
+                    session,
+                    REDIAGNOSE_JOB,
+                    {
+                        "incident_id": str(existing.id),
+                        "run_id": str(run.id),
+                        "signals": [f"{s['rule']}: {s['detail']}" for s in material],
+                    },
+                    max_attempts=1,
+                )
         added = [i for i in unique_ids if i not in existing.affected_resource_ids]
         if added:
             existing.affected_resource_ids = [*existing.affected_resource_ids, *added]

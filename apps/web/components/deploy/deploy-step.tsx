@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import type { Step } from "@/lib/api/client";
 import { stageLabel, targetLabel } from "@/lib/deploys";
+import { uniqueChecks } from "@/lib/incidents";
 import { formatCost, formatDuration } from "@/lib/format";
 
 import { BuildAttemptCard } from "./build-attempt";
@@ -20,7 +21,9 @@ export function deployStepColor(step: Step): string | null {
     case "build_attempt":
       return data.ok ? "var(--status-ok)" : "var(--status-failed)";
     case "verify_result":
-      return data.ok ? "var(--status-ok)" : "var(--status-failed)";
+      if (data.ok) return "var(--status-ok)";
+      // Medic rounds before the deadline are in progress, not failed.
+      return data.check !== null && data.check !== undefined ? "var(--status-running)" : "var(--status-failed)";
     case "live_url":
       return "var(--status-ok)";
     case "rollback_offered":
@@ -62,7 +65,7 @@ export function replacedPlans(steps: Step[]): Set<string> {
 }
 
 /** A deploy event in the run timeline, rendered from its typed `data`. */
-export function DeployStep({ step }: { step: Step }) {
+export function DeployStep({ step, rounds = 1 }: { step: Step; rounds?: number }) {
   const data = step.data;
   if (!data) return null;
   switch (data.type) {
@@ -94,21 +97,44 @@ export function DeployStep({ step }: { step: Step }) {
       );
     case "build_attempt":
       return <BuildAttemptCard attempt={data} />;
-    case "verify_result":
+    case "verify_result": {
+      // Medic's rounds (numbered): waiting or not yet recovered is not a failure; the
+      // incident fails only at the verify deadline (incident_failed).
+      const medic = data.check !== null && data.check !== undefined;
+      const label = data.ok
+        ? medic
+          ? "Healthy"
+          : "Passed"
+        : !medic
+          ? "Failed"
+          : data.waiting
+            ? `Waiting for ${data.waiting}`
+            : "Not recovered yet";
+      const tone = data.ok
+        ? "text-[var(--status-ok)]"
+        : medic
+          ? "text-muted-foreground"
+          : "text-[var(--status-failed)]";
+      const checks = medic ? uniqueChecks(data) : data.checks;
       return (
         <div className="text-[13px]">
           <p className="flex items-baseline gap-2">
             <span className="font-medium">Verify</span>
-            <span className={data.ok ? "text-[var(--status-ok)]" : "text-[var(--status-failed)]"}>
-              {data.ok ? "Passed" : "Failed"}
-            </span>
+            <span className={tone}>{label}</span>
+            {medic && (
+              <span className="text-[12px] text-subtle">
+                check {data.check}
+                {rounds > 1 && ` (same for ${rounds} checks)`}
+              </span>
+            )}
             <span className="tabular ml-auto font-mono text-[11.5px] text-muted-foreground">
               {formatDuration(data.duration_ms)}
             </span>
           </p>
           <ul className="mt-1 space-y-0.5 text-[12.5px]">
-            {data.checks.map((c) => (
-              <li key={`${c.name}-${c.url ?? ""}`} className="flex items-baseline gap-1.5">
+            {checks.map((c, i) => (
+              // Medic checks repeat a name per service ("errors" for api and worker).
+              <li key={`${i}-${c.name}`} className="flex items-baseline gap-1.5">
                 {c.ok ? (
                   <Check aria-label="passed" className="size-3 shrink-0 text-[var(--status-ok)]" />
                 ) : (
@@ -127,6 +153,7 @@ export function DeployStep({ step }: { step: Step }) {
           )}
         </div>
       );
+    }
     case "live_url":
       return (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-[color-mix(in_oklab,var(--status-ok)_40%,var(--border))] bg-card px-3 py-2.5">

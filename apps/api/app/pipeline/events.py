@@ -185,6 +185,11 @@ class VerifyResult(BaseModel):
     duration_ms: int
     # On failure: the last lines of the app's logs (redacted), so the rollback card can show why.
     logs_tail: str | None = None
+    # Medic's recovery checks: what the round is waiting for (a rollout IN_PROGRESS, a fix PR
+    # not merged or its deploy not started), and the round number. A round that is waiting or
+    # still failing before the verify deadline is not a failure; incident_failed is.
+    waiting: str | None = None
+    check: int | None = None
 
 
 class LiveUrl(BaseModel):

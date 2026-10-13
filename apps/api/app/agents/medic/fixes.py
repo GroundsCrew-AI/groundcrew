@@ -103,6 +103,9 @@ Rules:
   migration (the next revision, whose down_revision is the latest existing revision) that
   restores it. For Postgres indexes, create them CONCURRENTLY inside an autocommit block.
 - Do not touch secrets, .env files, or CI workflows.
+- The title names the change this PR makes to fix the root cause, e.g. "Recreate
+  orders.customer_email index concurrently". Call it a revert or rollback only if it removes the
+  commit's changes; never mention alerts, false alarms, or the symptom.
 - The body says what broke, what the PR changes, and how to verify it."""
 
 
@@ -276,7 +279,7 @@ async def emergency(
     start_order: int = 1,
 ) -> Proposal:
     out = Proposal()
-    if not any(s.rule in DOWN_RULES for s in signals):
+    if root_cause.false_alarm or not any(s.rule in DOWN_RULES for s in signals):
         return out
     change = root_cause.triggering_change
     kinds = {o.kind for o in root_cause.fix_options}
@@ -369,7 +372,7 @@ async def pull_request(
 ) -> Proposal:
     out = Proposal()
     change = root_cause.triggering_change
-    if change is None or change.kind not in ("commit", "deploy"):
+    if root_cause.false_alarm or change is None or change.kind not in ("commit", "deploy"):
         return out
     if github is None:
         out.notes.append("No fix PR: the GitHub App is not configured.")

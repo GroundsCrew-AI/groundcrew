@@ -83,7 +83,7 @@ describe("MedicStep", () => {
   });
 
   it("links an opened fix PR and lists what still fails", () => {
-    const pr = { repo: "GroundsCrew-AI/checkout-demo", number: 7, url: "https://github.com/x/pull/7", branch: "groundcrew/fix-a", head_sha: "h", state: "open" as const };
+    const pr = { repo: "GroundsCrew-AI/checkout-demo", number: 7, url: "https://github.com/x/pull/7", branch: "groundcrew/fix-a", head_sha: "h", state: "open" as const, merged_at: null };
     const { rerender } = render(<MedicStep step={medicStep(9, { type: "fix_applied", fix_id: "fix-2", kind: "pr", ok: true, pull_request: pr, action_result: null, error: null })} />);
     expect(screen.getByRole("link", { name: /checkout-demo#7/ })).toHaveAttribute("href", pr.url);
     rerender(

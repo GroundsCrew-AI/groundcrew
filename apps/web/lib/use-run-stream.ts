@@ -3,15 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 
 import { api, unwrap } from "@/lib/api/client";
-import type { ApprovalStepEvent, RunStatusEvent, Step } from "@/lib/api/client";
+import type { ApprovalStepEvent, RunDetail, RunStatusEvent, Step } from "@/lib/api/client";
 import { DEPLOY_EVENTS } from "@/lib/deploys";
 import { MEDIC_EVENTS } from "@/lib/incidents";
 import type { TimelineAction } from "@/lib/timeline";
+
+const TERMINAL = new Set(["succeeded", "failed", "stopped"]);
 
 export type StreamState = "idle" | "connecting" | "live" | "reconnecting" | "closed";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 const MAX_BACKOFF_MS = 15_000;
+/** While the stream is down, the timeline is read from GET /runs/{id} this often. */
+export const POLL_FALLBACK_MS = 5_000;
 
 /**
  * Live run events straight from the API (long streams time out behind serverless proxies).
@@ -19,6 +23,9 @@ const MAX_BACKOFF_MS = 15_000;
  * Each connection asks the web proxy for a fresh 60-second stream token, then resumes after
  * the last step it has seen (`after`), so a dropped connection, an expired token, or a page
  * refresh never repeats or skips a step. Reconnects back off up to 15 s.
+ *
+ * While the stream is not live (the API unreachable from the browser, a proxy dropping SSE),
+ * the run is polled every 5 s, so the page still updates without a reload.
  */
 export function useRunStream(
   runId: string,
@@ -45,8 +52,39 @@ export function useRunStream(
       if (Number.isFinite(seq) && seq > lastSeq.current) lastSeq.current = seq;
     };
 
+    let poll: ReturnType<typeof setInterval> | undefined;
+    const stopPolling = () => {
+      clearInterval(poll);
+      poll = undefined;
+    };
+    const startPolling = () => {
+      if (poll !== undefined || stopped) return;
+      const read = async () => {
+        try {
+          const run: RunDetail = unwrap(
+            await api.GET("/runs/{run_id}", { params: { path: { run_id: runId } } }),
+          );
+          if (stopped) return;
+          dispatch({ type: "loaded", run });
+          for (const s of run.steps) if (s.seq > lastSeq.current) lastSeq.current = s.seq;
+          if (TERMINAL.has(run.status)) {
+            stopped = true;
+            stopPolling();
+            clearTimeout(timer);
+            source?.close();
+            setState("closed");
+          }
+        } catch {
+          // The next tick tries again.
+        }
+      };
+      void read();
+      poll = setInterval(() => void read(), POLL_FALLBACK_MS);
+    };
+
     const scheduleReconnect = () => {
       if (stopped) return;
+      startPolling();
       setState("reconnecting");
       const delay = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
       attempt += 1;
@@ -74,6 +112,7 @@ export function useRunStream(
       source = new EventSource(url);
       source.onopen = () => {
         attempt = 0;
+        stopPolling();
         setState("live");
       };
       source.addEventListener("step", (event) => {
@@ -114,6 +153,7 @@ export function useRunStream(
     void connect();
     return () => {
       stopped = true;
+      stopPolling();
       clearTimeout(timer);
       source?.close();
     };

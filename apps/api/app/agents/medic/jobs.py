@@ -37,7 +37,15 @@ async def medic_resume_job(session_factory: SessionFactory, payload: dict[str, A
 
 async def verify_incident_job(session_factory: SessionFactory, payload: dict[str, Any]) -> None:
     await _runner(session_factory).verify(
-        uuid.UUID(payload["incident_id"]), uuid.UUID(payload["run_id"])
+        uuid.UUID(payload["incident_id"]), uuid.UUID(payload["run_id"]), payload.get("chain")
+    )
+
+
+async def rediagnose_incident_job(session_factory: SessionFactory, payload: dict[str, Any]) -> None:
+    await _runner(session_factory).rediagnose(
+        uuid.UUID(payload["incident_id"]),
+        uuid.UUID(payload["run_id"]),
+        [str(s) for s in payload.get("signals") or []],
     )
 
 

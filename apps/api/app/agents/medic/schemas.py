@@ -77,6 +77,13 @@ class RootCause(BaseModel):
     affected_resources: list[str] = Field(default_factory=list, description="Resource names")
     confidence: Confidence
     fix_options: list[FixOption] = Field(default_factory=list)
+    false_alarm: bool = Field(
+        default=False,
+        description=(
+            "True only when nothing is wrong for users: error rate, HTTP status, and latency "
+            "are normal in the evidence"
+        ),
+    )
     search_query: str | None = Field(
         default=None,
         description="A short web search for the root cause's mechanism, no names or ids",

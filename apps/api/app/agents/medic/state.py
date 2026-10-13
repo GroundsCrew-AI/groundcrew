@@ -73,5 +73,11 @@ class MedicState(BaseModel):
     verify: VerifyResult | None = None
     verify_deadline: datetime | None = None
     healthy_streak: int = 0
+    # One verify chain per incident: jobs carrying another chain id stop (a second resume
+    # used to start a second chain, so every round showed up twice).
+    verify_chain: str | None = None
+    verify_checks: int = 0
+    # Re-diagnoses after new signals or a rejected "false alarm" (at most MAX_REDIAGNOSES).
+    rediagnosed: int = 0
     outcome: Outcome | None = None
     error: str | None = None

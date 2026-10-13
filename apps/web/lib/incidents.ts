@@ -151,3 +151,61 @@ export function sourceParts(source: string): { reader: string; resource: string 
   const [reader, ...rest] = source.split(":");
   return { reader: reader ?? source, resource: rest.join(":") };
 }
+
+type VerifyData = Extract<NonNullable<Step["data"]>, { type: "verify_result" }>;
+
+/** Medic's recovery rounds carry a check number; a deploy's one verify does not. */
+export function isMedicVerify(step: Step): boolean {
+  return step.data?.type === "verify_result" && step.data.check !== null && step.data.check !== undefined;
+}
+
+/** What a round says, ignoring counts that change every round. */
+function verifyKey(data: VerifyData): string {
+  if (data.ok) return "ok";
+  if (data.waiting) return `waiting:${data.waiting}`;
+  const failing = data.checks
+    .filter((c) => !c.ok)
+    .map((c) => `${c.name}:${c.detail.split(":")[0]}`)
+    .sort();
+  return `failing:${[...new Set(failing)].join("|")}`;
+}
+
+/**
+ * Medic verifies every 30 s; a row per round buried the timeline. Consecutive rounds that say
+ * the same thing (waiting for the same rollout, the same checks still failing) show as their
+ * latest round, with how many rounds it stands for.
+ */
+export function collapseVerifySteps(steps: Step[]): { hidden: Set<number>; rounds: Map<number, number> } {
+  const hidden = new Set<number>();
+  const rounds = new Map<number, number>();
+  let run: Step[] = [];
+  const flush = () => {
+    if (run.length > 0) {
+      for (const s of run.slice(0, -1)) hidden.add(s.seq);
+      rounds.set(run[run.length - 1].seq, run.length);
+    }
+    run = [];
+  };
+  for (const step of steps) {
+    if (!isMedicVerify(step)) {
+      if (step.data?.type !== "incident_updated" || run.length === 0) flush();
+      continue;
+    }
+    const previous = run[run.length - 1];
+    if (previous && verifyKey(previous.data as VerifyData) !== verifyKey(step.data as VerifyData)) flush();
+    run.push(step);
+  }
+  flush();
+  return { hidden, rounds };
+}
+
+/** A round's check rows without repeats (the same check and detail listed twice). */
+export function uniqueChecks(data: VerifyData): VerifyData["checks"] {
+  const seen = new Set<string>();
+  return data.checks.filter((c) => {
+    const key = `${c.name}|${c.ok}|${c.detail}|${c.url ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
