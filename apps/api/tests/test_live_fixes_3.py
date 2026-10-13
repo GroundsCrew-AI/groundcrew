@@ -136,7 +136,7 @@ def test_a_deploy_restart_is_not_an_error_spike() -> None:
 
 def _sig(rule: str, detail: str, minutes: float = 1.0) -> dict[str, Any]:
     return Signal(
-        rule=rule,  # type: ignore[arg-type]
+        rule=rule,
         resource_id=uuid.uuid4(),
         resource_name="checkout-api",
         detail=detail,
@@ -162,7 +162,7 @@ async def test_identical_signals_are_kept_once_and_new_evidence_queues_a_rediagn
 
     def signal(detail: str, rule: str = "log_error_spike") -> Signal:
         return Signal(
-            rule=rule,  # type: ignore[arg-type]
+            rule=rule,
             resource_id=ids["api"],
             resource_name="checkout-api",
             detail=detail,
