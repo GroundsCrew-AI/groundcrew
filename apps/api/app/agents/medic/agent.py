@@ -77,13 +77,15 @@ from app.security.redact import redact
 from app.steps import record_step
 from app.telemetry.collect import Evidence, GraphEvidenceCollector
 from app.tools.github_pr import FixPullRequests, GitHubFixPullRequests
-from app.tools.tavily import TavilyClient, TavilyError, search_query
+from app.tools.tavily import TavilyClient, TavilyError, dominant_error, search_query
 
 logger = logging.getLogger("groundcrew.medic")
 
 AGENT: Final = "medic"
 VERIFY_JOB: Final = "verify_incident"
 HEALTHY_ROUNDS = 2
+# Evidence sources that carry the application's own log lines.
+APP_LOGS = ("cloudwatch_logs:", "vercel:")
 
 Collect = Callable[[uuid.UUID, list[uuid.UUID], datetime, datetime], Awaitable[Evidence]]
 
@@ -309,7 +311,8 @@ class MedicRunner:
             incident.workspace_id, list(incident.affected_resource_ids), incident.window_start, now
         )
         symptom = await mem.symptom_text(session, incident)
-        items, embedded = await ev.rank(ev.to_items(evidence), symptom, affected, llm, budget)
+        all_items = ev.to_items(evidence)
+        items, embedded = await ev.rank(all_items, symptom, affected, llm, budget)
         state.sources = [
             EvidenceSourceSummary(
                 source=k, lines=len(v), truncated=evidence.truncated.get(k, False)
@@ -370,7 +373,9 @@ class MedicRunner:
         await session.commit()
 
         # 3. Research
-        results, queries, skipped = await self._research(items, affected, state, reused is not None)
+        results, queries, skipped = await self._research(
+            items, all_items, affected, state, reused is not None
+        )
         state.research, state.research_queries = results, queries
         _save(incident, state)
         await record_step(
@@ -397,6 +402,14 @@ class MedicRunner:
         root_cause, dropped = dx.check(raw, items, evidence.changes)
         state.root_cause, state.dropped = root_cause, dropped
         incident.root_cause = root_cause.root_cause
+        onset = dx.change_at(root_cause)
+        if (
+            onset is not None
+            and incident.first_signal_at is not None
+            and incident.first_signal_at < onset <= (incident.created_at or now)
+        ):
+            # The break cannot start before the change that caused it.
+            incident.first_signal_at = onset
         _save(incident, state)
         await record_step(
             session,
@@ -407,6 +420,25 @@ class MedicRunner:
             data=Diagnosis(root_cause=root_cause, dropped=dropped),
         )
         await session.commit()
+
+        # 4b. Research the root cause itself (an index, a pool setting), for the fix.
+        follow_up: list[ResearchResult] = []
+        if reused is None and root_cause.search_query:
+            follow_up, query, skipped = await self._search(root_cause.search_query, state)
+            if query:
+                state.research = [*state.research, *follow_up]
+                state.research_queries = [*state.research_queries, query]
+            _save(incident, state)
+            await record_step(
+                session,
+                run,
+                kind="research_done",
+                output_summary=skipped or f"{len(follow_up)} results for {query!r}",
+                data=ResearchDone(
+                    queries=[query] if query else [], results=follow_up, skipped_reason=skipped
+                ),
+            )
+            await session.commit()
 
         # 5. Propose
         emergency = await fx.emergency(root_cause, signals, graph, evidence.changes, deps.actions)
@@ -421,6 +453,7 @@ class MedicRunner:
             budget,
             order=len(emergency.records) + 1,
             on_call=recorder,
+            research=follow_up,
         )
         state.fixes = emergency.records + pr.records
         state.notes = [*evidence.notes, *emergency.notes, *pr.notes]
@@ -446,26 +479,43 @@ class MedicRunner:
         await self._request_approvals(session, incident, run, state)
 
     async def _research(
-        self, items: list[Any], affected: set[uuid.UUID], state: MedicState, reused: bool
+        self,
+        items: list[Any],
+        all_items: list[Any],
+        affected: set[uuid.UUID],
+        state: MedicState,
+        reused: bool,
     ) -> tuple[list[ResearchResult], list[str], str | None]:
         if reused:
             return [], [], "Skipped: a similar past incident was reused."
-        if self.deps.tavily is None:
-            return [], [], "Skipped: TAVILY_API_KEY is not set."
-        if state.tavily_calls >= self.settings.tavily_max_calls_per_incident:
-            return [], [], "Skipped: research cap for this incident reached."
-        scored = sorted(items, key=lambda i: -ev.score(i, affected))
-        query = next((q for i in scored if (q := search_query(i.line))), "")
+        # The application's most frequent error, not the loudest symptom (a failed health
+        # check says nothing a search can use); the best-scored error line otherwise.
+        query = dominant_error(i.line for i in all_items if i.source.startswith(APP_LOGS))
+        if not query:
+            scored = sorted(items, key=lambda i: -ev.score(i, affected))
+            query = next((q for i in scored if (q := search_query(i.line))), "")
         if not query:
             return [], [], "Skipped: no error line to search for."
+        results, used, skipped = await self._search(query, state)
+        return results, [used] if used else [], skipped
+
+    async def _search(
+        self, query: str, state: MedicState
+    ) -> tuple[list[ResearchResult], str | None, str | None]:
+        """One Tavily call within TAVILY_MAX_CALLS_PER_INCIDENT: results, the query sent (None
+        when no call was made), and why it was skipped or failed."""
+        if self.deps.tavily is None:
+            return [], None, "Skipped: TAVILY_API_KEY is not set."
+        if state.tavily_calls >= self.settings.tavily_max_calls_per_incident:
+            return [], None, "Skipped: research cap for this incident reached."
         state.tavily_calls += 1
         try:
             found = await self.deps.tavily.search(query)
         except TavilyError as exc:
-            return [], [query], f"Research failed: {exc}"
+            return [], query, f"Research failed: {exc}"
         return (
             [ResearchResult(title=r.title, url=r.url, snippet=r.snippet) for r in found],
-            [query],
+            query,
             None,
         )
 

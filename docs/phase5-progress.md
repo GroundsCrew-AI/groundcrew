@@ -322,3 +322,24 @@ Rizwan, in Ahmed's telemetry / incidents / Medic code (agreed with the user; rev
   name and roll back the changed secret (run #1's "No fix"); values stay redacted.
 - Research queries a JSON log line by its `msg` and error (last traceback line), not the raw
   JSON.
+
+## missing-index run fixes (2026-10-13)
+
+Root cause was right (b11275e, migration at deploy start); three gaps:
+- No fix PR: the model named the deploy by its run id (`38384663137`); the SHA regex read its
+  eleven digits as a SHA prefix, found no commit, and Medic said the repository was not
+  connected. A SHA now needs a hex letter; `fixes.commit_change` maps a deploy marker to the
+  commit it shipped (`ChangeMarker.commit`), and `fixes.resolve_repo` takes the repo the GitHub
+  evidence names (`ChangeMarker.repo`), then the graph, matched to the workspace's GitHub
+  connections, re-reading each installation's repository list when none lists it. Notes now
+  say which step failed.
+- "Detected in 24m 1s": the incident merged the seed-large load test's failed incident and
+  took its first signal. Detection is now timed from the opening signal, moved to the
+  triggering change when that is later. The diagnosis check drops `[SPIKE]` lines whose
+  minute ended before the triggering change (and the prompt says so).
+- Research: the first query is the application logs' most frequent error (`dominant_error`),
+  not the top-scored line (a health check); one follow-up search runs on
+  `RootCause.search_query` after the diagnosis and goes to the fix PR prompt as background.
+- Files: app/agents/medic/{agent,diagnose,events,fixes,schemas}.py, app/incidents/store.py,
+  app/telemetry/github.py, app/tools/tavily.py; tests/test_live_missing_index.py (6),
+  tests/test_incidents_detection.py (merge now keeps the opening signal's time).

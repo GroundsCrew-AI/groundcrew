@@ -77,3 +77,8 @@ class RootCause(BaseModel):
     affected_resources: list[str] = Field(default_factory=list, description="Resource names")
     confidence: Confidence
     fix_options: list[FixOption] = Field(default_factory=list)
+    search_query: str | None = Field(
+        default=None,
+        description="A short web search for the root cause's mechanism, no names or ids",
+        examples=["postgres missing index full table scan"],
+    )

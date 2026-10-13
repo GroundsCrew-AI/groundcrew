@@ -115,3 +115,14 @@ All additive.
   `incident_updated` step (status stays `failed`) pointing at the new one.
 - `rds_cpu_latency` also fires on slow queries (request p50 + database CPU); the name is
   unchanged.
+
+## Phase 5: missing-index run fixes (2026-10-13)
+
+All additive.
+- `ChangeMarker.commit` (full SHA; a deploy's head commit) and `ChangeMarker.repo`
+  (`owner/name`) on GitHub commit and deploy markers.
+- `RootCause.search_query`: the model's web search for the root cause's mechanism. Medic runs
+  it after the diagnosis as a second `research_done` step (within
+  `TAVILY_MAX_CALLS_PER_INCIDENT`), so a run can have two `research_done` steps.
+- `time_to_detect_ms` is timed from the signal that opened the incident (or the triggering
+  change, if later), not from a merged incident's earlier signals.
