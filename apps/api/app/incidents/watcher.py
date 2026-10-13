@@ -1,8 +1,9 @@
 """The incident watcher: every INCIDENT_WATCH_INTERVAL_SECONDS, run the detector rules over
 linked resources and open (or join) incidents.
 
-Linked resources are ECS services (with the log groups they `logs_to`) and RDS databases on a
-connected AWS connection, not stale. All calls are read-only, through the connection's guarded
+Linked resources are ECS services (with the log groups they `logs_to`) and RDS databases (with
+the log groups of the services that `reads` them, for the slow-query rule) on a connected AWS
+connection, not stale. All calls are read-only, through the connection's guarded
 read-only session. One pass:
 
 1. Read each resource's signals in parallel threads, each with a timeout; a failure is logged
@@ -76,6 +77,7 @@ async def _targets(session_factory: SessionFactory) -> list[Target]:
             )
         ).all()
         services = [r.id for r, _ in rows if r.type == "ecs:service"]
+        databases = [r.id for r, _ in rows if r.type == "rds:db"]
         logs: dict[uuid.UUID, list[str]] = {}
         if services:
             edges = await session.execute(
@@ -89,7 +91,15 @@ async def _targets(session_factory: SessionFactory) -> list[Target]:
             )
             for from_id, name in edges:
                 logs.setdefault(from_id, []).append(name)
-    return [Target(r, c, sorted(logs.get(r.id, []))) for r, c in rows]
+        if databases:
+            reads = await session.execute(
+                select(Edge.from_id, Edge.to_id).where(
+                    Edge.kind == "reads", Edge.to_id.in_(databases), Edge.from_id.in_(services)
+                )
+            )
+            for service_id, db_id in reads.all():
+                logs.setdefault(db_id, []).extend(logs.get(service_id, []))
+    return [Target(r, c, sorted(set(logs.get(r.id, [])))) for r, c in rows]
 
 
 def check(target: Target, reader: AwsReader, now: datetime) -> list[Signal]:
@@ -108,8 +118,7 @@ def check(target: Target, reader: AwsReader, now: datetime) -> list[Signal]:
             if signal is not None:
                 out.append(signal)
     elif r.type == "rds:db":
-        cpu, latency = rules.fetch_rds(reader, r.region, r.name, now)
-        signal = rules.rds_signal(r.id, r.name, cpu, latency, now)
+        signal = rules.rds_check(reader, r.region, r.id, r.name, target.log_groups, now)
         if signal is not None:
             out.append(signal)
     return out

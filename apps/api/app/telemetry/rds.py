@@ -2,8 +2,9 @@
 
 CPUUtilization, DatabaseConnections, ReadLatency, and ReadIOPS at one-minute resolution. A point
 is a spike when it is at least twice the window's baseline (the median of its first half) and
-above a floor that ignores noise on an idle database. Every spike is kept; other points are
-sampled so a slow climb still shows.
+over an absolute floor per metric: on an idle database the baseline is near 0, and 2.4 ms read
+latency against 0.0 ms is not a spike. Every spike is kept; other points are sampled so a slow
+climb still shows.
 """
 
 import statistics
@@ -19,9 +20,9 @@ SAMPLE_EVERY = 5
 
 # metric id, CloudWatch name, unit label, value scale, spike floor (in the label's unit)
 METRICS: tuple[tuple[str, str, str, float, float], ...] = (
-    ("cpu", "CPUUtilization", "%", 1.0, 20.0),
+    ("cpu", "CPUUtilization", "%", 1.0, 30.0),
     ("connections", "DatabaseConnections", "", 1.0, 5.0),
-    ("read_latency", "ReadLatency", "ms", 1000.0, 2.0),
+    ("read_latency", "ReadLatency", "ms", 1000.0, 20.0),
     ("read_iops", "ReadIOPS", "/s", 1.0, 50.0),
 )
 

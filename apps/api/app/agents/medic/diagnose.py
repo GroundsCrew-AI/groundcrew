@@ -25,6 +25,9 @@ Rules:
 - `triggering_change` is the change that started the incident (a commit, a deploy, a secret
   change, a config change) with its ref and time, citing evidence. Use null if none is shown.
   If there is no commit or deploy near the start, say so rather than inventing one.
+  A deploy acts from when it starts, not when its new tasks are live: a migration it runs
+  changes the database first. A break that begins between a deploy's start and its completion
+  points to that deploy and the commit it ships.
 - `root_cause` explains what broke and why in two to four sentences. `summary` is one sentence.
 - `fix_options` lists fixes in order: an emergency action when production is down now
   (ecs_rollback_service to the previous task definition, secret_rollback_version to the

@@ -1,6 +1,7 @@
 """Secrets Manager reader: metadata only (DescribeSecret).
 
-Last changed, last accessed, rotation, and which version ids hold AWSCURRENT / AWSPREVIOUS.
+Last changed, last accessed, rotation, and which version ids hold AWSCURRENT / AWSPREVIOUS (in
+full: Terraform's ids all start "terraform-", so a prefix tells versions apart only for UUIDs).
 Never a value: GetSecretValue is not in the read-only allowlist and the role denies it, and this
 module never asks for it. A change inside the window is also a `secret_change` marker.
 """
@@ -19,7 +20,7 @@ def _stages(versions: dict[str, list[str]]) -> str:
     named = []
     for vid, stages in sorted(versions.items()):
         for stage in stages:
-            named.append(f"{stage}={vid[:8]}")
+            named.append(f"{stage}={vid}")
     return ", ".join(sorted(named)) or "none"
 
 

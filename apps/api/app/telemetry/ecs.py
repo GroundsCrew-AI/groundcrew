@@ -75,6 +75,17 @@ def describe(
         if at is not None:
             out.lines.append(line(max(min(at, until), since), SOURCE, name, text))
         if created is not None and _in(created, since, until):
+            # The status line is stamped when the rollout last changed; a migration inside the
+            # deploy breaks things from the start, before the new tasks are live.
+            out.lines.append(
+                line(
+                    created,
+                    SOURCE,
+                    name,
+                    f"deployment {d.get('id', '?')} started: task definition "
+                    f"{_short(d.get('taskDefinition'))}",
+                )
+            )
             out.changes.append(
                 ChangeMarker(
                     kind="deploy",

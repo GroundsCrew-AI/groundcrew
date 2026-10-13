@@ -61,6 +61,8 @@ async def run(args: argparse.Namespace) -> int:
     print(f"neighbors: {', '.join(r.name for r in evidence.neighbors) or 'none'}")
     for note in evidence.notes:
         print(f"note: {note}")
+    if evidence.skipped:
+        print(f"skipped (no reader, not evidence): {'; '.join(evidence.skipped)}")
     for change in evidence.changes:
         print(f"change: {change.at:%H:%M:%S} {change.kind} {change.label}")
     for key, text in evidence.texts().items():

@@ -99,8 +99,11 @@ class Evidence:
     changes: list[ChangeMarker] = field(default_factory=list)
     affected: list[ResourceRef] = field(default_factory=list)
     neighbors: list[ResourceRef] = field(default_factory=list)
-    # Resources no reader covers, and readers that failed.
+    # What went wrong collecting (resources not found). Shown to people, never to the model.
     notes: list[str] = field(default_factory=list)
+    # Resources no reader covers (security groups, ECR repositories, ...): expected, and kept
+    # out of `notes` so they never reach Medic's notes or the evidence the model sees.
+    skipped: list[str] = field(default_factory=list)
 
     def texts(self) -> dict[str, str]:
         """The collect_evidence contract: text per source, plus `timeline`."""
@@ -165,7 +168,7 @@ Job = Callable[[], Awaitable[ReaderOutput]]
 def plan_readers(
     resources: list[Resource], clients: EvidenceClients, since: datetime, until: datetime
 ) -> tuple[dict[str, tuple[Resource, Job]], list[str]]:
-    """One reader per source key; resources no reader covers are listed in the notes."""
+    """One reader per source key; resources no reader covers are listed in the second value."""
     jobs: dict[str, tuple[Resource, Job]] = {}
     notes: list[str] = []
 
@@ -287,14 +290,16 @@ async def collect(
     owned = ConnectionClients(connections, settings) if clients is None else None
     use: EvidenceClients = owned or clients  # type: ignore[assignment]
     try:
-        jobs, notes = plan_readers([*affected, *neighbors], use, since, until)
+        jobs, skipped = plan_readers([*affected, *neighbors], use, since, until)
         keys = list(jobs)
         outputs = await asyncio.gather(*(_run(k, jobs[k][1], until) for k in keys))
     finally:
         if owned is not None:
             owned.close()
     evidence = Evidence(
-        affected=[_ref(r) for r in affected], neighbors=[_ref(r) for r in neighbors], notes=notes
+        affected=[_ref(r) for r in affected],
+        neighbors=[_ref(r) for r in neighbors],
+        skipped=skipped,
     )
     missing = set(resource_ids) - {r.id for r in affected}
     if missing:

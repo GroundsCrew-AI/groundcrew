@@ -2,9 +2,10 @@
 
 Every line becomes an `EvidenceItem` with a stable id. Ranking is two passes:
 
-1. A heuristic score: OOM kills and exit codes, marked spikes, errors and failed health checks,
-   changes (commits, deploys, secret changes), and lines about the affected resources score
-   high; every source keeps at least its two best lines, so no reader is drowned out.
+1. A heuristic score: OOM kills and exit codes, marked spikes and slow minutes, errors and
+   failed health checks, changes (commits, deploys, secret changes), and lines about the
+   affected resources score high; every source keeps at least its two best lines, so no reader
+   is drowned out.
 2. When embeddings are configured (MODEL_EMBED and PRICE_EMBED_PER_M), one embed call for the
    symptom and the candidates adds cosine similarity to the score (Token Factory has no rerank
    model; PROJECT_CONTEXT.md decision of 2026-10-07). Without them the heuristic stands.
@@ -35,7 +36,12 @@ _WEIGHTS: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"(?i)health ?checks?|rollout FAILED|deployment failed|circuit breaker"), 3.5),
     (re.compile(r"(?i)\b(error|failed|failure|timed? ?out|killed)\b"), 2.5),
     (re.compile(r"^commit |^workflow run |^production deployment |^deployment "), 2.5),
-    (re.compile(r"^latency summary .*p50=([1-9]\d{2,})ms"), 2.0),
+    (re.compile(r"\[SLOW\]"), 3.0),
+    # Any path but a health check (its latency jumps without a problem).
+    (
+        re.compile(r"^latency summary path=(?!/(health|ready|live|ping))\S* .*p50=[1-9]\d{2,}ms"),
+        2.0,
+    ),
     (re.compile(r"^now: "), 1.0),
     (re.compile(r"no commits or workflow runs"), 1.5),
 )

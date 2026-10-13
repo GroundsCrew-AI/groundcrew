@@ -278,3 +278,27 @@ EnableOperate=true); `SimulateCustomPolicy` on the operate role: UpdateService a
 `service/checkout/*`, implicit deny elsewhere and for DeleteService / RegisterTaskDefinition;
 UpdateSecretVersionStage allowed on `secret:checkout/*`, implicit deny on other secrets and for
 PutSecretValue; GetSecretValue explicit deny.
+
+## Live tuning from checkout-demo runs (2026-10-13)
+
+Rizwan, in Ahmed's telemetry / incidents / Medic code (agreed with the user; review welcome):
+- RDS `[SPIKE]` needs an absolute floor too: CPU 30 %, ReadLatency 20 ms (2.4 ms vs 0.0 ms was a
+  spike). The old `rds_cpu_latency` fallback needs 20 ms read latency (was 2 ms).
+- Latency summaries: request logs without a path are skipped (no more `path= requests=6`); a
+  minute at 3x the path's baseline p50 and >= 20 ms is marked `[SLOW]`; health-check paths
+  (`/health`, `/healthz`, `/ready`, ...) are summarized but never marked or weighted.
+- Slow-query rule (keeps the `rds_cpu_latency` name, no contract change): 2 minutes in a row with
+  DB CPU > 15 % and a non-health path's p50 at 3x baseline, from the request logs of services
+  that `reads` the database. Live missing-index numbers (p50 9 -> 48 ms, CPU 4.5 -> 20 %) fire;
+  p95 outliers, /health jumps, one slow minute, or CPU 10 % do not. Watcher and verify both use
+  `rules.rds_check`.
+- Logs are read newest first (`cloudwatch_logs.read_newest`, 2-minute slices from the end,
+  halved when full): a busy 40-minute window keeps the last ~10 minutes, not the first, and says
+  what it did not read. The watcher's error-rate baseline uses only the part that was read.
+- Secret versions show the full version id (Terraform ids all start `terraform-`, so the first
+  8 characters were `terrafor` for every version).
+- "no reader for ..." goes to `Evidence.skipped`, not `notes`, so it never reaches Medic.
+- Deploys get a line at their start (ECS deployment `createdAt`, workflow run `created_at` with
+  its sha), and the diagnosis prompt says a deploy acts from its start (a migration runs before
+  the new tasks are live).
+- tests/test_live_tuning.py (18).

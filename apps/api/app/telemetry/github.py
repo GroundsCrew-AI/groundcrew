@@ -77,22 +77,25 @@ async def read_repo(
         if at is None or created is None:
             continue
         path = str(r.get("path") or r.get("name") or "?").rsplit("/", 1)[-1]
+        run = f"workflow run {path} #{r.get('run_number', r.get('id'))}"
+        sha = str(r.get("head_sha", ""))[:7]
         out.lines.append(
             line(
                 at,
                 SOURCE,
                 full,
-                f"workflow run {path} #{r.get('run_number', r.get('id'))} ({r.get('event')}) "
-                f"{r.get('status')} {r.get('conclusion') or '-'} "
-                f"at {str(r.get('head_sha', ''))[:7]}",
+                f"{run} ({r.get('event')}) {r.get('status')} {r.get('conclusion') or '-'} at {sha}",
             )
         )
+        if created != at:
+            # A deploy (and a migration it runs) acts from its start, not its end.
+            out.lines.append(line(created, SOURCE, full, f"{run} started at {sha}"))
         out.changes.append(
             ChangeMarker(
                 kind="deploy" if "deploy" in path.lower() else "other",
                 ref=str(r.get("id")),
                 at=created,
-                label=f"{path} {r.get('conclusion') or r.get('status')}",
+                label=f"{path} {r.get('conclusion') or r.get('status')} at {sha}",
                 url=r.get("html_url"),
             )
         )

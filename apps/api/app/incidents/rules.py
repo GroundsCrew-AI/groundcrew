@@ -10,7 +10,11 @@ the watcher runs them every INCIDENT_WATCH_INTERVAL_SECONDS and dedupes into ope
 | ecs_deployment_failed | the primary deployment's rollout state is FAILED |
 | ecs_tasks_stopped | tasks stopped with a non-zero exit code (137 / OutOfMemoryError included) |
 | log_error_spike | error lines in the last 5 minutes at 3x the rate of the 25 before, at least 5 |
-| rds_cpu_latency | CPU at 2x baseline and >= 40 %, and read latency at 2x baseline and >= 2 ms |
+| rds_cpu_latency | slow queries (below); else CPU 2x and >= 40 %, read latency 2x and >= 20 ms |
+
+Slow queries: 2 minutes in a row with database CPU > 15 % and, in the request logs of a service
+that `reads` the database, a path's p50 at 3x its baseline and >= 20 ms (health checks ignored;
+p50, because p95 is noisy).
 
 Thresholds are constants here; tune them against the live demo (M5).
 """
@@ -22,14 +26,18 @@ from typing import Any
 
 from app.agents.medic.events import Signal
 from app.connectors.aws import AwsReader
+from app.telemetry.cloudwatch_logs import minute_p50s, read_newest, slow_minutes
 
 RECENT = timedelta(minutes=5)
 BASELINE = timedelta(minutes=25)
 MIN_ERRORS = 5
 ERROR_RATE_FACTOR = 3.0
 CPU_FLOOR = 40.0
-LATENCY_FLOOR_MS = 2.0
+LATENCY_FLOOR_MS = 20.0
 SPIKE_FACTOR = 2.0
+# Slow queries (missing index): request p50, not p95 (noisy), together with database CPU.
+SLOW_QUERY_CPU = 15.0
+SLOW_QUERY_MINUTES = 2
 MAX_STOPPED_TASKS = 50
 MAX_LOG_EVENTS = 5_000
 
@@ -163,11 +171,18 @@ def fetch_ecs(
 def log_signal(
     resource_id: Any, name: str, events: list[tuple[datetime, str]], now: datetime
 ) -> Signal | None:
+    # A busy group hits MAX_LOG_EVENTS; the newest are read, so the baseline is shorter.
+    base_start = now - RECENT - BASELINE
+    if len(events) >= MAX_LOG_EVENTS and events:
+        base_start = max(base_start, min(at for at, _ in events))
+    base_seconds = (now - RECENT - base_start).total_seconds()
+    if base_seconds < 60:
+        return None
     errors = [at for at, message in events if _ERROR.search(message)]
     recent = [at for at in errors if now - RECENT <= at <= now]
-    before = [at for at in errors if now - RECENT - BASELINE <= at < now - RECENT]
+    before = [at for at in errors if base_start <= at < now - RECENT]
     recent_rate = len(recent) / RECENT.total_seconds() * 60
-    base_rate = len(before) / BASELINE.total_seconds() * 60
+    base_rate = len(before) / base_seconds * 60
     if len(recent) < MIN_ERRORS or recent_rate < ERROR_RATE_FACTOR * base_rate + 0.5:
         return None
     return Signal(
@@ -185,23 +200,9 @@ def log_signal(
 def fetch_logs(
     reader: AwsReader, region: str | None, log_group: str, now: datetime
 ) -> list[tuple[datetime, str]]:
-    """Blocking (boto3)."""
-    start = now - RECENT - BASELINE
-    raw = reader.paginate(
-        "logs",
-        region,
-        "FilterLogEvents",
-        "events",
-        limit=MAX_LOG_EVENTS,
-        logGroupName=log_group,
-        startTime=int(start.timestamp() * 1000),
-        endTime=int(now.timestamp() * 1000),
-    )
-    return [
-        (at, str(e.get("message", "")))
-        for e in raw
-        if (at := to_time(e.get("timestamp"))) is not None
-    ]
+    """Blocking (boto3). The newest MAX_LOG_EVENTS of the last RECENT + BASELINE."""
+    events, _ = read_newest(reader, region, log_group, now - RECENT - BASELINE, now, MAX_LOG_EVENTS)
+    return events
 
 
 # --- RDS --------------------------------------------------------------------------------------
@@ -236,6 +237,64 @@ def rds_signal(
             f"(baseline {lat_base:.1f} ms)"
         ),
         at=min(cpu_at, lat_at),
+    )
+
+
+def slow_query_signal(
+    resource_id: Any,
+    name: str,
+    cpu: list[tuple[datetime, float]],
+    events: list[tuple[datetime, str]],
+    now: datetime,
+) -> Signal | None:
+    """SLOW_QUERY_MINUTES minutes in a row, in the last RECENT, where database CPU is over
+    SLOW_QUERY_CPU and a path's p50 is slow (cloudwatch_logs.slow_minutes, against the minutes
+    before RECENT). `events` are the request logs of the apps that read the database."""
+    p50s = minute_p50s(events)
+    cpu_at = {at.replace(second=0, microsecond=0): v for at, v in cpu}
+    # minute -> the slowest path then: (path, p50, baseline p50)
+    bad: dict[datetime, tuple[str, float, float]] = {}
+    for (minute, path), base in slow_minutes(p50s, baseline_until=now - RECENT).items():
+        if minute < now - RECENT or cpu_at.get(minute, 0.0) <= SLOW_QUERY_CPU:
+            continue
+        p50 = p50s[(minute, path)][1]
+        if minute not in bad or p50 / max(base, 1.0) > bad[minute][1] / max(bad[minute][2], 1.0):
+            bad[minute] = (path, p50, base)
+    runs: list[list[datetime]] = []
+    for minute in sorted(bad):
+        if runs and minute - runs[-1][-1] == timedelta(minutes=1):
+            runs[-1].append(minute)
+        else:
+            runs.append([minute])
+    run = next((r for r in runs if len(r) >= SLOW_QUERY_MINUTES), None)
+    if run is None:
+        return None
+    path, p50, base = bad[run[-1]]
+    return Signal(
+        rule="rds_cpu_latency",
+        resource_id=resource_id,
+        resource_name=name,
+        detail=(
+            f"slow queries: {path} p50 {p50:.0f} ms (baseline {base:.0f} ms) with database CPU "
+            f"{cpu_at[run[-1]]:.0f}% for {len(run)} minutes in a row"
+        ),
+        at=run[0],
+    )
+
+
+def rds_check(
+    reader: AwsReader,
+    region: str | None,
+    resource_id: Any,
+    db: str,
+    log_groups: list[str],
+    now: datetime,
+) -> Signal | None:
+    """Blocking (boto3). Slow queries from the readers' request logs, else CPU + read latency."""
+    cpu, latency = fetch_rds(reader, region, db, now)
+    events = [e for group in log_groups for e in fetch_logs(reader, region, group, now)]
+    return slow_query_signal(resource_id, db, cpu, events, now) or rds_signal(
+        resource_id, db, cpu, latency, now
     )
 
 
