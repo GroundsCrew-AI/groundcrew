@@ -38,8 +38,11 @@ export function FixApprovalCard({
   onDecide,
   deciding,
   runEnded = false,
+  waitingFor = null,
 }: {
   fix: ProposedFix;
+  /** The prerequisite fix that must be applied before this one can be approved. */
+  waitingFor?: string | null;
   approval: Approval;
   onDecide: (decision: Decision) => void;
   deciding: Decision | null;
@@ -108,7 +111,7 @@ export function FixApprovalCard({
         )}
         {open ? (
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => onDecide("approve")} disabled={deciding !== null}>
+            <Button size="sm" onClick={() => onDecide("approve")} disabled={deciding !== null || waitingFor !== null}>
               <Check aria-hidden="true" />
               {deciding === "approve" ? "Approving" : fix.kind === "pr" ? "Approve and open PR" : "Approve and run"}
             </Button>
@@ -117,7 +120,11 @@ export function FixApprovalCard({
               {deciding === "reject" ? "Rejecting" : "Reject"}
             </Button>
             <span className="text-[12px] text-muted-foreground">
-              {fix.kind === "emergency" ? "Changes production now." : "Nothing changes until someone merges it."}
+              {waitingFor
+                ? `Runs after ${waitingFor}. Approve that first.`
+                : fix.kind === "emergency"
+                  ? "Changes production now."
+                  : "Nothing changes until someone merges it."}
             </span>
           </div>
         ) : pending ? (

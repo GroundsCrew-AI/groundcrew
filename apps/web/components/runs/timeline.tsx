@@ -156,6 +156,27 @@ function Rail({ color, last, pulse }: { color: string; last: boolean; pulse?: bo
   );
 }
 
+/**
+ * Medic fixes that cannot be approved yet: fix_id -> the prerequisite fix ("Fix 1: Roll back
+ * checkout/database-url ...") that is not applied. A restart before the secret rollback would
+ * restart on the bad secret; the API refuses it too.
+ */
+function waitingFixes(steps: Step[]): Map<string, string> {
+  const fixes = new Map<string, { order: number; title: string; depends_on?: string[] }>();
+  const applied = new Set<string>();
+  for (const s of steps) {
+    if (s.kind === "approval_requested" && s.data?.type === "fix_approval") fixes.set(s.data.fix.fix_id, s.data.fix);
+    if (s.kind === "fix_applied" && s.data?.type === "fix_applied" && s.data.ok) applied.add(s.data.fix_id);
+  }
+  const out = new Map<string, string>();
+  for (const [id, fix] of fixes) {
+    const first = (fix.depends_on ?? []).find((d) => !applied.has(d));
+    const prerequisite = first ? fixes.get(first) : undefined;
+    if (prerequisite) out.set(id, `Fix ${prerequisite.order}: ${prerequisite.title}`);
+  }
+  return out;
+}
+
 export function Timeline({
   steps,
   approvals,
@@ -192,6 +213,7 @@ export function Timeline({
   );
   // Deploy runs: a stage's start row is dropped once the stage has finished.
   const hidden = hiddenDeploySteps(steps);
+  const fixWaits = waitingFixes(steps);
   const replaced = replacedPlans(steps);
   const visible = steps.filter(
     (s) =>
@@ -229,6 +251,7 @@ export function Timeline({
               ) : step.kind === "approval_requested" && approval && step.data?.type === "fix_approval" ? (
                 <FixApprovalCard
                   fix={step.data.fix}
+                  waitingFor={fixWaits.get(step.data.fix.fix_id) ?? null}
                   approval={approval}
                   runEnded={ended}
                   onDecide={(decision) => onDecide(approval, decision)}

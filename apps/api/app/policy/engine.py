@@ -175,6 +175,30 @@ async def handle_tool_call(
     return Executed(await execute_tool(session, ctx, spec, approved_args, approval=approval))
 
 
+async def _waiting_for(session: AsyncSession, run: Run, approval: Approval) -> str | None:
+    """For a Medic fix with `depends_on`: why it cannot be approved yet (its prerequisite is not
+    applied), or None. Rejecting is always allowed."""
+    if run.incident_id is None:
+        return None
+    # Imported here: app.agents.medic imports the policy package.
+    from app.agents.medic.state import MedicState
+    from app.db.models import Incident
+
+    incident = await session.get(Incident, run.incident_id)
+    if incident is None or not incident.state:
+        return None
+    fixes = MedicState.model_validate(incident.state).fixes
+    by_id = {r.fix.fix_id: r for r in fixes}
+    rec = next((r for r in fixes if r.approval_id == approval.id), None)
+    if rec is None:
+        return None
+    for dep in rec.fix.depends_on:
+        first = by_id.get(dep)
+        if first is not None and first.status != "applied":
+            return f"Fix {first.fix.order} ({first.fix.title}) must be applied before this one."
+    return None
+
+
 async def decide_approval(
     session: AsyncSession,
     approval_id: uuid.UUID,
@@ -195,6 +219,10 @@ async def decide_approval(
     run = await session.get_one(Run, approval.run_id, with_for_update=True)
     if run.status in TERMINAL_RUN_STATUSES:
         raise ApprovalStateError(f"The run is already {run.status}.")
+    if decision == Decision.approve:
+        waiting = await _waiting_for(session, run, approval)
+        if waiting is not None:
+            raise ApprovalStateError(waiting)
     decider = await session.get(User, decided_by) if decided_by is not None else None
     label = via or ((decider.github_login or decider.name) if decider else None)
 

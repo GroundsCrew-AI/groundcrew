@@ -3460,6 +3460,14 @@
             "title": "Incident Id",
             "type": "string"
           },
+          "merged_from": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Merged From",
+            "type": "array"
+          },
           "severity": {
             "enum": [
               "critical",
@@ -3893,6 +3901,19 @@
             "format": "uuid",
             "title": "Incident Id",
             "type": "string"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Merged Into"
           },
           "previous_status": {
             "anyOf": [
@@ -4487,6 +4508,13 @@
             ],
             "default": null,
             "title": "Approval Id"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Depends On",
+            "type": "array"
           },
           "fix_id": {
             "examples": [

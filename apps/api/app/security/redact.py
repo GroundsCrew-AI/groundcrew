@@ -2,6 +2,11 @@
 
 Used for run_steps summaries, error messages, and every log line. Patterns are
 deliberately broad: a false positive costs a little readability, a miss leaks a secret.
+
+Two things are identifiers, never secret values, and are kept: AWS ARNs
+(`arn:aws:secretsmanager:...:secret:checkout/database-url-AbCdEf`), and the value of a key that
+names a secret's id, name, or ARN (`secret_id=checkout/database-url`). Without them Medic cannot
+tell which secret changed or roll it back.
 """
 
 import re
@@ -18,7 +23,10 @@ _KEY_WORDS = (
     r"private[_-]?key|client[_-]?secret|credential|authorization|auth"
 )
 
-_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+# Keys whose value identifies a secret rather than holding it: secret_id, SecretName, secretArn.
+_IDENTIFIER_KEY = re.compile(r"(?i)[_.-]?(id|ids|name|names|arn|arns)[\"']?\s*[:=]\s*[\"']?$")
+
+_PATTERNS: tuple[tuple[re.Pattern[str], Any], ...] = (
     # PEM private keys (whole block, or to the end if truncated)
     (
         re.compile(
@@ -44,9 +52,10 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             rf"(?i)(\b[\w.-]*(?:{_KEY_WORDS})[\w.-]*[\"']?\s*[:=]\s*[\"']?)"
             r"(?!\d+\b)[^\s\"',;}&]+"
         ),
-        rf"\1{REDACTED}",
+        lambda m: m.group(0) if _IDENTIFIER_KEY.search(m.group(1)) else m.group(1) + REDACTED,
     ),
 )
+_ARN = re.compile(r"\barn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:\d{0,12}:[^\s\"',;}?&@]+")
 
 
 @lru_cache
@@ -70,9 +79,12 @@ def _configured_secrets() -> tuple[str, ...]:
 def redact(text: str) -> str:
     for secret in _configured_secrets():
         text = text.replace(secret, REDACTED)
+    # ARNs are identifiers: redact only the text between them.
+    parts = _ARN.split(text)
+    arns = _ARN.findall(text)
     for pattern, replacement in _PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
+        parts = [pattern.sub(replacement, part) for part in parts]
+    return "".join(p + (arns[i] if i < len(arns) else "") for i, p in enumerate(parts))
 
 
 def truncate(text: str, limit: int = MAX_SUMMARY_CHARS) -> str:
@@ -94,7 +106,12 @@ _SECRET_KEY_NAME = re.compile(rf"(?i)(?:{_KEY_WORDS})")
 
 def redact_json(value: Any, key: str | None = None) -> Any:
     """Redact a JSON-like value for display. Values under secret-sounding keys are hidden."""
-    if key is not None and _SECRET_KEY_NAME.search(key) and isinstance(value, str):
+    if (
+        key is not None
+        and _SECRET_KEY_NAME.search(key)
+        and not _IDENTIFIER_KEY.search(f"{key}=")
+        and isinstance(value, str)
+    ):
         return REDACTED
     if isinstance(value, str):
         return redact(value)

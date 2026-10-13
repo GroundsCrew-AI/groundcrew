@@ -5,6 +5,7 @@ comes from TAVILY_API_KEY and is never logged; error text is redacted. Medic cap
 incident (TAVILY_MAX_CALLS_PER_INCIDENT). Tests use a MockTransport, never the API.
 """
 
+import json
 import re
 from typing import Any
 
@@ -80,8 +81,33 @@ _IDS = re.compile(
 )
 
 
+_MESSAGE_KEYS = ("msg", "message", "event")
+_ERROR_KEYS = ("error", "err", "exc", "exception", "error_message", "reason")
+
+
+def _json_message(message: str) -> str:
+    """For a JSON log line, its message and error text (the first line of a traceback); the
+    other fields (ts, level, service, ...) only make a search worse."""
+    try:
+        data = json.loads(message)
+    except ValueError:
+        return message
+    if not isinstance(data, dict):
+        return message
+    parts = []
+    for key in (*_MESSAGE_KEYS, *_ERROR_KEYS):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            # A traceback ends with the exception; that is the searchable part.
+            lines = [x for x in value.strip().splitlines() if x.strip()]
+            parts.append(lines[-1] if key in _ERROR_KEYS else lines[0])
+    return " ".join(dict.fromkeys(parts))
+
+
 def search_query(line: str) -> str:
     """A web query from an evidence line: the message without ids, times, and numbers that
     would make every search unique."""
-    message = line.split(" | ")[-1]
+    message = line.split(" | ")[-1].strip()
+    if message.startswith("{"):
+        message = _json_message(message)
     return " ".join(_IDS.sub(" ", message).split())[:200]

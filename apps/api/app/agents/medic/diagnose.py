@@ -29,6 +29,9 @@ Rules:
   changes the database first. A break that begins between a deploy's start and its completion
   points to that deploy and the commit it ships.
 - `root_cause` explains what broke and why in two to four sentences. `summary` is one sentence.
+- Running is not healthy: "1/1 tasks running" says nothing about health. Never call a service
+  recovered or healthy from its task count; only passing health checks and an error rate back
+  to normal show recovery, and if they are not in the evidence, the outage is ongoing.
 - `fix_options` lists fixes in order: an emergency action when production is down now
   (ecs_rollback_service to the previous task definition, secret_rollback_version to the
   previous secret version, force_redeploy so tasks re-read config), and a pull_request that

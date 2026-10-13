@@ -100,7 +100,8 @@ def describe(
             until,
             SOURCE,
             name,
-            f"now: {running}/{desired} tasks running, status {service.get('status')}",
+            f"now: {running}/{desired} tasks running, status {service.get('status')} "
+            "(running is not healthy: see health checks and errors)",
         )
     )
     stopped = [t for t in tasks if _in(parse_time(t.get("stoppedAt")), since, until)]

@@ -302,3 +302,23 @@ Rizwan, in Ahmed's telemetry / incidents / Medic code (agreed with the user; rev
   its sha), and the diagnosis prompt says a deploy acts from its start (a migration runs before
   the new tasks are live).
 - tests/test_live_tuning.py (18).
+
+## broken-env run #2 fixes (2026-10-13)
+
+- Fix dependencies: `ProposedFix.depends_on`; the API refuses approving a restart before the
+  secret rollback is applied, the timeline keeps its Approve button disabled ("Runs after Fix
+  1: ..."), and a restart whose rollback was rejected or failed is closed without running. (In
+  run #2 the restarts did run after the rollback, 08:59:08.6 then 09.9 and 11.6, because Medic
+  applies in order; a rejected or failed rollback was the real gap.)
+- One outage, one incident: the worker's incident failed ("No fix": an error spike is not
+  "down") a minute before the api's health checks opened a second one. A related incident that
+  failed in the last 30 minutes (not stopped by a person) is now taken over by the next one
+  (`merged_from` / `merged_into`, linked both ways in the timeline).
+- Running is not healthy: the health_check signal reads "N health-check failures reported by
+  ECS (1/1 tasks running, not healthy)" (was "0 tasks stopped failing health checks"), the ECS
+  "now:" line says so, the diagnosis prompt forbids calling a service recovered from its task
+  count, and verify fails `health` on ECS health-check failure events since the fix.
+- Redaction keeps AWS ARNs and secret identifiers (`secret_id=`, `SecretName`), so Medic can
+  name and roll back the changed secret (run #1's "No fix"); values stay redacted.
+- Research queries a JSON log line by its `msg` and error (last traceback line), not the raw
+  JSON.

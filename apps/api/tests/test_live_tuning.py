@@ -274,3 +274,24 @@ async def test_the_watcher_reads_a_database_with_its_readers_log_groups(
     # checkout-api and checkout-worker read the database; only the worker has a log group.
     assert targets[ids["db"]].log_groups == ["/ecs/checkout-worker"]
     assert targets[ids["worker"]].log_groups == ["/ecs/checkout-worker"]
+
+
+def test_research_queries_a_json_log_line_by_its_message_and_error() -> None:
+    from app.tools.tavily import search_query
+
+    line = json.dumps(
+        {
+            "ts": "2026-10-13T08:52:40Z",
+            "level": "error",
+            "service": "worker",
+            "logger": "worker",
+            "msg": "poll failed",
+            "error": "Traceback (most recent call last):\n  File x\n"
+            "psycopg.OperationalError: password authentication failed for user checkout",
+        }
+    )
+    query = search_query(line)
+    assert query == (
+        "poll failed psycopg.OperationalError: password authentication failed for user checkout"
+    )
+    assert "{" not in query and "level" not in query

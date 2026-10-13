@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -71,6 +71,17 @@ describe("MedicStep", () => {
     expect(screen.getByText(/93% similar/)).toBeInTheDocument();
   });
 
+  it("links incidents merged into one outage both ways", () => {
+    const { rerender } = render(
+      <MedicStep step={medicStep(1, { type: "incident_updated", incident_id: "inc-0", status: "failed", previous_status: "failed", at: "2026-10-13T08:54:09Z", reason: "The same outage showed up on a related resource.", merged_into: "inc-1" }, { output_summary: "Merged into a newer incident: checkout-api health checks" })} />,
+    );
+    expect(screen.getByRole("link", { name: /Merged into a newer incident/ })).toHaveAttribute("href", "/incidents/inc-1");
+    rerender(
+      <MedicStep step={medicStep(1, { type: "incident_opened", incident_id: "inc-1", title: "checkout-api", severity: "high", detected_by: "watcher", detector_rule: "health_check", signals: [], affected_resources: [], window: { start: "2026-10-13T08:24:09Z", end: null }, merged_from: ["inc-0"] })} />,
+    );
+    expect(screen.getByRole("link", { name: /could not fix/ })).toHaveAttribute("href", "/incidents/inc-0");
+  });
+
   it("links an opened fix PR and lists what still fails", () => {
     const pr = { repo: "GroundsCrew-AI/checkout-demo", number: 7, url: "https://github.com/x/pull/7", branch: "groundcrew/fix-a", head_sha: "h", state: "open" as const };
     const { rerender } = render(<MedicStep step={medicStep(9, { type: "fix_applied", fix_id: "fix-2", kind: "pr", ok: true, pull_request: pr, action_result: null, error: null })} />);
@@ -96,6 +107,33 @@ describe("Timeline with a Medic run", () => {
     );
     expect(screen.getByText("Root cause")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /Approval for Roll back checkout-worker/ })).toBeInTheDocument();
+  });
+});
+
+describe("Fix dependencies", () => {
+  const restart = { ...ROLLBACK, fix_id: "fix-2", order: 2, title: "Restart checkout-api so it reads the restored secret", depends_on: ["fix-1"] };
+  const approvals = {
+    "approval-1": approval({ policy: "emergency" }),
+    "approval-2": approval({ id: "approval-2", policy: "emergency" }),
+  };
+  const requested = [
+    medicStep(1, { type: "fix_approval", incident_id: "inc-1", fix: ROLLBACK }, { kind: "approval_requested", approval_id: "approval-1" }),
+    medicStep(2, { type: "fix_approval", incident_id: "inc-1", fix: restart }, { kind: "approval_requested", approval_id: "approval-2" }),
+  ];
+
+  it("keeps a restart unapprovable until the rollback it needs is applied", () => {
+    const { rerender } = render(
+      <Timeline steps={requested} approvals={approvals} status="waiting_approval" result={null} onDecide={vi.fn()} deciding={null} runAgent="medic" />,
+    );
+    const card = () => screen.getByRole("region", { name: /Approval for Restart checkout-api/ });
+    expect(within(card()).getByRole("button", { name: /approve and run/i })).toBeDisabled();
+    expect(within(card()).getByRole("button", { name: /reject/i })).toBeEnabled();
+    expect(within(card()).getByText(/Runs after Fix 1: Roll back checkout-worker/)).toBeInTheDocument();
+    const applied = medicStep(3, { type: "fix_applied", fix_id: "fix-1", kind: "emergency", ok: true, pull_request: null, action_result: null, error: null });
+    rerender(
+      <Timeline steps={[...requested, applied]} approvals={approvals} status="waiting_approval" result={null} onDecide={vi.fn()} deciding={null} runAgent="medic" />,
+    );
+    expect(within(card()).getByRole("button", { name: /approve and run/i })).toBeEnabled();
   });
 });
 

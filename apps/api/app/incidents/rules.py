@@ -104,7 +104,7 @@ def ecs_signals(
                 rule="health_check",
                 resource_id=resource_id,
                 resource_name=name,
-                detail=f"{len(health)} tasks stopped failing health checks ({state})",
+                detail=_health_detail(len(health), len(health_events), state),
                 at=at,
             )
         )
@@ -137,6 +137,17 @@ def ecs_signals(
             )
         )
     return out
+
+
+def _health_detail(stopped: int, events: int, state: str) -> str:
+    """What failed, then the task count, which is not health: a task can run and fail every
+    health check."""
+    parts = []
+    if stopped:
+        parts.append(f"{stopped} tasks stopped failing health checks")
+    if events:
+        parts.append(f"{events} health-check failures reported by ECS")
+    return f"{', '.join(parts)} ({state}, not healthy)"
 
 
 def fetch_ecs(

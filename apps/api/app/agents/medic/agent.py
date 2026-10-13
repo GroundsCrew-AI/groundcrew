@@ -553,9 +553,21 @@ class MedicRunner:
     async def _apply_decided(
         self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
     ) -> uuid.UUID | None:
-        """Apply or skip fixes in order; the first still-pending approval's id, or None."""
+        """Apply or skip fixes in order; the first still-pending approval's id, or None.
+
+        A fix whose prerequisite (`depends_on`) was rejected or failed is not run, even if
+        approved: a restart without the secret rollback restarts on the bad secret."""
+        by_id = {r.fix.fix_id: r for r in state.fixes}
         for rec in sorted(state.fixes, key=lambda r: r.fix.order):
             if rec.status in ("applied", "failed", "rejected") or rec.approval_id is None:
+                continue
+            blocked = [
+                by_id[d]
+                for d in rec.fix.depends_on
+                if d in by_id and by_id[d].status in ("rejected", "failed")
+            ]
+            if blocked:
+                await self._skip(session, incident, run, state, rec, blocked[0])
                 continue
             approval = await session.get(Approval, rec.approval_id, populate_existing=True)
             if approval is None or approval.status == ApprovalStatus.rejected:
@@ -567,6 +579,39 @@ class MedicRunner:
                 return rec.approval_id
             await self._apply(session, incident, run, state, rec, approval)
         return None
+
+    async def _skip(
+        self,
+        session: AsyncSession,
+        incident: Incident,
+        run: Run,
+        state: MedicState,
+        rec: FixRecord,
+        prerequisite: FixRecord,
+    ) -> None:
+        """Close a fix whose prerequisite was rejected or failed, without running it."""
+        why = "was rejected" if prerequisite.status == "rejected" else "failed"
+        reason = f"Not run: fix {prerequisite.fix.order} ({prerequisite.fix.title}) {why}."
+        approval = await session.get(
+            Approval, rec.approval_id, with_for_update=True, populate_existing=True
+        )
+        if approval is not None and approval.status == ApprovalStatus.pending:
+            approval.status = ApprovalStatus.rejected
+            approval.decided_at = self.deps.now()
+            approval.decided_via = f"Medic: fix {prerequisite.fix.order} {why}"
+        rec.status = "rejected"
+        rec.applied = FixApplied(fix_id=rec.fix.fix_id, kind=rec.fix.kind, ok=False, error=reason)
+        _save(incident, state)
+        await record_step(
+            session,
+            run,
+            kind="fix_applied",
+            tool_name=rec.fix.action or OPEN_FIX_PR,
+            approval_id=rec.approval_id,
+            output_summary=reason,
+            data=rec.applied,
+        )
+        await session.commit()
 
     async def _apply(
         self,

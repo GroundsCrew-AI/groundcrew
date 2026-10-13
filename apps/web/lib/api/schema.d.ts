@@ -1995,6 +1995,8 @@ export interface components {
              * Format: uuid
              */
             incident_id: string;
+            /** Merged From */
+            merged_from?: string[];
             /**
              * Severity
              * @enum {string}
@@ -2150,6 +2152,11 @@ export interface components {
              * Format: uuid
              */
             incident_id: string;
+            /**
+             * Merged Into
+             * @default null
+             */
+            merged_into: string | null;
             /** Previous Status */
             previous_status: ("open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed") | null;
             /**
@@ -2381,6 +2388,8 @@ export interface components {
              * @default null
              */
             approval_id: string | null;
+            /** Depends On */
+            depends_on?: string[];
             /**
              * Fix Id
              * @example fix-1

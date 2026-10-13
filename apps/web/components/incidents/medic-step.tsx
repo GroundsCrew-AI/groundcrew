@@ -69,10 +69,31 @@ export function MedicStep({ step }: { step: Step }) {
               </li>
             ))}
           </ul>
+          {(data.merged_from ?? []).length > 0 && (
+            <p className="mt-1 text-[12.5px] text-muted-foreground">
+              Took over{" "}
+              {(data.merged_from ?? []).map((id, i) => (
+                <span key={id}>
+                  {i > 0 && ", "}
+                  <Link href={`/incidents/${id}`} className="text-foreground underline-offset-4 hover:underline">
+                    an incident Medic could not fix
+                  </Link>
+                </span>
+              ))}{" "}
+              on a related resource: same outage.
+            </p>
+          )}
         </div>
       );
     case "incident_updated":
-      return (
+      return data.merged_into ? (
+        <div>
+          <Title aside={data.reason ?? undefined}>Merged</Title>
+          <Link href={`/incidents/${data.merged_into}`} className="text-[13px] underline-offset-4 hover:underline">
+            {step.output_summary ?? "Open the newer incident"}
+          </Link>
+        </div>
+      ) : (
         <Title aside={data.reason ?? undefined}>{STATUS[data.status].label}</Title>
       );
     case "evidence_collected":

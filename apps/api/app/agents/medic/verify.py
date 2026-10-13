@@ -44,6 +44,14 @@ def _service_checks(
     out = [VerifyCheck(name="rollout", ok=ok, detail=detail)]
     after = [t for t in tasks if (rules.to_time(t.get("stoppedAt")) or since) > since]
     health = [t for t in after if rules.HEALTH.search(str(t.get("stoppedReason", "")))]
+    # A running task can fail every health check without being stopped yet.
+    health_events = [
+        e
+        for e in service.get("events", [])
+        if (rules.to_time(e.get("createdAt")) or since) > since
+        and rules.HEALTH.search(str(e.get("message", "")))
+        and "fail" in str(e.get("message", "")).lower()
+    ]
     crashed = [
         t
         for t in after
@@ -53,8 +61,11 @@ def _service_checks(
     out.append(
         VerifyCheck(
             name="health",
-            ok=not health,
-            detail=f"{svc.name}: {len(health)} tasks failed health checks since the fix",
+            ok=not health and not health_events,
+            detail=(
+                f"{svc.name}: {len(health)} tasks failed health checks since the fix, "
+                f"{len(health_events)} health-check failures reported by ECS"
+            ),
         )
     )
     out.append(

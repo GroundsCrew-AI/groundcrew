@@ -24,6 +24,7 @@ from app.db.models import (
     Run,
     RunStatus,
     RunStep,
+    StopReason,
     Workspace,
 )
 from app.db.session import SessionFactory, get_session_factory
@@ -107,7 +108,9 @@ def test_failed_health_checks_are_their_own_signal_not_a_crash() -> None:
         uuid.uuid4(), service("checkout-api", rollout="IN_PROGRESS"), tasks, NOW
     )
     assert [s.rule for s in found] == ["health_check"]
-    assert found[0].detail == "2 tasks stopped failing health checks (0/1 tasks running)"
+    assert found[0].detail == (
+        "2 tasks stopped failing health checks (0/1 tasks running, not healthy)"
+    )
 
 
 def test_a_healthy_service_gives_no_signal() -> None:
@@ -362,6 +365,7 @@ async def test_a_closed_incident_does_not_absorb_new_reports(
             "previous_status": "open",
             "at": NOW.isoformat().replace("+00:00", "Z"),
             "reason": "healthy",
+            "merged_into": None,
         }
 
 
@@ -541,3 +545,92 @@ async def test_report_incident_opens_then_dedupes(
     assert (await client.post("/incidents", json=body, headers=erin.headers)).status_code == 404
     foreign = {**body, "workspace_id": str(erin.workspace_id)}
     assert (await client.post("/incidents", json=foreign, headers=erin.headers)).status_code == 404
+
+
+async def _failed(
+    sf: SessionFactory, ws: uuid.UUID, rid: uuid.UUID, rule: str, at: datetime, **run: Any
+) -> uuid.UUID:
+    async with sf() as session:
+        opened = await open_incident(
+            session,
+            workspace_id=ws,
+            resource_ids=[rid],
+            detected_by="watcher",
+            signals=[_signal(rid, rule, minutes=(NOW - at).total_seconds() / 60)],
+            now=at,
+        )
+        incident = await session.get(Incident, opened.incident.id)
+        found = await session.get(Run, opened.run.id)
+        assert incident is not None and found is not None
+        await set_status(session, incident, found, "failed", reason="No fix", now=at)
+        for key, value in run.items():
+            setattr(found, key, value)
+        await session.commit()
+        return incident.id
+
+
+async def test_a_related_outage_takes_over_the_incident_medic_just_failed(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    ids = await _demo(session_factory, workspace.id)
+    # broken-env run #2: the worker's error spike failed ("No fix"), then the api's health
+    # checks failed a minute later. Both read the database whose secret changed.
+    worker = await _failed(session_factory, workspace.id, ids["worker"], "log_error_spike", ago(2))
+    async with session_factory() as session:
+        api = await open_incident(
+            session,
+            workspace_id=workspace.id,
+            resource_ids=[ids["api"]],
+            detected_by="watcher",
+            signals=[_signal(ids["api"], "health_check", minutes=1)],
+            now=NOW,
+        )
+    assert not api.deduped and api.incident.id != worker
+    async with session_factory() as session:
+        incident = await session.get(Incident, api.incident.id)
+        assert incident is not None
+        assert incident.affected_resource_ids == [ids["api"], ids["worker"]]
+        assert [s["rule"] for s in incident.signals] == ["log_error_spike", "health_check"]
+        assert incident.first_signal_at == ago(2)
+        opened = await session.scalar(
+            select(RunStep).where(RunStep.run_id == api.run.id, RunStep.kind == "incident_opened")
+        )
+        assert opened is not None and opened.data is not None
+        assert opened.data["merged_from"] == [str(worker)]
+        assert {r["name"] for r in opened.data["affected_resources"]} == {
+            "checkout-api",
+            "checkout-worker",
+        }
+        old_run = await session.scalar(select(Run).where(Run.incident_id == worker))
+        assert old_run is not None
+        last = await session.scalar(
+            select(RunStep).where(RunStep.run_id == old_run.id).order_by(RunStep.seq.desc())
+        )
+        assert last is not None and last.data is not None
+        assert last.data["merged_into"] == str(api.incident.id)
+
+
+async def test_a_stopped_or_old_failed_incident_is_not_taken_over(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    ids = await _demo(session_factory, workspace.id)
+    await _failed(
+        session_factory,
+        workspace.id,
+        ids["worker"],
+        "log_error_spike",
+        ago(2),
+        stop_reason=StopReason.stopped_by_user,
+    )
+    await _failed(session_factory, workspace.id, ids["worker"], "log_error_spike", ago(45))
+    async with session_factory() as session:
+        api = await open_incident(
+            session,
+            workspace_id=workspace.id,
+            resource_ids=[ids["api"]],
+            detected_by="watcher",
+            signals=[_signal(ids["api"], "health_check", minutes=1)],
+            now=NOW,
+        )
+        incident = await session.get(Incident, api.incident.id)
+        assert incident is not None and incident.affected_resource_ids == [ids["api"]]
