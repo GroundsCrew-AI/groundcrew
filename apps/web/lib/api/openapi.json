@@ -3022,6 +3022,11 @@
             ],
             "title": "Since"
           },
+          "test": {
+            "default": false,
+            "title": "Test",
+            "type": "boolean"
+          },
           "title": {
             "anyOf": [
               {
@@ -3309,6 +3314,11 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "test": {
+            "default": false,
+            "title": "Test",
+            "type": "boolean"
           },
           "time_to_detect_ms": {
             "anyOf": [
@@ -3837,6 +3847,11 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "test": {
+            "default": false,
+            "title": "Test",
+            "type": "boolean"
           },
           "time_to_detect_ms": {
             "anyOf": [

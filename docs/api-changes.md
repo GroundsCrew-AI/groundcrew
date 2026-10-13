@@ -142,3 +142,8 @@ All additive.
   largest before) close the pending approvals (`decided_via` "Medic: superseded by new signals")
   and Medic investigates again; an `incident_updated` step says why. Fixes from a re-diagnosis
   have ids like `fix-1-r1`.
+- `POST /incidents` takes `test: true` for test or demo reports, and `IncidentSummary.test` /
+  `IncidentDetail.test` say so. Medic runs as usual, but a test incident gets no embedding, is
+  never returned by incident memory, and is never deduped or merged with real incidents (or real
+  ones with it). The Report dialog has a "This is a test" checkbox; the list shows a "Test" tag.
+  Migration `a4f2c7e9b1d6` adds `incidents.is_test`.

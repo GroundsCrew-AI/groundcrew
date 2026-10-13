@@ -362,7 +362,7 @@ class MedicRunner:
 
         # 2. Memory
         vector = await mem.embed_symptom(llm, budget, symptom)
-        if vector is not None:
+        if vector is not None and not incident.is_test:
             incident.embedding = vector
         hits = await mem.similar(session, incident, vector)
         reused = mem.reusable(hits, self.settings.medic_memory_threshold)

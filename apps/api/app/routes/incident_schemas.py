@@ -50,6 +50,9 @@ class IncidentCreate(BaseModel):
     severity: Severity | None = None
     # Start of the window to investigate. Default: 60 minutes before the report.
     since: datetime | None = None
+    # A test or demo report: Medic runs as usual, but the incident never enters incident
+    # memory and is never deduped or merged with real incidents.
+    test: bool = False
 
 
 class IncidentCreated(BaseModel):
@@ -74,6 +77,8 @@ class IncidentSummary(BaseModel):
     status: IncidentStatus
     severity: Severity
     detected_by: DetectedBy
+    # Reported with test: true; kept out of incident memory.
+    test: bool = False
     # The detector rule that fired first (user_report for a person's report).
     detector_rule: DetectorRule
     opened_at: datetime

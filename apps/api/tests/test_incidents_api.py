@@ -342,3 +342,49 @@ async def test_stopping_the_medic_run_closes_the_incident(
         assert kinds == ["incident_opened", "stopped", "incident_updated", "incident_failed"]
     body = (await client.get(f"/incidents/{incident_id}", headers=frank.headers)).json()
     assert body["status"] == "failed" and body["outcome"]["reason"] == "Stopped by frank."
+
+
+# --- test incidents ------------------------------------------------------------------------------
+
+
+async def test_a_test_report_stays_out_of_memory_and_apart_from_real_incidents(
+    client: httpx.AsyncClient, session_factory: SessionFactory, frank: Member
+) -> None:
+    from app.agents.medic import memory as mem
+
+    ids = await _demo(session_factory, frank.workspace_id)
+    body = {
+        "workspace_id": str(frank.workspace_id),
+        "resource_ids": [str(ids["api"])],
+        "description": "Live-update check from a dev session",
+        "test": True,
+    }
+    created = await client.post("/incidents", json=body, headers=frank.headers)
+    assert created.status_code == 202, created.text
+    test_id = uuid.UUID(created.json()["incident_id"])
+    detail = (await client.get(f"/incidents/{test_id}", headers=frank.headers)).json()
+    assert detail["test"] is True
+
+    # A real signal on the same service opens its own incident, not the open test one.
+    real, _ = await _open(session_factory, frank.workspace_id, ids["api"], "health_check")
+    assert real != test_id
+    page = (
+        await client.get(f"/incidents?workspace_id={frank.workspace_id}", headers=frank.headers)
+    ).json()
+    assert {(i["id"], i["test"]) for i in page["items"]} == {
+        (str(test_id), True),
+        (str(real), False),
+    }
+
+    async with session_factory() as session:
+        test = await session.get(Incident, test_id)
+        incident = await session.get(Incident, real)
+        assert test is not None and incident is not None
+        test.status, test.resolved_at = "resolved", datetime.now(UTC)
+        # Remembering a test incident stores no embedding.
+        mem.remember(test, "false alarm", "a dev check", [0.1] * get_settings().embed_dim)
+        assert test.embedding is None
+        await session.commit()
+        # Neither the embedding nor the rules/resources fallback finds it.
+        assert await mem.similar(session, incident, None) == []
+        assert await mem.similar(session, incident, [0.1] * get_settings().embed_dim) == []

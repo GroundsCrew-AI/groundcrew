@@ -142,7 +142,7 @@ async def latest_run(session: AsyncSession, incident_id: uuid.UUID) -> Run | Non
 
 
 async def find_open(
-    session: AsyncSession, workspace_id: uuid.UUID, group: list[uuid.UUID]
+    session: AsyncSession, workspace_id: uuid.UUID, group: list[uuid.UUID], is_test: bool = False
 ) -> Incident | None:
     """The oldest open incident whose group overlaps `group` (a report's own group, so the
     answer does not depend on which of two related reports came first)."""
@@ -152,6 +152,7 @@ async def find_open(
             Incident.workspace_id == workspace_id,
             Incident.status.in_(OPEN_STATUSES),
             Incident.group_resource_ids.overlap(group),
+            Incident.is_test.is_(is_test),
         )
         .order_by(Incident.created_at)
         .limit(1)
@@ -159,7 +160,11 @@ async def find_open(
 
 
 async def find_recent_failed(
-    session: AsyncSession, workspace_id: uuid.UUID, group: list[uuid.UUID], now: datetime
+    session: AsyncSession,
+    workspace_id: uuid.UUID,
+    group: list[uuid.UUID],
+    now: datetime,
+    is_test: bool = False,
 ) -> list[Incident]:
     """Incidents on related resources that failed in the last LEAD_TIME, not stopped by a
     person: an outage Medic could not fix from one symptom (a worker's error spike) that shows
@@ -172,6 +177,7 @@ async def find_recent_failed(
                 Incident.status == "failed",
                 Incident.window_end >= now - LEAD_TIME,
                 Incident.group_resource_ids.overlap(group),
+                Incident.is_test.is_(is_test),
             )
             .order_by(Incident.created_at)
             .with_for_update()
@@ -226,6 +232,7 @@ async def open_incident(
     severity: Severity | None = None,
     since: datetime | None = None,
     now: datetime | None = None,
+    is_test: bool = False,
 ) -> Opened:
     """Open an incident and its Medic run, or join the open incident that covers these
     resources. Enqueues the investigation. Commits."""
@@ -246,7 +253,7 @@ async def open_incident(
             )
         ]
     group = await resource_group(session, workspace_id, unique_ids)
-    existing = await find_open(session, workspace_id, group)
+    existing = await find_open(session, workspace_id, group, is_test)
     if existing is not None:
         known = {_signal_key(s) for s in existing.signals}
         fresh = [d for s in signals if _signal_key(d := s.model_dump(mode="json")) not in known]
@@ -279,7 +286,7 @@ async def open_incident(
             raise RuntimeError(f"Incident {existing.id} has no run.")
         return Opened(existing, run, deduped=True)
 
-    merged = await find_recent_failed(session, workspace_id, group, now)
+    merged = await find_recent_failed(session, workspace_id, group, now, is_test)
     prior_signals: list[dict[str, object]] = []
     for prior in merged:
         prior_signals.extend(prior.signals)
@@ -312,6 +319,7 @@ async def open_incident(
         group_resource_ids=group,
         signals=[*prior_signals, *(s.model_dump(mode="json") for s in signals)][-MAX_SIGNALS:],
         state={},
+        is_test=is_test,
     )
     session.add(incident)
     await session.flush()

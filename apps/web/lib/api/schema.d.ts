@@ -1849,6 +1849,11 @@ export interface components {
             severity?: ("critical" | "high" | "medium" | "low") | null;
             /** Since */
             since?: string | null;
+            /**
+             * Test
+             * @default false
+             */
+            test: boolean;
             /** Title */
             title?: string | null;
             /**
@@ -1948,6 +1953,11 @@ export interface components {
              * @enum {string}
              */
             status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed";
+            /**
+             * Test
+             * @default false
+             */
+            test: boolean;
             /** Time To Detect Ms */
             time_to_detect_ms: number | null;
             /** Title */
@@ -2132,6 +2142,11 @@ export interface components {
              * @enum {string}
              */
             status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed";
+            /**
+             * Test
+             * @default false
+             */
+            test: boolean;
             /** Time To Detect Ms */
             time_to_detect_ms: number | null;
             /** Title */

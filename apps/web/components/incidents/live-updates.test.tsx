@@ -131,3 +131,12 @@ describe("useRunStream", () => {
     expect(result.current).toBe("closed");
   });
 });
+
+describe("test incidents", () => {
+  it("are marked in the incident list", async () => {
+    const { IncidentList } = await import("@/components/incidents/incident-list");
+    const { incidentSummary } = await import("@/tests/incident-fixtures");
+    render(<IncidentList incidents={[incidentSummary({ test: true }), incidentSummary({ id: "inc-2" })]} />);
+    expect(screen.getAllByText("Test")).toHaveLength(1);
+  });
+});

@@ -100,6 +100,7 @@ def _summary_fields(
         "status": _pick(incident.status, IncidentStatus, "open"),
         "severity": _pick(incident.severity, Severity, "medium"),
         "detected_by": _pick(incident.detected_by, DetectedBy, "user"),
+        "test": incident.is_test,
         "detector_rule": _pick(incident.detector_rule, DetectorRule, "other"),
         "opened_at": incident.created_at,
         "resolved_at": incident.resolved_at,

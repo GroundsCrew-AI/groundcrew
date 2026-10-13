@@ -372,3 +372,9 @@ Root cause was right (b11275e, migration at deploy start); three gaps:
   lib/{use-run-stream,incidents}.ts, components/deploy/deploy-step.tsx, components/runs/
   timeline.tsx. Tests: tests/test_live_fixes_3.py (10), components/incidents/
   live-updates.test.tsx (3).
+- Test incidents: `incidents.is_test` (migration a4f2c7e9b1d6), `test` on `POST /incidents`,
+  excluded from memory (`memory.similar`, no embedding) and from dedupe and merging. The local
+  dev-session report "Reported problem on checkout-api" (2b939290) was marked `is_test`. Files:
+  app/db/models.py, app/db/migrations/versions/20261013_a4f2c7e9b1d6_incident_is_test.py,
+  app/agents/medic/{memory,agent}.py, app/incidents/{store,views}.py,
+  app/routes/{incidents,incident_schemas}.py; web report-dialog.tsx, incident-list.tsx.
