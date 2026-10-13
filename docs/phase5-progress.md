@@ -12,7 +12,8 @@ Owner: Ahmed (all of Phase 5 since 2026-10-12, including the parts planned for R
 | M3 Medic agent | `phase5-m3-medic` | #27 | Merged 2026-10-12 |
 | M4 Incidents API + wiring | `phase5-m4-incidents-api` | #28 | Merged 2026-10-12 |
 | Operate tier (was Rizwan's) | `phase5-operate` | #29 | Merged 2026-10-13 |
-| Incidents UI (was Rizwan's) | `phase5-incidents-ui` | #30 (draft) | Done, in review |
+| Incidents UI (was Rizwan's) | `phase5-incidents-ui` | #30 | Merged 2026-10-13 |
+| Emergency fixes toggle | `phase5-operate-toggle` | draft | Done, in review |
 | M5 Live verification | | | Needs AWS CLI, Terraform, the groundcrew-demo profile, Tavily key, and an OK for live runs |
 
 ## M0 (2026-10-12)
@@ -242,8 +243,10 @@ Done (`apps/web`):
   listened to deploy events, so Medic steps would never have arrived live).
 - Tests: `components/incidents/incidents.test.tsx` (10). `tsc`, eslint, vitest (91), `next build`.
 
-Not done: the Connections page's "Emergency fixes" toggle (needs #29's API types); it lands
-after #29 merges.
+The Connections page's "Emergency fixes" toggle landed separately (`phase5-operate-toggle`):
+"Enable emergency fixes" on a connected AWS card walks through the stack update
+(`EnableOperate=true`, `OperateServiceArns` and `OperateSecretArns` prefilled with the account),
+then Verify calls `POST /connections/{id}/aws/operate`; an "Emergency fixes" badge shows when on.
 
 ## How to resume
 

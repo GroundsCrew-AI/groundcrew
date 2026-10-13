@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import type { Connection } from "@/lib/discovery";
 import { formatRelative } from "@/lib/format";
 
+import { AwsOperateDialog, isOperate } from "./aws-operate-dialog";
 import { AwsTierDialog } from "./aws-tier-dialog";
 import { RemoveConnection } from "./remove-connection";
 
@@ -62,6 +63,7 @@ export function ConnectionRow({
   const status = connectionStatus(connection);
   const last = connection.last_discovery;
   const [tierOpen, setTierOpen] = useState(false);
+  const [operateOpen, setOperateOpen] = useState(false);
   const awsConnected = connection.kind === "aws" && connection.status === "connected";
   return (
     <li className="flex flex-wrap items-center gap-3 bg-background px-4 py-3.5 sm:flex-nowrap">
@@ -80,6 +82,9 @@ export function ConnectionRow({
             <span className="rounded-full border px-2 text-[11.5px] text-muted-foreground">
               {connection.tier === "deploy" ? "Deploy" : "Observe"}
             </span>
+          )}
+          {connection.kind === "aws" && isOperate(connection) && (
+            <span className="rounded-full border px-2 text-[11.5px] text-muted-foreground">Emergency fixes</span>
           )}
         </div>
         <p className="truncate font-mono text-[11.5px] text-muted-foreground" title={detail(connection)}>
@@ -122,9 +127,17 @@ export function ConnectionRow({
             {connection.tier === "deploy" ? "Turn off deploys" : "Enable deploys"}
           </Button>
         )}
+        {awsConnected && (
+          <Button size="sm" variant="ghost" onClick={() => setOperateOpen(true)}>
+            {isOperate(connection) ? "Turn off emergency fixes" : "Enable emergency fixes"}
+          </Button>
+        )}
         <RemoveConnection connection={connection} />
       </div>
       {awsConnected && tierOpen && <AwsTierDialog connection={connection} open onOpenChange={setTierOpen} />}
+      {awsConnected && operateOpen && (
+        <AwsOperateDialog connection={connection} open onOpenChange={setOperateOpen} />
+      )}
     </li>
   );
 }
