@@ -31,6 +31,7 @@ from app.routes.incident_schemas import (
     IncidentSummary,
     MemoryUse,
 )
+from app.telemetry.evidence import parse_time
 
 PR_REFRESH_EVERY = timedelta(seconds=60)
 
@@ -209,7 +210,8 @@ async def refresh_pull_requests(
             else ("closed" if data.get("state") == "closed" else "open")
         )
         if new != pr.state:
-            rec.pull_request = pr.model_copy(update={"state": new})
+            merged_at = parse_time(data.get("merged_at")) if new == "merged" else None
+            rec.pull_request = pr.model_copy(update={"state": new, "merged_at": merged_at})
             changed = True
     dumped = state.model_dump(mode="json")
     dumped["prs_checked_at"] = now.isoformat()

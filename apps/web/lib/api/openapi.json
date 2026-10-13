@@ -4620,6 +4620,19 @@
             "title": "Head Sha",
             "type": "string"
           },
+          "merged_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Merged At"
+          },
           "number": {
             "title": "Number",
             "type": "integer"
@@ -5258,6 +5271,12 @@
             ],
             "title": "Confidence",
             "type": "string"
+          },
+          "false_alarm": {
+            "default": false,
+            "description": "True only when nothing is wrong for users: error rate, HTTP status, and latency are normal in the evidence",
+            "title": "False Alarm",
+            "type": "boolean"
           },
           "fix_options": {
             "items": {
@@ -6897,6 +6916,18 @@
       },
       "VerifyResult": {
         "properties": {
+          "check": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Check"
+          },
           "checks": {
             "items": {
               "$ref": "#/components/schemas/VerifyCheck"
@@ -6929,6 +6960,18 @@
             "default": "verify_result",
             "title": "Type",
             "type": "string"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Waiting"
           }
         },
         "required": [

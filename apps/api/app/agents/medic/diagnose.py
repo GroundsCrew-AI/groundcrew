@@ -39,6 +39,11 @@ Rules:
   fixes the cause in the repository when the cause is in code, a task definition, or a migration.
 - A metric spike that starts before the triggering change was not caused by it (a load test,
   a batch job): do not cite it for this incident.
+- `false_alarm` is true only when nothing is wrong for users: the "errors" are not errors
+  (INFO lines from a logger named like uvicorn.error, a normal restart) AND the evidence shows
+  normal error rates, no HTTP 5xx, no timeouts, and normal latency and database CPU. HTTP 5xx,
+  statement timeouts, slow requests, or high database CPU are a real outage, even if some of
+  the alert's lines were noise: find its cause. A false alarm has no fix_options.
 - `search_query` is a short web search for the root cause's mechanism, with no names, ids, or
   numbers, e.g. "postgres missing index full table scan".
 - Research results and past incidents are background, not evidence: never cite them.
@@ -174,6 +179,16 @@ async def diagnose(
     result = await llm.chat(task, prompt, budget=budget, schema=RootCause, on_call=on_call)
     parsed: RootCause = result.parsed
     return parsed
+
+
+def not_false_alarm(failing: list[str]) -> str:
+    """The follow-up when live checks contradict a "false alarm" diagnosis."""
+    return (
+        "Medic checked the affected resources now, and they are not normal:\n"
+        + "\n".join(f"- {f}" for f in failing)
+        + "\nSo this is not a false alarm. Diagnose the real outage from the evidence (HTTP "
+        "5xx, timeouts, slow requests, database load) and set false_alarm to false."
+    )
 
 
 def summary_json(root_cause: RootCause) -> str:

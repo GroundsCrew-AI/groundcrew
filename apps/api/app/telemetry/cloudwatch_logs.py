@@ -21,13 +21,15 @@ from typing import Any
 
 from app.connectors.aws import AwsReader
 from app.telemetry.evidence import MAX_LINES_PER_SOURCE, Line, ReaderOutput, line, parse_time
+from app.telemetry.log_levels import is_error_line
 
 SOURCE = "cloudwatch_logs"
 MAX_EVENTS = 5_000
 CONTEXT = 1
+# Error words for lines with no level (log_levels.is_error_line); not inside dotted names.
 _ERROR = re.compile(
-    r"(?i)\b(error|exception|traceback|fatal|critical|failed|failure|unreachable|refused|"
-    r"timed? ?out|killed|oom|outofmemory|panic|denied|cannot|could not)\b|\s5\d\d\s"
+    r"(?i)(?<![\w.])(error|errors|exception|traceback|fatal|critical|failed|failure|unreachable|refused|"
+    r"timed? ?out|killed|oom|outofmemory|panic|denied|cannot|could not)(?![\w.])"
 )
 _TRACE = re.compile(r'^\s+(File "|at |\.\.\.)|^\w+(\.\w+)*(Error|Exception):')
 _LATENCY_KEYS = ("latency_ms", "duration_ms", "elapsed_ms")
@@ -120,14 +122,8 @@ def slow_minutes(
 
 
 def _is_error(message: str) -> bool:
-    data = _fields(message)
-    level = str(data.get("level") or data.get("levelname") or "").lower()
-    if level in ("error", "critical", "fatal"):
-        return True
-    status = data.get("status") or data.get("status_code")
-    if isinstance(status, int) and status >= 500:
-        return True
-    return bool(_ERROR.search(message) or _TRACE.search(message))
+    # A traceback's continuation lines are their own events in plain-text logs.
+    return is_error_line(message, _ERROR) or bool(_TRACE.search(message))
 
 
 def latency_summaries(events: list[tuple[datetime, str]], resource: str) -> list[Line]:

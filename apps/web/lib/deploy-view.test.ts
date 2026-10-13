@@ -67,7 +67,7 @@ describe("deployView", () => {
   it("reads the live URL, verify result, and the final summary", () => {
     const view = deployView(
       [
-        dstep(1, { type: "verify_result", ok: true, checks: [], duration_ms: 5, logs_tail: null }),
+        dstep(1, { type: "verify_result", ok: true, checks: [], duration_ms: 5, logs_tail: null, waiting: null, check: null }),
         dstep(2, { type: "live_url", url: "http://legacy-flask-app.localhost", target: "k8s", app: "legacy-flask-app", resource_id: null }),
         dstep(3, {
           type: "run_finished",

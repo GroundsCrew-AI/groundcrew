@@ -13,7 +13,7 @@ import { DeployPlanCard } from "@/components/deploy/plan-card";
 import { DeployStep, deployStepColor, hiddenDeploySteps, replacedPlans } from "@/components/deploy/deploy-step";
 import { FixApprovalCard } from "@/components/incidents/fix-approval-card";
 import { MedicStep, medicStepColor } from "@/components/incidents/medic-step";
-import { isMedicStep } from "@/lib/incidents";
+import { collapseVerifySteps, isMedicStep } from "@/lib/incidents";
 
 import { ApprovalCard, DecidedBy } from "./approval-card";
 import { PolicyTag, TierBadge } from "./badges";
@@ -215,9 +215,12 @@ export function Timeline({
   const hidden = hiddenDeploySteps(steps);
   const fixWaits = waitingFixes(steps);
   const replaced = replacedPlans(steps);
+  // Medic: consecutive verify rounds that say the same thing show as one row.
+  const verify = collapseVerifySteps(steps);
   const visible = steps.filter(
     (s) =>
       !hidden.has(s.seq) &&
+      !verify.hidden.has(s.seq) &&
       !(s.kind === "approval_decided" && s.approval_id && carded.has(s.approval_id)),
   );
 
@@ -271,7 +274,7 @@ export function Timeline({
               ) : step.data && isMedicStep(step) ? (
                 <MedicStep step={step} />
               ) : step.data ? (
-                <DeployStep step={step} />
+                <DeployStep step={step} rounds={verify.rounds.get(step.seq)} />
               ) : (
                 <>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">

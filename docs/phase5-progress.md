@@ -343,3 +343,32 @@ Root cause was right (b11275e, migration at deploy start); three gaps:
 - Files: app/agents/medic/{agent,diagnose,events,fixes,schemas}.py, app/incidents/store.py,
   app/telemetry/github.py, app/tools/tavily.py; tests/test_live_missing_index.py (6),
   tests/test_incidents_detection.py (merge now keeps the opening signal's time).
+
+## Live updates and Medic diagnosis fixes (2026-10-13)
+
+- Live updates: with `make dev KIND=1` the api joins the kind network (IPv6), so Docker also
+  published `[::1]:8000` and forwarded it to the container's IPv6 address, where uvicorn (IPv4
+  only) does not listen. Chrome tries `localhost` as ::1 first: the browser's SSE to
+  `NEXT_PUBLIC_API_URL=http://localhost:8000` was reset (503 in DevTools) while REST, through
+  the web proxy, worked. The api port is now published on IPv4 only (`0.0.0.0:8000:8000`).
+  `useRunStream` also polls `GET /runs/{id}` every 5 s while the stream is down. Lists already
+  poll every 10 s. Verified in Chrome: a discovery run and a reported incident updated live.
+- The "1 issue" dev badge: duplicate React keys (`errors-`) in verify rows, where Medic lists
+  an `errors` check per service.
+- Error lines are classified by level (`app/telemetry/log_levels.py`), never by logger name:
+  uvicorn's startup and shutdown are "uvicorn.error" at INFO and opened an incident on every
+  deploy. Used by the spike rule, evidence selection, and the research query.
+- "False alarm" must pass live checks (error rate, health, latency; the databases the services
+  read are now checked too); otherwise Medic diagnoses again with what failed.
+- New material signals while fixes wait for approval supersede them and re-diagnose; identical
+  signals are stored once (the live incident had the same signal 4 times).
+- Fix PR titles name the change ("Recreate orders.customer_email index concurrently").
+- Verify: one chain per incident (a second resume started a second chain: every round twice),
+  rounds wait during a rollout IN_PROGRESS or until a merged fix PR's deploy starts, and the UI
+  shows "Waiting for ..." / "Not recovered yet (check n)", collapsing repeats.
+- Files: app/telemetry/{log_levels,cloudwatch_logs}.py, app/incidents/{rules,store,views}.py,
+  app/agents/medic/{agent,diagnose,fixes,jobs,schemas,state,verify}.py, app/pipeline/events.py,
+  app/tools/{github_pr,tavily}.py, app/worker.py, docker-compose.yml; web
+  lib/{use-run-stream,incidents}.ts, components/deploy/deploy-step.tsx, components/runs/
+  timeline.tsx. Tests: tests/test_live_fixes_3.py (10), components/incidents/
+  live-updates.test.tsx (3).

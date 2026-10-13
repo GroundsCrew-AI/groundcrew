@@ -2430,6 +2430,11 @@ export interface components {
             branch: string;
             /** Head Sha */
             head_sha: string;
+            /**
+             * Merged At
+             * @default null
+             */
+            merged_at: string | null;
             /** Number */
             number: number;
             /** Repo */
@@ -2673,6 +2678,12 @@ export interface components {
              * @enum {string}
              */
             confidence: "high" | "medium" | "low" | "other";
+            /**
+             * False Alarm
+             * @description True only when nothing is wrong for users: error rate, HTTP status, and latency are normal in the evidence
+             * @default false
+             */
+            false_alarm: boolean;
             /** Fix Options */
             fix_options?: components["schemas"]["FixOption"][];
             /**
@@ -3188,6 +3199,11 @@ export interface components {
         };
         /** VerifyResult */
         VerifyResult: {
+            /**
+             * Check
+             * @default null
+             */
+            check: number | null;
             /** Checks */
             checks: components["schemas"]["VerifyCheck"][];
             /** Duration Ms */
@@ -3204,6 +3220,11 @@ export interface components {
              * @enum {string}
              */
             type: "verify_result";
+            /**
+             * Waiting
+             * @default null
+             */
+            waiting: string | null;
         };
         /** WorkspaceOut */
         WorkspaceOut: {

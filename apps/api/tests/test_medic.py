@@ -865,6 +865,8 @@ async def test_verify_gives_up_and_says_what_still_fails(
             ]
         },
         "ecs:ListTasks": {"taskArns": []},
+        "logs:FilterLogEvents": {"events": []},
+        "cloudwatch:GetMetricData": {"MetricDataResults": []},
     }
     h = Harness(
         sf,

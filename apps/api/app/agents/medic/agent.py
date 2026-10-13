@@ -43,6 +43,7 @@ from app.agents.medic.events import (
     IncidentFailed,
     IncidentResolved,
     IncidentStatus,
+    IncidentUpdated,
     MemoryChecked,
     ResearchDone,
     ResearchResult,
@@ -67,11 +68,13 @@ from app.db.models import (
     ToolPolicy,
 )
 from app.db.session import SessionFactory
-from app.incidents.store import set_status
+from app.incidents.store import material_signals, set_status
+from app.incidents.views import refresh_pull_requests
 from app.incidents.watcher import default_reader_for
 from app.llm.budget import BudgetExceededError, PgUsageStore, RunBudget
 from app.llm.client import TokenFactory
 from app.llm.recorder import StepRecorder
+from app.pipeline.events import VerifyCheck, VerifyResult
 from app.policy.actions import OPEN_FIX_PR, issue_approved_action
 from app.security.redact import redact
 from app.steps import record_step
@@ -84,6 +87,7 @@ logger = logging.getLogger("groundcrew.medic")
 AGENT: Final = "medic"
 VERIFY_JOB: Final = "verify_incident"
 HEALTHY_ROUNDS = 2
+MAX_REDIAGNOSES = 2
 # Evidence sources that carry the application's own log lines.
 APP_LOGS = ("cloudwatch_logs:", "vercel:")
 
@@ -144,6 +148,22 @@ def set_deps_factory(factory: DepsFactory | None) -> None:
 
 def _signals(incident: Incident) -> list[Signal]:
     return [Signal.model_validate(s) for s in incident.signals]
+
+
+def _round_ids(records: list[FixRecord], round_: int) -> list[FixRecord]:
+    """After a re-diagnosis, new fix ids (fix-1-r1) so they never collide with the superseded
+    fixes' approvals and timeline cards."""
+    if round_ == 0:
+        return records
+    ids = {r.fix.fix_id: f"{r.fix.fix_id}-r{round_}" for r in records}
+    for r in records:
+        r.fix = r.fix.model_copy(
+            update={
+                "fix_id": ids[r.fix.fix_id],
+                "depends_on": [ids.get(d, d) for d in r.fix.depends_on],
+            }
+        )
+    return records
 
 
 def _save(incident: Incident, state: MedicState) -> None:
@@ -400,6 +420,30 @@ class MedicRunner:
         )
         raw = await dx.diagnose(llm, budget, prompt, confirm=reused is not None, on_call=recorder)
         root_cause, dropped = dx.check(raw, items, evidence.changes)
+        live: VerifyResult | None = None
+        if root_cause.false_alarm:
+            # "False alarm" must survive a look at error rate and latency right now.
+            live = await self._live_checks(
+                session, incident, graph, state, since=incident.created_at
+            )
+            if live is None or not live.ok:
+                failing = [c.detail for c in live.checks if not c.ok] if live else ["no AWS access"]
+                dropped.append("false alarm rejected: " + "; ".join(failing)[:400])
+                retry = [
+                    *prompt,
+                    {"role": "assistant", "content": dx.summary_json(root_cause)},
+                    {
+                        "role": "user",
+                        "content": dx.not_false_alarm(failing),
+                    },
+                ]
+                raw = await dx.diagnose(llm, budget, retry, confirm=False, on_call=recorder)
+                root_cause, more = dx.check(raw, items, evidence.changes)
+                dropped += more
+                if root_cause.false_alarm:
+                    root_cause = root_cause.model_copy(
+                        update={"false_alarm": False, "confidence": "low"}
+                    )
         state.root_cause, state.dropped = root_cause, dropped
         incident.root_cause = root_cause.root_cause
         onset = dx.change_at(root_cause)
@@ -420,6 +464,32 @@ class MedicRunner:
             data=Diagnosis(root_cause=root_cause, dropped=dropped),
         )
         await session.commit()
+
+        # New evidence while diagnosing (slow queries, a bigger spike): diagnose again with it.
+        await session.refresh(incident, ["signals"])
+        material = material_signals(
+            [x.model_dump(mode="json") for x in signals],
+            incident.signals[len(signals) :],
+        )
+        if material and state.rediagnosed < MAX_REDIAGNOSES:
+            state.rediagnosed += 1
+            _save(incident, state)
+            await self._note_rediagnosis(
+                session, incident, run, [f"{m['rule']}: {m['detail']}" for m in material]
+            )
+            await session.commit()
+            await self._investigate(session, incident, run, state, budget, recorder)
+            return
+
+        if root_cause.false_alarm and live is not None and live.ok:
+            await self._resolve(
+                session,
+                incident,
+                run,
+                state,
+                reason="False alarm: error rate, health, and latency are normal now.",
+            )
+            return
 
         # 4b. Research the root cause itself (an index, a pool setting), for the fix.
         follow_up: list[ResearchResult] = []
@@ -455,7 +525,7 @@ class MedicRunner:
             on_call=recorder,
             research=follow_up,
         )
-        state.fixes = emergency.records + pr.records
+        state.fixes = _round_ids(emergency.records + pr.records, state.rediagnosed)
         state.notes = [*evidence.notes, *emergency.notes, *pr.notes]
         _save(incident, state)
         await record_step(
@@ -759,8 +829,11 @@ class MedicRunner:
                 stop=StopReason.completed,
             )
             return
+        if state.phase == "verifying":
+            return  # a second resume after the same decisions: verify is already scheduled
         now = self.deps.now()
         state.phase, state.fixes_applied_at = "verifying", now
+        state.verify_chain, state.verify_checks = uuid.uuid4().hex, 0
         pr_only = all(r.fix.kind == "pr" for r in applied)
         window = (
             self.settings.medic_pr_verify_timeout_seconds
@@ -774,7 +847,7 @@ class MedicRunner:
         await queue.enqueue(
             session,
             VERIFY_JOB,
-            {"incident_id": str(incident.id), "run_id": str(run.id)},
+            {"incident_id": str(incident.id), "run_id": str(run.id), "chain": state.verify_chain},
             run_after=now + timedelta(seconds=self.settings.medic_verify_interval_seconds),
             max_attempts=1,
         )
@@ -782,7 +855,9 @@ class MedicRunner:
 
     # ------------------------------------------------------------------- verify
 
-    async def verify(self, incident_id: uuid.UUID, run_id: uuid.UUID) -> None:
+    async def verify(
+        self, incident_id: uuid.UUID, run_id: uuid.UUID, chain: str | None = None
+    ) -> None:
         async with self.session_factory() as session:
             loaded = await self._load(session, incident_id, run_id)
             if loaded is None:
@@ -790,29 +865,35 @@ class MedicRunner:
             incident, run, state = loaded
             if run.status in TERMINAL_RUN_STATUSES or state.phase != "verifying":
                 return
-            graph = await self._graph(session, incident)
+            if chain is not None and state.verify_chain not in (None, chain):
+                return  # a duplicate chain
             now = self.deps.now()
-            services, databases, logs = self._verify_targets(graph, state)
-            readers: dict[str, AwsReader] = {}
-            for res in [*services, *databases]:
-                conn = graph.connections.get(res.connection_id) if res.connection_id else None
-                if conn is not None and str(conn.id) not in readers:
-                    try:
-                        readers[str(conn.id)] = await asyncio.to_thread(self.deps.reader_for, conn)
-                    except Exception:
-                        logger.warning("verify: no AWS session", exc_info=True)
+            if self.deps.github is not None:
+                try:
+                    await refresh_pull_requests(incident, self.deps.github, now=now)
+                except Exception:
+                    logger.warning("verify: PR refresh failed", exc_info=True)
+                state = MedicState.model_validate(incident.state or {})
+            waiting, deploy_after = self._pr_waits(state)
+            graph = await self._graph(session, incident)
             since = state.fixes_applied_at or now
-            check_logs = any(s.rule == "log_error_spike" for s in _signals(incident))
-            result = await asyncio.to_thread(
-                run_checks,
-                readers,
-                services,
-                databases,
-                logs,
+            checked = await self._live_checks(
+                session,
+                incident,
+                graph,
+                state,
                 since=since,
-                now=now,
-                check_logs=check_logs,
+                deploy_after=deploy_after,
+                waiting=waiting,
+                check_logs=any(s.rule == "log_error_spike" for s in _signals(incident)),
             )
+            result = checked or VerifyResult(
+                ok=False,
+                checks=[VerifyCheck(name="other", ok=False, detail="no AWS access")],
+                duration_ms=0,
+            )
+            state.verify_checks += 1
+            result = result.model_copy(update={"check": state.verify_checks})
             state.verify = result
             state.healthy_streak = state.healthy_streak + 1 if result.ok else 0
             _save(incident, state)
@@ -820,8 +901,13 @@ class MedicRunner:
                 session,
                 run,
                 kind="verify_result",
-                output_summary=("Healthy" if result.ok else "Still failing")
-                + f" (round {state.healthy_streak if result.ok else 'failed'})",
+                output_summary=(
+                    f"Healthy (check {state.verify_checks})"
+                    if result.ok
+                    else f"Waiting for {result.waiting} (check {state.verify_checks})"
+                    if result.waiting
+                    else f"Not recovered yet (check {state.verify_checks})"
+                ),
                 data=result,
             )
             await session.commit()
@@ -833,7 +919,9 @@ class MedicRunner:
                     incident,
                     run,
                     state,
-                    "Signals did not recover before the verify deadline.",
+                    f"Still waiting for {result.waiting} at the verify deadline."
+                    if result.waiting
+                    else "Signals did not recover before the verify deadline.",
                     still_failing=[c.detail for c in result.checks if not c.ok],
                     stop=StopReason.completed,
                 )
@@ -841,11 +929,130 @@ class MedicRunner:
                 await queue.enqueue(
                     session,
                     VERIFY_JOB,
-                    {"incident_id": str(incident.id), "run_id": str(run.id)},
+                    {
+                        "incident_id": str(incident.id),
+                        "run_id": str(run.id),
+                        "chain": state.verify_chain,
+                    },
                     run_after=now + timedelta(seconds=self.settings.medic_verify_interval_seconds),
                     max_attempts=1,
                 )
                 await session.commit()
+
+    async def _live_checks(
+        self,
+        session: AsyncSession,
+        incident: Incident,
+        graph: fx.Graph,
+        state: MedicState,
+        *,
+        since: datetime,
+        deploy_after: datetime | None = None,
+        waiting: list[str] | None = None,
+        check_logs: bool = True,
+    ) -> VerifyResult | None:
+        """The recovery checks, now. None when no affected resource can be read."""
+        services, databases, logs = self._verify_targets(graph, state)
+        readers: dict[str, AwsReader] = {}
+        for res in [*services, *databases]:
+            conn = graph.connections.get(res.connection_id) if res.connection_id else None
+            if conn is not None and str(conn.id) not in readers:
+                try:
+                    readers[str(conn.id)] = await asyncio.to_thread(self.deps.reader_for, conn)
+                except Exception:
+                    logger.warning("medic: no AWS session", exc_info=True)
+        if not readers:
+            return None
+        return await asyncio.to_thread(
+            run_checks,
+            readers,
+            services,
+            databases,
+            logs,
+            since=since,
+            now=self.deps.now(),
+            check_logs=check_logs,
+            deploy_after=deploy_after,
+            waiting=waiting,
+        )
+
+    async def _note_rediagnosis(
+        self, session: AsyncSession, incident: Incident, run: Run, signals: list[str]
+    ) -> None:
+        reason = "New signals, diagnosing again: " + "; ".join(signals)
+        await record_step(
+            session,
+            run,
+            kind="incident_updated",
+            output_summary=reason[:300],
+            data=IncidentUpdated(
+                incident_id=incident.id,
+                status=incident.status,
+                previous_status=incident.status,
+                at=self.deps.now(),
+                reason=reason[:500],
+            ),
+        )
+
+    async def rediagnose(
+        self, incident_id: uuid.UUID, run_id: uuid.UUID, signals: list[str]
+    ) -> None:
+        """New signals reached an incident whose fixes wait for approval: the diagnosis is
+        stale, so its pending approvals are closed and Medic investigates again. Once a person
+        has approved or rejected a fix, the run goes on as it is."""
+        async with self.session_factory() as session:
+            loaded = await self._load(session, incident_id, run_id)
+            if loaded is None:
+                return
+            incident, run, state = loaded
+            await session.get(Run, run.id, with_for_update=True, populate_existing=True)
+            if (
+                run.status in TERMINAL_RUN_STATUSES
+                or state.phase != "waiting_approval"
+                or state.rediagnosed >= MAX_REDIAGNOSES
+                or any(r.status != "waiting_approval" for r in state.fixes)
+            ):
+                return
+            pending = []
+            for rec in state.fixes:
+                approval = (
+                    await session.get(
+                        Approval, rec.approval_id, with_for_update=True, populate_existing=True
+                    )
+                    if rec.approval_id
+                    else None
+                )
+                if approval is not None and approval.status != ApprovalStatus.pending:
+                    return  # decided meanwhile
+                if approval is not None:
+                    pending.append(approval)
+            now = self.deps.now()
+            for approval in pending:
+                approval.status = ApprovalStatus.rejected
+                approval.decided_at = now
+                approval.decided_via = "Medic: superseded by new signals"
+            state.fixes, state.notes, state.phase = [], [], "investigating"
+            state.rediagnosed += 1
+            _save(incident, state)
+            await self._status(
+                session, incident, run, "investigating", "new signals, diagnosing again"
+            )
+            await self._note_rediagnosis(session, incident, run, signals)
+            run.status, run.stop_reason = RunStatus.queued, None
+            await session.commit()
+        await self.investigate(incident_id, run_id)
+
+    @staticmethod
+    def _pr_waits(state: MedicState) -> tuple[list[str], datetime | None]:
+        """Fix PRs not merged yet (verify waits), and the latest merge time (verify waits for a
+        deploy that started after it). Only when PRs were the only fixes applied."""
+        applied = [r for r in state.fixes if r.status == "applied"]
+        if not applied or any(r.fix.kind != "pr" for r in applied):
+            return [], None
+        prs = [r.pull_request for r in applied if r.pull_request is not None]
+        waits = [f"{p.repo}#{p.number} to be merged" for p in prs if p.state == "open"]
+        merged = [p.merged_at for p in prs if p.state == "merged" and p.merged_at is not None]
+        return waits, max(merged) if merged else None
 
     def _verify_targets(
         self, graph: fx.Graph, state: MedicState
@@ -861,7 +1068,13 @@ class MedicRunner:
             for r in graph.resources.values()
             if r.type == "ecs:service" and (r.id in ids or r.name in acted)
         ]
-        databases = [r for r in graph.resources.values() if r.type == "rds:db" and r.id in ids]
+        # The databases the affected services read: slow queries show up there (missing index).
+        reads = {e.to_id for e in graph.edges if e.kind == "reads" and e.from_id in ids}
+        databases = [
+            r
+            for r in graph.resources.values()
+            if r.type == "rds:db" and (r.id in ids or r.id in reads)
+        ]
         logs: dict[str, list[str]] = {}
         for e in graph.edges:
             target = graph.resources.get(e.to_id)
@@ -870,7 +1083,12 @@ class MedicRunner:
         return services, databases, logs
 
     async def _resolve(
-        self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
+        self,
+        session: AsyncSession,
+        incident: Incident,
+        run: Run,
+        state: MedicState,
+        reason: str = "Signals recovered for two checks in a row.",
     ) -> None:
         now = self.deps.now()
         rc = state.root_cause
@@ -878,9 +1096,7 @@ class MedicRunner:
             incident, rc.summary if rc else incident.title, rc.root_cause if rc else "", None
         )
         state.phase = "done"
-        state.outcome = Outcome(
-            result="resolved", reason="Signals recovered for two checks in a row."
-        )
+        state.outcome = Outcome(result="resolved", reason=reason)
         _save(incident, state)
         await self._status(session, incident, run, "resolved", "signals recovered")
         applied = [r for r in state.fixes if r.status == "applied"]

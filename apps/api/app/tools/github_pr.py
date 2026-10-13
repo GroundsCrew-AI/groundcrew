@@ -16,6 +16,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, Protocol
 
 import httpx
@@ -78,6 +79,8 @@ class PullRequestRef(BaseModel):
     head_sha: str
     # Refreshed from GitHub when an incident is read; "open" when Medic opens it.
     state: Literal["open", "closed", "merged"] = "open"
+    # When it merged: Medic's verify waits for a deploy that started after this.
+    merged_at: datetime | None = None
 
 
 class FixPullRequests(Protocol):

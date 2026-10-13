@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from app.config import Settings, get_settings
 from app.security.redact import redact
+from app.telemetry.log_levels import is_error_line
 
 TAVILY_URL = "https://api.tavily.com/search"
 MAX_RESULTS = 3
@@ -115,9 +116,6 @@ def search_query(line: str) -> str:
     return " ".join(_IDS.sub(" ", message).split())[:200]
 
 
-_ERROR = re.compile(
-    r"(?i)\b(error|exception|traceback|timeout|timed out|failed|failure|fatal|refused|panic)\b"
-)
 # Reader notes and request summaries are Groundcrew's lines, not the application's errors.
 _NOT_APP = ("latency summary", "reader failed", "reader timed out")
 
@@ -128,7 +126,7 @@ def dominant_error(lines: Iterable[str]) -> str:
     counts: Counter[str] = Counter()
     for line in lines:
         message = line.split(" | ")[-1].strip()
-        if message.startswith(_NOT_APP) or not _ERROR.search(message):
+        if message.startswith(_NOT_APP) or not is_error_line(message):
             continue
         query = search_query(message)
         if query:

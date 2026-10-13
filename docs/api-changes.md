@@ -126,3 +126,19 @@ All additive.
   `TAVILY_MAX_CALLS_PER_INCIDENT`), so a run can have two `research_done` steps.
 - `time_to_detect_ms` is timed from the signal that opened the incident (or the triggering
   change, if later), not from a merged incident's earlier signals.
+
+## Phase 5: live updates, false alarms, verify rounds (2026-10-13)
+
+All additive.
+- `VerifyResult.waiting` (string or null) and `VerifyResult.check` (round number; null for a
+  deploy's single verify). Medic rounds before the verify deadline are not failures: show
+  "Waiting for <waiting>" or "Not recovered yet" with "check n"; the incident fails only with
+  `incident_failed`. The timeline shows consecutive rounds that say the same thing as one row.
+- `RootCause.false_alarm`: Medic's diagnosis says nothing is wrong for users. It must pass a
+  live check (errors, health, latency, database) first; if it passes, the incident resolves with
+  "False alarm: ..." and no fixes.
+- `PullRequestRef.merged_at`: set when GitHub reports the fix PR merged.
+- New signals on an incident whose fixes wait for approval (a new rule, or an error spike 3x the
+  largest before) close the pending approvals (`decided_via` "Medic: superseded by new signals")
+  and Medic investigates again; an `incident_updated` step says why. Fixes from a re-diagnosis
+  have ids like `fix-1-r1`.

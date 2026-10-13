@@ -27,6 +27,7 @@ from typing import Any
 from app.agents.medic.events import Signal
 from app.connectors.aws import AwsReader
 from app.telemetry.cloudwatch_logs import minute_p50s, read_newest, slow_minutes
+from app.telemetry.log_levels import is_error_line
 
 RECENT = timedelta(minutes=5)
 BASELINE = timedelta(minutes=25)
@@ -42,10 +43,6 @@ MAX_STOPPED_TASKS = 50
 MAX_LOG_EVENTS = 5_000
 
 HEALTH = re.compile(r"(?i)health ?checks?|unhealthy")
-_ERROR = re.compile(
-    r"(?i)\b(error|exception|traceback|fatal|critical|failed|unreachable|refused|"
-    r"timed? ?out|killed|outofmemory|panic)\b|\"level\": ?\"(error|critical)\"|\s5\d\d\s"
-)
 
 
 def to_time(value: object) -> datetime | None:
@@ -189,7 +186,8 @@ def log_signal(
     base_seconds = (now - RECENT - base_start).total_seconds()
     if base_seconds < 60:
         return None
-    errors = [at for at, message in events if _ERROR.search(message)]
+    # By level, never by logger name: uvicorn's startup lines are "uvicorn.error" at INFO.
+    errors = [at for at, message in events if is_error_line(message)]
     recent = [at for at in errors if now - RECENT <= at <= now]
     before = [at for at in errors if base_start <= at < now - RECENT]
     recent_rate = len(recent) / RECENT.total_seconds() * 60
