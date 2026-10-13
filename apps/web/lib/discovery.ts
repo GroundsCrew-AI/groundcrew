@@ -66,6 +66,21 @@ export function useAwsSetTier(workspaceId: string | undefined) {
   });
 }
 
+/** Turn approved emergency fixes on (verifies the groundcrew-operate role first) or off. */
+export function useAwsSetOperate(workspaceId: string | undefined) {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async ({ connectionId, enabled }: { connectionId: string; enabled: boolean }) =>
+      unwrap(
+        await api.POST("/connections/{connection_id}/aws/operate", {
+          params: { path: { connection_id: connectionId } },
+          body: { enabled },
+        }),
+      ),
+    onSettled: () => workspaceId && invalidate(workspaceId),
+  });
+}
+
 export function useAwsComplete(workspaceId: string | undefined) {
   const invalidate = useInvalidateWorkspace();
   return useMutation({
