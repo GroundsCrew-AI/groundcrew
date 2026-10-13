@@ -3,9 +3,8 @@
 For each affected (or acted-on) ECS service: `rollout` passes when every desired task runs and
 the primary deployment has not failed; `health` / `errors` fail on tasks stopped since the fix
 for failing health checks or with a non-zero exit. A log error spike seen at detection is read
-again (`errors`); an RDS spike is read again (`metric`). Medic resolves only after two healthy
-rounds in a row (MedicRunner), so one lucky read does not close an incident.
-"""
+again (`errors`); an RDS spike or slow queries are read again (`metric`). Medic resolves only
+after two healthy rounds in a row (MedicRunner), so one lucky read does not close an incident."""
 
 import time
 from datetime import datetime
@@ -104,13 +103,13 @@ def run_checks(
         reader = readers.get(str(db.connection_id))
         if reader is None:
             continue
-        cpu, latency = rules.fetch_rds(reader, db.region, db.name, now)
-        spike = rules.rds_signal(db.id, db.name, cpu, latency, now)
+        groups = sorted({g for gs in log_groups.values() for g in gs})
+        spike = rules.rds_check(reader, db.region, db.id, db.name, groups, now)
         checks.append(
             VerifyCheck(
                 name="metric",
                 ok=spike is None,
-                detail=f"{db.name}: " + (spike.detail if spike else "CPU and read latency normal"),
+                detail=f"{db.name}: " + (spike.detail if spike else "CPU and query latency normal"),
             )
         )
     return VerifyResult(
