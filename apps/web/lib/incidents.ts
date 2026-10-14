@@ -14,6 +14,7 @@ export type EvidenceItem = Schemas["EvidenceItem"];
 export type ChangeMarker = Schemas["ChangeMarker"];
 export type RootCause = Schemas["RootCause"];
 export type ProposedFix = Schemas["ProposedFix"];
+export type FollowUp = Schemas["FollowUp"];
 export type FixState = Schemas["FixState"];
 export type FixApproval = Schemas["FixApproval"];
 
@@ -91,7 +92,13 @@ export function fixLabel(action: string): string {
   return ACTIONS[action] ?? action.replaceAll("_", " ");
 }
 
-export type IncidentFilters = { status?: IncidentStatus; severity?: Severity; resource?: string };
+export type IncidentFilters = {
+  status?: IncidentStatus;
+  severity?: Severity;
+  resource?: string;
+  /** Only incidents whose permanent fix PR is not deployed yet. */
+  pending_fix?: boolean;
+};
 
 export const incidentKeys = {
   list: (ws: string, filters: IncidentFilters) => ["incidents", ws, filters] as const,
@@ -120,8 +127,14 @@ export function useIncident(incidentId: string) {
   return useQuery({
     queryKey: incidentKeys.detail(incidentId),
     // Open incidents change as Medic works; the page also refetches on stream events.
+    // A resolved incident with its fix PR pending changes as the PR is merged and deployed
+    // (checked server-side every 2 minutes per PR).
     refetchInterval: (query) =>
-      query.state.data && OPEN_STATUSES.includes(query.state.data.status) ? 15_000 : false,
+      query.state.data && OPEN_STATUSES.includes(query.state.data.status)
+        ? 15_000
+        : query.state.data?.has_open_followups
+          ? 60_000
+          : false,
     queryFn: async (): Promise<IncidentDetail> =>
       unwrap(
         await api.GET("/incidents/{incident_id}", {

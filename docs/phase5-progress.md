@@ -285,6 +285,42 @@ roles when UpdateService points a service at it.
   aws-operate-dialog.tsx, components/incidents/{fix-list,medic-step}.tsx*,
   app/(app)/incidents/[id]/incident-view.tsx*, lib/{incidents,timeline}.ts, lib/api/*.
 
+## Follow-ups: the permanent fix after a rollback resolved (2026-10-14)
+
+Live bad-deploy-oom: "checkout-worker: exit code 137" showed Resolved after the rollback while
+the fix PR (checkout-demo #3) was still open, so the next deploy would have brought the outage
+back and nothing said so.
+- Model: `incident_followups` (kind `fix_pr`, state open | merged | closed_unmerged | deployed,
+  PR ref, triggering commit, merge commit, deploy run, times) and `incidents.remembered_at`;
+  migration `b7d1e3f5a9c2`, single head, with a backfill from stored fix states.
+- Medic's resolve creates one per applied fix PR not deployed yet and records `incident_updated`
+  with `followups`. The watcher job tracks them read-only through the GitHub App (each PR at most
+  every 2 min, for 7 days): merged -> deployed (a successful deploy workflow run on the base
+  branch containing the merge commit), or closed_unmerged.
+- Memory: an incident is found only once `remembered_at` is set (resolve without an open PR, or
+  the PR merged or closed); a closed PR's fix is reported as "rollback only".
+- API: `IncidentDetail.followups`, `has_open_followups`, `GET /incidents?pending_fix=`,
+  `WorkspaceSummary.pending_permanent_fixes`, `IncidentUpdated.followups`.
+- UI: notes under the incident's outcome (amber "Permanent fix pending: PR #n not merged yet",
+  amber "PR #n merged, deploying...", green "Permanent fix deployed", red closed-without-merge
+  warning naming the commit); "fix pending" badge and a "Fix pending" tab on the list
+  (`/incidents?pending_fix=true`); an overview banner with the count.
+- Local dev DB: migrated; the backfill found 3 resolved incidents with merged fix PRs
+  (checkout-demo #1, #2, #3). One tracker pass (GitHub reads only) found all three deployed by
+  workflow run 38520627437; the incident page shows "Permanent fix deployed" with no console
+  errors.
+- Not checked: the ECS deployment of the new revision itself; the deploy workflow's success
+  stands for it. Tracking runs only while INCIDENT_WATCH_ENABLED=true (watcher schedule).
+- Files (Ahmed's Medic / incidents code marked *): app/db/models.py, app/db/migrations/versions/
+  20261014_b7d1e3f5a9c2_incident_followups.py, app/incidents/followups.py (new)*,
+  app/incidents/{views,watcher}.py*, app/agents/medic/{agent,events,memory}.py*,
+  app/routes/{incidents,incident_schemas,schemas,workspaces}.py; tests/test_followups.py (new),
+  tests/test_medic.py* (bad-deploy-oom now merges the PR before memory reuses it); web
+  components/incidents/{followup-note,incident-list}.tsx*, components/incidents/
+  {followup-note,incidents-home}.test.tsx, components/incidents/incidents.test.tsx*,
+  app/(app)/incidents/{page,incidents-home}.tsx*, app/(app)/incidents/[id]/incident-view.tsx*,
+  app/(app)/page.tsx, lib/incidents.ts, lib/api/*, tests/incident-fixtures.ts.
+
 ## How to resume
 
 ```bash

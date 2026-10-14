@@ -113,6 +113,22 @@ export default function OverviewPage() {
           </section>
         )}
 
+        {(summary.data?.pending_permanent_fixes ?? 0) > 0 && (
+          <Link
+            href="/incidents?pending_fix=true"
+            className="flex items-center justify-between rounded-lg border border-[color-mix(in_oklab,var(--status-waiting)_45%,var(--border))] px-4 py-2.5 text-[13px] hover:bg-accent/60"
+          >
+            <span>
+              <span className="tabular font-medium text-[var(--status-waiting)]">
+                {summary.data?.pending_permanent_fixes}
+              </span>{" "}
+              {summary.data?.pending_permanent_fixes === 1 ? "incident has" : "incidents have"} a permanent fix
+              pending
+            </span>
+            <span className="text-[12.5px] text-muted-foreground">Resolved by a rollback; the fix PR is not deployed</span>
+          </Link>
+        )}
+
         <section aria-labelledby="recent-runs">
           <div className="mb-2 flex items-center justify-between">
             <h2 id="recent-runs" className="text-[13px] font-medium">

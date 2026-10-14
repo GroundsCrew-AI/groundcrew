@@ -159,3 +159,18 @@ All additive.
   new approvals (`tool_call_id` `medic:<incident>:<fix>:retry-<n>`) on the same Medic run, which
   goes back to `waiting_approval`; the incident too. Approving resumes the run as usual.
 - Research results are de-duplicated by URL.
+
+## Phase 5: incident follow-ups (2026-10-14)
+
+All additive. Migration `b7d1e3f5a9c2` (single head) adds `incident_followups` and
+`incidents.remembered_at`, and backfills follow-ups for resolved incidents whose stored fix PR
+was open or merged.
+- `IncidentDetail.followups: FollowUp[]` and `IncidentSummary.has_open_followups` (also on the
+  detail). `FollowUp` = `{id, kind: "fix_pr", state: open | merged | closed_unmerged |
+  deployed, repo, number, url, triggering_commit, merge_commit, merged_at, deployed_at,
+  deploy_url, closed_at, created_at, updated_at, tracked_until}`.
+- `GET /incidents?pending_fix=true|false`.
+- `IncidentUpdated.followups` (null unless follow-ups were created or changed; the status may
+  stay `resolved`).
+- `WorkspaceSummary.pending_permanent_fixes`.
+

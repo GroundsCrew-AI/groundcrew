@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { ChangeStrip } from "@/components/incidents/change-strip";
 import { Fixes } from "@/components/incidents/fix-list";
+import { FollowUpNotes } from "@/components/incidents/followup-note";
 import { IncidentStatusPill, SeverityTag } from "@/components/incidents/incident-list";
 import { RootCausePanel } from "@/components/incidents/root-cause-panel";
 import { Timeline } from "@/components/runs/timeline";
@@ -245,6 +246,7 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
               )}
             </p>
           )}
+          {i.status === "resolved" && <FollowUpNotes followups={i.followups ?? []} />}
         </div>
 
         {i.root_cause && <RootCausePanel rootCause={i.root_cause} evidence={i.evidence} />}

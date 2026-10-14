@@ -330,6 +330,8 @@ class WorkspaceSummary(BaseModel):
     daily_usd_cap: float | None = None
     usd_total: float = 0.0
     total_usd_cap: float | None = None
+    # Incidents whose permanent fix PR is still open or merged but not deployed.
+    pending_permanent_fixes: int = 0
 
 
 # --- SSE payloads -----------------------------------------------------------------------

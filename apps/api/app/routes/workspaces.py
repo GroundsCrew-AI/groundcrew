@@ -10,8 +10,17 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, func, or_, select
 
 from app.accounts import NotFoundError, member_workspace, user_workspaces
+from app.agents.medic.events import PENDING_FOLLOWUP_STATES
 from app.config import get_settings
-from app.db.models import TERMINAL_RUN_STATUSES, Approval, ApprovalStatus, Run, RunStep, User
+from app.db.models import (
+    TERMINAL_RUN_STATUSES,
+    Approval,
+    ApprovalStatus,
+    IncidentFollowUp,
+    Run,
+    RunStep,
+    User,
+)
 from app.llm.budget import usage_totals
 from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.runs import rejected_counts
@@ -154,6 +163,12 @@ async def summary(
         .join(Run, Run.id == RunStep.run_id)
         .where(Run.workspace_id == workspace_id, RunStep.created_at >= today)
     )
+    pending_fixes = await session.scalar(
+        select(func.count(func.distinct(IncidentFollowUp.incident_id))).where(
+            IncidentFollowUp.workspace_id == workspace_id,
+            IncidentFollowUp.state.in_(PENDING_FOLLOWUP_STATES),
+        )
+    )
     settings = settings or get_settings()
     usage_today, usage_total = await usage_totals(session)
     return WorkspaceSummary(
@@ -166,4 +181,5 @@ async def summary(
         daily_usd_cap=settings.llm_daily_usd_cap,
         usd_total=float(usage_total),
         total_usd_cap=settings.llm_total_usd_cap,
+        pending_permanent_fixes=int(pending_fixes or 0),
     )

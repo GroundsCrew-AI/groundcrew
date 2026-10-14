@@ -68,6 +68,7 @@ from app.db.models import (
     ToolPolicy,
 )
 from app.db.session import SessionFactory
+from app.incidents import followups as fu
 from app.incidents.store import material_signals, set_status
 from app.incidents.views import refresh_pull_requests
 from app.incidents.watcher import default_reader_for
@@ -1099,6 +1100,13 @@ class MedicRunner:
         state.outcome = Outcome(result="resolved", reason=reason)
         _save(incident, state)
         await self._status(session, incident, run, "resolved", "signals recovered")
+        # A fix PR not deployed yet: the repo still has the bad change. Track it, and keep the
+        # incident out of memory until the PR is merged or closed.
+        created = await fu.create_on_resolve(session, incident, state, now)
+        fu.remember_if_settled(incident, any(f.state == "open" for f in created), now)
+        if created:
+            pending = ", ".join(f"{f.repo}#{f.number}" for f in created)
+            await fu.record_change(session, incident, run, f"Permanent fix pending: {pending}", now)
         applied = [r for r in state.fixes if r.status == "applied"]
         detect_ms = (
             int((incident.created_at - incident.first_signal_at).total_seconds() * 1000)

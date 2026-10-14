@@ -36,6 +36,7 @@ from app.db.models import (
     Workspace,
 )
 from app.db.session import SessionFactory
+from app.incidents.followups import track_followups
 from app.incidents.store import open_incident
 from app.llm.fake import FakeLLM, reply
 from app.pipeline.resume import resume_run_job
@@ -529,8 +530,29 @@ async def test_bad_deploy_oom_end_to_end(
     assert state.outcome is not None and state.outcome.result == "resolved"
     assert incident.root_cause and "container_memory 24" in incident.root_cause
     kinds = await _kinds(sf, run_id)
-    assert kinds[-3:] == ["verify_result", "incident_updated", "incident_resolved"]
+    # Resolved by the rollback while the fix PR is still open: a follow-up tracks it, and
+    # memory does not take the incident until the PR is merged.
+    assert kinds[-4:] == [
+        "verify_result",
+        "incident_updated",
+        "incident_updated",
+        "incident_resolved",
+    ]
     assert kinds.count("fix_applied") == 2
+    assert incident.remembered_at is None
+    merged = github_app(
+        extra_routes={
+            f"GET /repos/{REPO}/pulls/1": {
+                "merged": True,
+                "state": "closed",
+                "merged_at": "2026-10-14T10:00:00Z",
+                "merge_commit_sha": "m" * 40,
+            }
+        }
+    )
+    assert await track_followups(sf, merged) == 1
+    incident, state, run = await _state(sf, incident_id)
+    assert incident.remembered_at is not None
 
     # The same scenario again: memory finds it, research is skipped, Super confirms.
     ev2 = oom_evidence(ids, _now())

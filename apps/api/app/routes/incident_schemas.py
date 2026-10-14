@@ -18,6 +18,7 @@ from app.agents.medic.events import (
     DetectorRule,
     FixApplied,
     FixStatus,
+    FollowUp,
     IncidentStatus,
     MemoryReuse,
     ProposedFix,
@@ -101,6 +102,9 @@ class IncidentSummary(BaseModel):
     # First signal -> incident opened, and opened -> resolved.
     time_to_detect_ms: int | None
     duration_ms: int | None
+    # A follow-up (the permanent fix PR) is open or merged but not deployed yet: a resolved
+    # incident whose repo still has the bad change.
+    has_open_followups: bool = False
 
 
 class IncidentPage(BaseModel):
@@ -152,3 +156,5 @@ class IncidentDetail(IncidentSummary):
     # Every Medic run for this incident, oldest first (a re-investigation adds one).
     run_ids: list[uuid.UUID]
     error: str | None = None
+    # The permanent fix after resolve: open -> merged -> deployed, or closed_unmerged.
+    followups: list[FollowUp] = Field(default_factory=list)

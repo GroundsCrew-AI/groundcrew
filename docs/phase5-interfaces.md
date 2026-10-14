@@ -199,7 +199,8 @@ Code: `app/routes/incidents.py` (live since M4, behind auth and membership like 
 | Method | Path | Body / query | Response |
 |---|---|---|---|
 | POST | `/incidents` | `IncidentCreate` | 202 `IncidentCreated` `{incident_id, run_id, deduped}` |
-| GET | `/incidents` | `workspace_id`; filters `status`, `severity`, `resource` (resource id), `since` (opened at or after), combined with AND; `limit` (1..100, 25), `cursor` | 200 `IncidentPage` `{items, next_cursor}`, newest first |
+| GET | `/incidents` | `workspace_id`; filters `status`, `severity`, `resource` (resource id), `since` (opened at or after), `pending_fix` (true: a follow-up is open or merged; false: none is), combined with AND; `limit` (1..100, 25), `cursor` | 200 `IncidentPage` `{items, next_cursor}`, newest first |
+| POST | `/incidents/{incident_id}/fixes/{fix_id}/retry` | | 200 `IncidentDetail` (a failed emergency fix planned again with a new approval) |
 | GET | `/incidents/{incident_id}` | | 200 `IncidentDetail` |
 
 **Report incident** (`IncidentCreate`, unknown fields are a 422):
@@ -234,6 +235,7 @@ group of related resources: reporting resources an open incident covers returns 
 | `memory_reused` | a past incident's diagnosis or fix was reused |
 | `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `ultra_equiv_usd` | over all its Medic runs |
 | `time_to_detect_ms`, `duration_ms` | first signal -> opened; opened -> resolved |
+| `has_open_followups` | a follow-up (the permanent fix PR) is `open` or `merged` but not deployed |
 
 **`IncidentDetail`** adds:
 
@@ -249,6 +251,25 @@ group of related resources: reporting resources an open incident covers returns 
 | `memory` | `{incident_id, title, similarity, reused: [diagnosis \| fix \| research]}` when a past incident was reused |
 | `research` | Tavily results `[{title, url, snippet}]` (max 3) |
 | `run_ids`, `error` | every Medic run for it, oldest first |
+| `followups` | `[FollowUp {id, kind: fix_pr, state, repo, number, url, triggering_commit, merge_commit, merged_at, deployed_at, deploy_url, closed_at, created_at, updated_at, tracked_until}]` (below) |
+
+**Follow-ups** (2026-10-14, `app/incidents/followups.py`, table `incident_followups`). An
+emergency rollback can resolve an incident while its fix PR is still open; the default branch
+then still has the bad change and the next deploy brings the outage back. When Medic resolves an
+incident, each applied fix PR that is not deployed yet becomes a follow-up (`open`, or `merged`
+if it merged already). The watcher job (same schedule) checks them through the GitHub App,
+read-only, each at most every 2 minutes and for 7 days after creation:
+- `open` -> `merged` (PR merged; `merge_commit`), then `merged` -> `deployed` when a successful
+  workflow run whose path contains `deploy`, on the base branch, created after the merge,
+  contains the merge commit (same SHA, or `compare` says ahead or identical). Done.
+- `open` -> `closed_unmerged`: the service runs only on the rollback; `triggering_commit` is the
+  change still in the repo.
+Each change records `incident_updated` on the incident's latest run (status unchanged,
+`followups` set). Incident memory finds an incident only from `incidents.remembered_at`: at
+resolve when no fix PR is open, else when the follow-up is merged or closed; a closed PR's fix is
+left out of the reused fix ("rollback only"). `GET /workspaces/{id}/summary` has
+`pending_permanent_fixes` (incidents with an open or merged follow-up). Not checked: the ECS
+deployment of the new revision (the deploy workflow's success stands for it).
 
 Stopping the Medic run (`POST /runs/{run_id}/stop`) rejects its pending approvals and closes the
 incident as `failed` ("Stopped by <login>."). Fix PR states are refreshed from GitHub when the
@@ -266,7 +287,7 @@ the deploy events. `GET /runs/{id}` returns the same steps.
 | Event | `data` | Notes |
 |---|---|---|
 | `incident_opened` | `IncidentOpened` `{incident_id, title, severity, detected_by, detector_rule, signals, affected_resources, window}` | First step |
-| `incident_updated` | `IncidentUpdated` `{incident_id, status, previous_status, at, reason}` | Every status change |
+| `incident_updated` | `IncidentUpdated` `{incident_id, status, previous_status, at, reason, merged_into, followups}` | Every status change; also when follow-ups are created or change (`followups`: all of them, status unchanged) |
 | `evidence_collected` | `EvidenceCollected` `{sources [{source, lines, truncated}], neighbors, items [EvidenceItem], changes [ChangeMarker], total_lines}` | |
 | `memory_checked` | `MemoryChecked` `{hits [{incident_id, title, similarity, root_cause, fix_summary, resolved_at}], reused_incident_id, reused}` | |
 | `research_done` | `ResearchDone` `{queries, results [{title, url, snippet}] (max 3), skipped_reason}` | Tavily |

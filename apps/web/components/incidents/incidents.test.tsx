@@ -73,7 +73,7 @@ describe("MedicStep", () => {
 
   it("links incidents merged into one outage both ways", () => {
     const { rerender } = render(
-      <MedicStep step={medicStep(1, { type: "incident_updated", incident_id: "inc-0", status: "failed", previous_status: "failed", at: "2026-10-13T08:54:09Z", reason: "The same outage showed up on a related resource.", merged_into: "inc-1" }, { output_summary: "Merged into a newer incident: checkout-api health checks" })} />,
+      <MedicStep step={medicStep(1, { type: "incident_updated", incident_id: "inc-0", status: "failed", previous_status: "failed", at: "2026-10-13T08:54:09Z", reason: "The same outage showed up on a related resource.", merged_into: "inc-1", followups: null }, { output_summary: "Merged into a newer incident: checkout-api health checks" })} />,
     );
     expect(screen.getByRole("link", { name: /Merged into a newer incident/ })).toHaveAttribute("href", "/incidents/inc-1");
     rerender(

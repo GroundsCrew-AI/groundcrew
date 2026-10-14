@@ -248,6 +248,15 @@ async def watch_incidents_job(session_factory: SessionFactory, payload: dict[str
     try:
         await watch_once(session_factory, settings=settings)
     finally:
+        # Same schedule, light: open fix PRs of resolved incidents (each at most every 2 min).
+        try:
+            from app.connectors.github import get_github_app
+            from app.incidents.followups import track_followups
+
+            github = get_github_app()
+            await track_followups(session_factory, github if github.configured() else None)
+        except Exception:
+            logger.warning("follow-up tracking failed", exc_info=True)
         if settings.incident_watch_enabled:
             await ensure_watch_job(
                 session_factory, delay=timedelta(seconds=settings.incident_watch_interval_seconds)

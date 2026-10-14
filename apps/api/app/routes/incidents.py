@@ -18,10 +18,10 @@ from sqlalchemy import and_, or_, select
 from app.accounts import NotFoundError, member_workspace
 from app.actions import get_emergency_actions
 from app.actions.base import EmergencyActionError, EmergencyActions
-from app.agents.medic.events import IncidentStatus, Severity
+from app.agents.medic.events import PENDING_FOLLOWUP_STATES, IncidentStatus, Severity
 from app.agents.medic.retry import RetryError, retry_fix
 from app.connectors.github import GitHubApp, get_github_app
-from app.db.models import Incident
+from app.db.models import Incident, IncidentFollowUp
 from app.incidents import views
 from app.incidents.store import ResourceNotFoundError, open_incident
 from app.routes.deps import CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
@@ -106,6 +106,13 @@ async def list_incidents(
         uuid.UUID | None, Query(alias="resource", description="Incidents affecting this resource")
     ] = None,
     since: Annotated[datetime | None, Query(description="Opened at or after this time")] = None,
+    pending_fix: Annotated[
+        bool | None,
+        Query(
+            description="true: only incidents whose permanent fix PR is still open or merged but "
+            "not deployed (has_open_followups); false: only the others"
+        ),
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     cursor: str | None = None,
 ) -> IncidentPage:
@@ -126,6 +133,16 @@ async def list_incidents(
         query = query.where(Incident.affected_resource_ids.contains([resource_id]))
     if since is not None:
         query = query.where(Incident.created_at >= since)
+    if pending_fix is not None:
+        open_followup = (
+            select(IncidentFollowUp.id)
+            .where(
+                IncidentFollowUp.incident_id == Incident.id,
+                IncidentFollowUp.state.in_(PENDING_FOLLOWUP_STATES),
+            )
+            .exists()
+        )
+        query = query.where(open_followup if pending_fix else ~open_followup)
     if cursor:
         created, incident_id = _decode_cursor(cursor)
         query = query.where(

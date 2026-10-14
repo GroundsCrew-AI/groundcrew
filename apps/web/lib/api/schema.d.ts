@@ -1766,6 +1766,82 @@ export interface components {
              */
             fixture: string;
         };
+        /**
+         * FollowUp
+         * @description Work left after an incident resolved: its permanent fix PR, until it is deployed.
+         */
+        FollowUp: {
+            /**
+             * Closed At
+             * @default null
+             */
+            closed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Deploy Url
+             * @default null
+             */
+            deploy_url: string | null;
+            /**
+             * Deployed At
+             * @default null
+             */
+            deployed_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @default fix_pr
+             * @constant
+             */
+            kind: "fix_pr";
+            /**
+             * Merge Commit
+             * @default null
+             */
+            merge_commit: string | null;
+            /**
+             * Merged At
+             * @default null
+             */
+            merged_at: string | null;
+            /** Number */
+            number: number;
+            /**
+             * Repo
+             * @example GroundsCrew-AI/checkout-demo
+             */
+            repo: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "open" | "merged" | "closed_unmerged" | "deployed";
+            /**
+             * Tracked Until
+             * Format: date-time
+             */
+            tracked_until: string;
+            /**
+             * Triggering Commit
+             * @default null
+             */
+            triggering_commit: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Url */
+            url: string;
+        };
         /** GitHubInstallationOut */
         GitHubInstallationOut: {
             /** Account */
@@ -1934,6 +2010,13 @@ export interface components {
             fixes: components["schemas"]["FixState"][];
             /** Fixes Applied */
             fixes_applied: string[];
+            /** Followups */
+            followups?: components["schemas"]["FollowUp"][];
+            /**
+             * Has Open Followups
+             * @default false
+             */
+            has_open_followups: boolean;
             /**
              * Id
              * Format: uuid
@@ -2133,6 +2216,11 @@ export interface components {
             /** Fixes Applied */
             fixes_applied: string[];
             /**
+             * Has Open Followups
+             * @default false
+             */
+            has_open_followups: boolean;
+            /**
              * Id
              * Format: uuid
              */
@@ -2195,6 +2283,11 @@ export interface components {
              * Format: date-time
              */
             at: string;
+            /**
+             * Followups
+             * @default null
+             */
+            followups: components["schemas"]["FollowUp"][] | null;
             /**
              * Incident Id
              * Format: uuid
@@ -3289,6 +3382,11 @@ export interface components {
             daily_usd_cap?: number | null;
             /** Pending Approvals */
             pending_approvals: number;
+            /**
+             * Pending Permanent Fixes
+             * @default 0
+             */
+            pending_permanent_fixes: number;
             /** Runs Today */
             runs_today: number;
             /** Total Usd Cap */
@@ -4008,6 +4106,8 @@ export interface operations {
                 resource?: string | null;
                 /** @description Opened at or after this time */
                 since?: string | null;
+                /** @description true: only incidents whose permanent fix PR is still open or merged but not deployed (has_open_followups); false: only the others */
+                pending_fix?: boolean | null;
                 limit?: number;
                 cursor?: string | null;
             };

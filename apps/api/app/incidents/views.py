@@ -24,6 +24,7 @@ from app.agents.medic.events import (
 from app.agents.medic.state import MedicState
 from app.connectors.github import GitHubApp, GitHubError, check_repo_name
 from app.db.models import Incident, Resource, Run
+from app.incidents import followups as fu
 from app.routes.incident_schemas import (
     FixState,
     IncidentDetail,
@@ -125,9 +126,11 @@ def _summary_fields(
 async def summaries(session: AsyncSession, incidents: list[Incident]) -> list[IncidentSummary]:
     totals = await _totals(session, [i.id for i in incidents])
     refs = await _refs(session, incidents)
+    followups = await fu.for_incidents(session, [i.id for i in incidents])
     return [
         IncidentSummary(
-            **_summary_fields(i, MedicState.model_validate(i.state or {}), refs, totals[i.id])
+            **_summary_fields(i, MedicState.model_validate(i.state or {}), refs, totals[i.id]),
+            has_open_followups=fu.pending(followups[i.id]),
         )
         for i in incidents
     ]
@@ -137,6 +140,7 @@ async def detail(session: AsyncSession, incident: Incident) -> IncidentDetail:
     state = MedicState.model_validate(incident.state or {})
     totals = (await _totals(session, [incident.id]))[incident.id]
     refs = await _refs(session, [incident])
+    followups = (await fu.for_incidents(session, [incident.id]))[incident.id]
     outcome = (
         IncidentOutcome(
             result=state.outcome.result,
@@ -178,6 +182,8 @@ async def detail(session: AsyncSession, incident: Incident) -> IncidentDetail:
         research=state.research,
         run_ids=totals.run_ids or [],
         error=state.error,
+        has_open_followups=fu.pending(followups),
+        followups=followups,
     )
 
 
