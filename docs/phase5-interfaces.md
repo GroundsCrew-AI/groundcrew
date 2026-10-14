@@ -107,14 +107,24 @@ and says so on the incident ("no Operate role"). Tests inject `FakeEmergencyActi
   `OperateSecretArns` (prefix wildcards). Demo: `service/checkout/*` and `secret:checkout/*`.
 - Allowed: `ecs:UpdateService`, `ecs:DescribeServices` on `OperateServiceArns`;
   `secretsmanager:UpdateSecretVersionStage`, `DescribeSecret` on `OperateSecretArns`;
-  `ecs:ListTaskDefinitions`, `DescribeTaskDefinition` on `*` (read-only, not scopable). No
-  `iam:PassRole` (a rollback reuses an existing revision; `force_redeploy` is `UpdateService` with
-  `forceNewDeployment`). Explicit Deny on secret values, like the other roles.
+  `ecs:ListTaskDefinitions`, `DescribeTaskDefinition` on `*` (read-only, not scopable);
+  `iam:PassRole` on `OperatePassRoleArns` only with `iam:PassedToService =
+  ecs-tasks.amazonaws.com` (2026-10-14: UpdateService to another revision needs PassRole on that
+  revision's execution and task roles; the live bad-deploy-oom rollback failed with AccessDenied
+  without it). Demo: `arn:aws:iam::881050425883:role/checkout-*`. The default
+  (`role/none`) matches nothing. Explicit Deny on `iam:PassRole` for `role/groundcrew-*` and on
+  secret values. No other IAM action. `force_redeploy` keeps the same revision, so it passes no
+  role.
+- `plan_ecs_rollback_service` reads the target revision's `executionRoleArn` / `taskRoleArn` and
+  the operate role's PassRole scope (its inline policy, via the read-only role's
+  `iam:GetRolePolicy`). A role outside it stops the plan with `EmergencyActionError`
+  "rollback needs PassRole on <role>; update the connection ..." (Medic notes it; no approval is
+  requested). If the policy cannot be read, the plan goes ahead and AWS decides at execute.
 - `aws_operate_session(connection_id)` has a runtime allowlist (`AWS_OPERATE_OPERATIONS`) and
   refuses unless the connection has the `operate` capability. `EnableOperate=true` with the
   placeholder (default) ARN lists is refused by a template Rule.
 - Turning it on: update the `groundcrew-read-only` stack with `EnableOperate=true`,
-  `OperateServiceArns`, and `OperateSecretArns`; then `POST /connections/{id}/aws/operate`
+  `OperateServiceArns`, `OperateSecretArns`, and `OperatePassRoleArns`; then `POST /connections/{id}/aws/operate`
   `{"enabled": true}` verifies the role (ExternalId required) and stores `operate_role_arn`.
   `ConnectionOut.capabilities` lists `observe`, `deploy`, `operate`. `{"enabled": false}` stops
   using the role at once.

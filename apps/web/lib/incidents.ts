@@ -131,6 +131,31 @@ export function useIncident(incidentId: string) {
   });
 }
 
+/**
+ * Retry a failed emergency fix once its cause (e.g. a missing permission) is fixed: Medic plans
+ * it again and asks for a new approval; nothing changes in AWS until someone approves.
+ */
+export function useRetryFix(incidentId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (fixId: string): Promise<IncidentDetail> =>
+      unwrap(
+        await api.POST("/incidents/{incident_id}/fixes/{fix_id}/retry", {
+          params: { path: { incident_id: incidentId, fix_id: fixId } },
+        }),
+      ),
+    onSuccess: (updated) => {
+      client.setQueryData(incidentKeys.detail(incidentId), updated);
+      void client.invalidateQueries({ queryKey: ["incidents"] });
+    },
+  });
+}
+
+/** A failed emergency fix that can be tried again (with a new approval). */
+export function canRetryFix(incident: IncidentDetail, fix: IncidentDetail["fixes"][number]): boolean {
+  return fix.fix.kind === "emergency" && fix.status === "failed" && incident.status !== "resolved";
+}
+
 export function useReportIncident() {
   const client = useQueryClient();
   return useMutation({

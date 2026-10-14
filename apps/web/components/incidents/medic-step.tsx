@@ -150,8 +150,9 @@ export function MedicStep({ step }: { step: Step }) {
           </p>
           {data.skipped_reason && <p className="mt-0.5 text-[12.5px] text-muted-foreground">{data.skipped_reason}</p>}
           <ul className="mt-1 space-y-0.5 text-[12.5px]">
-            {data.results.map((r) => (
-              <li key={r.url}>
+            {data.results.map((r, i) => (
+              // Results already stored may repeat a URL.
+              <li key={`${i}-${r.url}`}>
                 <a href={r.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline-offset-4 hover:underline">
                   {r.title}
                   <ExternalLink aria-hidden="true" className="size-3" />

@@ -67,10 +67,11 @@ class TavilyClient:
         if response.status_code >= 400:
             text = response.text[:200].replace(self._key, "[REDACTED]")
             raise TavilyError(redact(f"Tavily search returned {response.status_code}: {text}"))
-        out = []
+        out: list[SearchResult] = []
         for item in response.json().get("results", [])[:max_results]:
             url = str(item.get("url") or "")
-            if not url.startswith(("https://", "http://")):
+            # Tavily can return the same page twice (two chunks of it); keep the first.
+            if not url.startswith(("https://", "http://")) or any(r.url == url for r in out):
                 continue
             snippet = " ".join(str(item.get("content") or "").split())[:SNIPPET_CHARS]
             out.append(

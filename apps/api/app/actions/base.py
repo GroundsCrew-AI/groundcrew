@@ -124,3 +124,16 @@ class EmergencyActions(Protocol):
         """Run an approved plan once. Raises PolicyViolationError for a missing, reused, or
         mismatched token; returns ok=False when the state moved since the plan."""
         ...
+
+
+async def plan_again(actions: EmergencyActions, plan: ActionPlan) -> ActionPlan:
+    """The same action on the same target, planned from the state now (a retry after a failed
+    run gets a fresh plan and a fresh approval, never the old ones)."""
+    p = plan.params
+    if plan.action == ECS_ROLLBACK_SERVICE:
+        return await actions.plan_ecs_rollback_service(
+            plan.connection_id, p["cluster"], p["service"]
+        )
+    if plan.action == SECRET_ROLLBACK_VERSION:
+        return await actions.plan_secret_rollback_version(plan.connection_id, p["secret_arn"])
+    return await actions.plan_force_redeploy(plan.connection_id, p["cluster"], p["service"])

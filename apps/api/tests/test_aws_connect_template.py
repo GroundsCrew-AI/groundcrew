@@ -275,13 +275,14 @@ def test_code_allowlist_matches_the_deploy_policy() -> None:
 
 SERVICE_ARNS = ["arn:aws:ecs:us-east-2:881050425883:service/checkout/*"]
 SECRET_ARNS = ["arn:aws:secretsmanager:us-east-2:881050425883:secret:checkout/*"]
+PASS_ROLE_ARNS = ["arn:aws:iam::881050425883:role/checkout-*"]
 
 
 def _operate(tier: str = "observe") -> dict[str, Any]:
     return render(
         TEMPLATE,
         {"Tier": tier, "EnableOperate": "true", "OperateServiceArns": SERVICE_ARNS,
-         "OperateSecretArns": SECRET_ARNS},
+         "OperateSecretArns": SECRET_ARNS, "OperatePassRoleArns": PASS_ROLE_ARNS},
     )  # fmt: skip
 
 
@@ -317,10 +318,29 @@ def test_operate_role_scopes_and_trust() -> None:
         "ecs:DescribeTaskDefinition": ("*", None),
         "secretsmanager:UpdateSecretVersionStage": ({"Ref": "OperateSecretArns"}, None),
         "secretsmanager:DescribeSecret": ({"Ref": "OperateSecretArns"}, None),
+        "iam:PassRole": (
+            {"Ref": "OperatePassRoleArns"},
+            {"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}},
+        ),
     }
     deny = [s for s in _statements(resources["OperateRole"]) if s["Effect"] == "Deny"]
-    assert deny == [s for s in _statements(resources["GroundcrewRole"]) if s["Effect"] == "Deny"]
+    never_pass, *read_deny = deny
+    assert read_deny == [
+        s for s in _statements(resources["GroundcrewRole"]) if s["Effect"] == "Deny"
+    ]
+    assert never_pass == {
+        "Sid": "NeverPassGroundcrewRoles",
+        "Effect": "Deny",
+        "Action": "iam:PassRole",
+        "Resource": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/groundcrew-*"},
+    }
     assert {"Key": "project", "Value": "groundcrew"} in role["Tags"]
+
+
+def test_pass_role_default_matches_nothing() -> None:
+    param = TEMPLATE["Parameters"]["OperatePassRoleArns"]
+    assert param["Type"] == "CommaDelimitedList"
+    assert param["Default"] == "arn:aws:iam::*:role/none"
 
 
 def test_code_allowlist_matches_the_operate_policy() -> None:
@@ -328,7 +348,9 @@ def test_code_allowlist_matches_the_operate_policy() -> None:
 
     allowed = {a for st in _statements(_operate()["Resources"]["OperateRole"])
                if st["Effect"] == "Allow" for a in _actions(st)}  # fmt: skip
-    assert AWS_OPERATE_OPERATIONS - {"sts:GetCallerIdentity"} == allowed
+    # iam:PassRole is not an API call: ECS checks it during UpdateService.
+    assert AWS_OPERATE_OPERATIONS - {"sts:GetCallerIdentity"} == allowed - {"iam:PassRole"}
+    assert not any(op.startswith("iam:") for op in AWS_OPERATE_OPERATIONS)
 
 
 def test_api_template_copy_matches_infra() -> None:

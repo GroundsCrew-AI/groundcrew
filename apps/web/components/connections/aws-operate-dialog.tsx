@@ -12,6 +12,7 @@ import { CopyField } from "./copy-field";
 
 export const OPERATE_ALLOWS = [
   "Roll an ECS service back to an earlier task definition revision, or restart it",
+  "Pass only the roles you list to ECS tasks, which a rollback needs (no other IAM changes)",
   "Move a secret's AWSCURRENT stage back to its previous version (by version id; values are never read)",
   "Only on the services and secrets you list, and only after a person approves each fix",
 ];
@@ -44,6 +45,8 @@ export function AwsOperateDialog({
   const stacks = `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks`;
   const services = `arn:aws:ecs:${region}:${account}:service/CLUSTER/*`;
   const secrets = `arn:aws:secretsmanager:${region}:${account}:secret:PREFIX/*`;
+  // The demo's task roles; ECS needs iam:PassRole on a revision's roles to roll back to it.
+  const passRoles = `arn:aws:iam::${account}:role/checkout-*`;
 
   function close(next: boolean) {
     onOpenChange(next);
@@ -122,6 +125,11 @@ export function AwsOperateDialog({
                 </p>
                 <CopyField label="OperateServiceArns" value={services} />
                 <CopyField label="OperateSecretArns" value={secrets} />
+                <p>
+                  A rollback hands the earlier revision&apos;s execution and task roles back to ECS, so list those
+                  roles too (they are passed only to ECS tasks, never a groundcrew-* role):
+                </p>
+                <CopyField label="OperatePassRoleArns" value={passRoles} />
               </li>
               <li>
                 Acknowledge that it creates IAM resources with custom names, submit, and wait for{" "}

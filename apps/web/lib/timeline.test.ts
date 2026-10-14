@@ -86,6 +86,18 @@ describe("timelineReducer", () => {
     expect(run([{ type: "loaded", run: runDetail({ status: "stopped" }) }]).done).toBe(true);
   });
 
+  it("follows a reopened run again (a Medic fix retry)", () => {
+    const ended = run([{ type: "loaded", run: runDetail({ status: "succeeded", steps: [step(1)] }) }]);
+    expect(ended.done).toBe(true);
+    const reopened = timelineReducer(ended, {
+      type: "reopened",
+      run: runDetail({ status: "waiting_approval", steps: [step(1), step(2)] }),
+    });
+    expect(reopened.done).toBe(false);
+    expect(reopened.run?.status).toBe("waiting_approval");
+    expect(reopened.steps.map((s) => s.seq)).toEqual([1, 2]);
+  });
+
   it("ignores status before the run is loaded", () => {
     expect(timelineReducer(initialTimeline, { type: "status", status: statusEvent("running") })).toBe(
       initialTimeline,

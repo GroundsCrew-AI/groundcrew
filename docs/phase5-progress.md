@@ -248,6 +248,43 @@ The Connections page's "Emergency fixes" toggle landed separately (`phase5-opera
 (`EnableOperate=true`, `OperateServiceArns` and `OperateSecretArns` prefilled with the account),
 then Verify calls `POST /connections/{id}/aws/operate`; an "Emergency fixes" badge shows when on.
 
+## Live bad-deploy-oom: rollback PassRole, retry (2026-10-14)
+
+The emergency rollback failed with AccessDenied: `groundcrew-operate` may not `iam:PassRole` on
+`role/checkout-worker-task-execution`. ECS checks PassRole on a revision's execution and task
+roles when UpdateService points a service at it.
+- Template (and API copy): parameter `OperatePassRoleArns` (CommaDelimitedList, default
+  `arn:aws:iam::*:role/none`); the operate role gets `iam:PassRole` on it with
+  `iam:PassedToService = ecs-tasks.amazonaws.com`, plus an explicit Deny on PassRole for
+  `role/groundcrew-*`. No other IAM action. `EnableOperate=false` renders exactly as on main for
+  every Tier x CreateResourceExplorerIndex (checked against `git show main:`).
+- Checked without changing anything in AWS (own CLI credentials, account 881050425883,
+  us-east-2): `cfn-lint` clean; `validate-template --template-body` accepts it; Access Analyzer
+  `ValidatePolicy` on the rendered operate policy: no findings; `SimulateCustomPolicy`:
+  PassRole `checkout-worker-task-execution` / `checkout-api-task` to ecs-tasks allowed; to
+  lambda, ec2, or ecs implicitDeny; `groundcrew-task-execution` and `groundcrew-operate`
+  explicitDeny; `admin`, `payments-task-execution` implicitDeny; `iam:CreateRole`,
+  `AttachRolePolicy`, `PutRolePolicy` implicitDeny.
+- `plan_ecs_rollback_service` checks the target revision's roles against the operate role's
+  PassRole scope first and stops with "rollback needs PassRole on <role>; update the connection".
+- A failed emergency fix shows AWS's error on the incident page and a Retry button: the fix is
+  planned again and needs a new approval on the same run (`POST
+  /incidents/{id}/fixes/{fix_id}/retry`, `app/agents/medic/retry.py`).
+- Enable emergency fixes dialog: `OperatePassRoleArns` with the demo value.
+- "4 issues" dev badge on the incident page: new, not from #34 (merged; it fixed the verify-row
+  keys). Tavily returned the same runbook URL twice, and the Research section and the timeline's
+  research step keyed by URL (2 lists x 2 renders). Keys now include the index, and Tavily results
+  are de-duplicated by URL. Reloaded in Chrome: no console errors.
+- To use it on the demo: update the `groundcrew-read-only` stack with
+  `OperatePassRoleArns=arn:aws:iam::881050425883:role/checkout-*` (after the template is
+  republished with `make publish-connect-template`), then Retry the failed rollback.
+- Files (Ahmed's Medic code marked *): infra/aws-connect.yaml, app/connectors/templates/
+  aws-connect.yaml, app/actions/{aws,base}.py, app/agents/medic/retry.py*, app/routes/
+  incidents.py, app/tools/tavily.py*; tests/test_aws_connect_template.py,
+  tests/test_actions_aws.py, tests/test_medic_retry.py; web components/connections/
+  aws-operate-dialog.tsx, components/incidents/{fix-list,medic-step}.tsx*,
+  app/(app)/incidents/[id]/incident-view.tsx*, lib/{incidents,timeline}.ts, lib/api/*.
+
 ## How to resume
 
 ```bash

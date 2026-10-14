@@ -21,6 +21,8 @@ export type TimelineState = {
 
 export type TimelineAction =
   | { type: "loaded"; run: RunDetail }
+  // The run was reopened (a Medic fix retry): stream it again from where it is now.
+  | { type: "reopened"; run: RunDetail }
   | { type: "step"; step: Step }
   | { type: "approval_requested" | "approval_decided"; event: ApprovalStepEvent }
   | { type: "status"; status: RunStatusEvent }
@@ -72,6 +74,11 @@ export function timelineReducer(state: TimelineState, action: TimelineAction): T
       for (const approval of action.run.approvals) next = addApproval(next, approval);
       return next;
     }
+    case "reopened":
+      return timelineReducer(
+        { ...state, done: TERMINAL.has(action.run.status) },
+        { type: "loaded", run: action.run },
+      );
     case "step":
       return addStep(state, action.step);
     case "approval_requested":
