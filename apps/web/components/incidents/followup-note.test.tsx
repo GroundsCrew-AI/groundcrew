@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
 import type { FollowUp } from "@/lib/incidents";
 import { incidentSummary } from "@/tests/incident-fixtures";
@@ -28,6 +29,8 @@ function followup(overrides: Partial<FollowUp> = {}): FollowUp {
     deployed_at: null,
     deploy_url: null,
     closed_at: null,
+    dismissed_at: null,
+    dismissed_by: null,
     created_at: "2026-10-14T10:00:00Z",
     updated_at: "2026-10-14T10:00:00Z",
     tracked_until: "2026-10-21T10:00:00Z",
@@ -40,13 +43,13 @@ describe("FollowUpNote", () => {
     render(<FollowUpNote followup={followup()} />);
     expect(noteText()).toContain("Permanent fix pending: PR #3 not merged yet.");
     expect(screen.getByRole("link", { name: /PR #3/ })).toHaveAttribute("href", PR);
-    expect(screen.getByRole("status").className).toContain("status-waiting");
+    expect(screen.getByRole("status").parentElement?.className).toContain("status-waiting");
   });
 
   it("says it is deploying once merged", () => {
     render(<FollowUpNote followup={followup({ state: "merged", merge_commit: "a".repeat(40) })} />);
     expect(noteText()).toBe("PR #3 merged, deploying...");
-    expect(screen.getByRole("status").className).toContain("status-waiting");
+    expect(screen.getByRole("status").parentElement?.className).toContain("status-waiting");
   });
 
   it("turns green when the fix is deployed", () => {
@@ -56,7 +59,7 @@ describe("FollowUpNote", () => {
       />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("Permanent fix deployed");
-    expect(screen.getByRole("status").className).toContain("status-ok");
+    expect(screen.getByRole("status").parentElement?.className).toContain("status-ok");
     expect(screen.getByRole("link", { name: "deploy run" })).toHaveAttribute("href", expect.stringContaining("/runs/7"));
   });
 
@@ -66,12 +69,45 @@ describe("FollowUpNote", () => {
     expect(noteText()).toBe(
       "PR #3 was closed without merging. The running service is on a rollback, but the repo still contains the change from commit 9f8e7d6; the next deploy will bring the failure back.",
     );
-    expect(note.className).toContain("status-failed");
+    expect(note.parentElement?.className).toContain("status-failed");
   });
 
   it("shows nothing without follow-ups", () => {
     const { container } = render(<FollowUpNotes followups={[]} />);
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("FollowUpNote: change still in the repo", () => {
+  const change = (overrides: Partial<FollowUp> = {}) =>
+    followup({ kind: "change_in_repo", number: null, url: null, ...overrides });
+
+  it("warns in red that the next deploy brings the failure back, and can be dismissed", async () => {
+    const onDismiss = vi.fn();
+    render(<FollowUpNote followup={change()} onDismiss={onDismiss} />);
+    const note = screen.getByRole("status");
+    expect(note).toHaveTextContent(
+      "Running on a rollback; the repo still contains commit 9f8e7d6, so the next deploy will bring the failure back.",
+    );
+    expect(note.parentElement?.className).toContain("status-failed");
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(onDismiss).toHaveBeenCalledWith("fu-1");
+  });
+
+  it("is done once a later deploy reverted it", () => {
+    render(
+      <FollowUpNote
+        followup={change({ state: "reverted", deploy_url: "https://github.com/GroundsCrew-AI/checkout-demo/actions/runs/9" })}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Commit 9f8e7d6 is no longer in the deployed code");
+    expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+  });
+
+  it("says who dismissed it", () => {
+    render(<FollowUpNote followup={change({ state: "dismissed", dismissed_by: "Rizwan-095" })} onDismiss={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Commit 9f8e7d6 still in the repo: dismissed by Rizwan-095.");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });
 

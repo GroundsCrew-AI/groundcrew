@@ -289,14 +289,18 @@ class IncidentFollowUp(TimestampMixin, Base):
     workspace_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
     )
+    # fix_pr | change_in_repo (app.agents.medic.events.FollowUpKind)
     kind: Mapped[str] = mapped_column(String(16), default="fix_pr", server_default="fix_pr")
-    # open | merged | closed_unmerged | deployed
+    # open | merged | closed_unmerged | deployed | reverted | dismissed
     state: Mapped[str] = mapped_column(String(16), default="open", server_default="open")
     repo: Mapped[str] = mapped_column(String(200))
-    number: Mapped[int] = mapped_column(Integer)
-    url: Mapped[str] = mapped_column(String(500))
+    # The fix PR (fix_pr only).
+    number: Mapped[int | None] = mapped_column(Integer)
+    url: Mapped[str | None] = mapped_column(String(500))
+    # The default branch; "" until the tracker reads it (change_in_repo).
     base: Mapped[str] = mapped_column(String(200))
-    installation_id: Mapped[int] = mapped_column(BigInteger)
+    # None when no GitHub connection of the workspace lists the repo (not tracked then).
+    installation_id: Mapped[int | None] = mapped_column(BigInteger)
     # The commit that caused the incident (still in the repo until the PR merges).
     triggering_commit: Mapped[str | None] = mapped_column(String(64))
     merge_commit: Mapped[str | None] = mapped_column(String(64))
@@ -305,6 +309,10 @@ class IncidentFollowUp(TimestampMixin, Base):
     # The workflow run that deployed the merge (html_url).
     deploy_url: Mapped[str | None] = mapped_column(String(500))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dismissed_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
     # Last GitHub check (at most every FOLLOWUP_CHECK_EVERY per PR).
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

@@ -22,6 +22,7 @@ from app.agents.medic.events import PENDING_FOLLOWUP_STATES, IncidentStatus, Sev
 from app.agents.medic.retry import RetryError, retry_fix
 from app.connectors.github import GitHubApp, get_github_app
 from app.db.models import Incident, IncidentFollowUp
+from app.incidents import followups as fu
 from app.incidents import views
 from app.incidents.store import ResourceNotFoundError, open_incident
 from app.routes.deps import CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
@@ -221,5 +222,31 @@ async def retry_incident_fix(
     except EmergencyActionError as exc:
         await session.rollback()
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from None
+    await session.refresh(incident)
+    return await views.detail(session, incident)
+
+
+@router.post(
+    "/{incident_id}/followups/{followup_id}/dismiss",
+    responses={
+        404: {"description": "Incident or follow-up not found for this user."},
+        409: {"description": "Not an open change_in_repo follow-up."},
+    },
+)
+async def dismiss_followup(
+    incident_id: uuid.UUID, followup_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> IncidentDetail:
+    """A person says the change still in the repo is handled (reverted another way, or
+    accepted): the change_in_repo follow-up is closed as dismissed, with who did it."""
+    incident = await session.get(Incident, incident_id)
+    if incident is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Incident not found.")
+    await _check_member(session, user, incident.workspace_id, what="Incident")
+    try:
+        await fu.dismiss(session, incident, followup_id, user, datetime.now(UTC))
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from None
+    except fu.FollowUpStateError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
     await session.refresh(incident)
     return await views.detail(session, incident)

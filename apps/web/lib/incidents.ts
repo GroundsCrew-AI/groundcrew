@@ -164,6 +164,23 @@ export function useRetryFix(incidentId: string) {
   });
 }
 
+/** A person says the change still in the repo is handled (change_in_repo follow-ups only). */
+export function useDismissFollowUp(incidentId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (followupId: string): Promise<IncidentDetail> =>
+      unwrap(
+        await api.POST("/incidents/{incident_id}/followups/{followup_id}/dismiss", {
+          params: { path: { incident_id: incidentId, followup_id: followupId } },
+        }),
+      ),
+    onSuccess: (updated) => {
+      client.setQueryData(incidentKeys.detail(incidentId), updated);
+      void client.invalidateQueries({ queryKey: ["incidents"] });
+    },
+  });
+}
+
 /** A failed emergency fix that can be tried again (with a new approval). */
 export function canRetryFix(incident: IncidentDetail, fix: IncidentDetail["fixes"][number]): boolean {
   return fix.fix.kind === "emergency" && fix.status === "failed" && incident.status !== "resolved";

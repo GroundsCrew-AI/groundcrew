@@ -2734,14 +2734,42 @@
             "default": null,
             "title": "Deployed At"
           },
+          "dismissed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dismissed At"
+          },
+          "dismissed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dismissed By"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
           },
           "kind": {
-            "const": "fix_pr",
             "default": "fix_pr",
+            "enum": [
+              "fix_pr",
+              "change_in_repo"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -2771,8 +2799,16 @@
             "title": "Merged At"
           },
           "number": {
-            "title": "Number",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Number"
           },
           "repo": {
             "examples": [
@@ -2786,7 +2822,9 @@
               "open",
               "merged",
               "closed_unmerged",
-              "deployed"
+              "deployed",
+              "reverted",
+              "dismissed"
             ],
             "title": "State",
             "type": "string"
@@ -2814,16 +2852,22 @@
             "type": "string"
           },
           "url": {
-            "title": "Url",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
           }
         },
         "required": [
           "id",
           "state",
           "repo",
-          "number",
-          "url",
           "created_at",
           "updated_at",
           "tracked_until"
@@ -8873,6 +8917,82 @@
           }
         },
         "summary": "Retry Incident Fix",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/incidents/{incident_id}/followups/{followup_id}/dismiss": {
+      "post": {
+        "description": "A person says the change still in the repo is handled (reverted another way, or\naccepted): the change_in_repo follow-up is closed as dismissed, with who did it.",
+        "operationId": "dismiss_followup_incidents__incident_id__followups__followup_id__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "followup_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Followup Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Incident or follow-up not found for this user."
+          },
+          "409": {
+            "description": "Not an open change_in_repo follow-up."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Followup",
         "tags": [
           "incidents"
         ]
