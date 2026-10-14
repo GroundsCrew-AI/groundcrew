@@ -1,10 +1,13 @@
 """Recovery checks after a fix: the same signals that opened the incident, read again.
 
 For each affected (or acted-on) ECS service: `rollout` passes when every desired task runs and
-the primary deployment has not failed; `health` / `errors` fail on tasks stopped since the fix
-for failing health checks or with a non-zero exit. A log error spike seen at detection is read
-again (`errors`); an RDS spike or slow queries are read again (`metric`). Medic resolves only
-after two healthy rounds in a row (MedicRunner), so one lucky read does not close an incident.
+the primary deployment has not failed; `health` / `errors` fail on tasks *started* since the fix
+that stopped for failing health checks or with a non-zero exit, and on running tasks that are
+UNHEALTHY now. Each task is judged by its own record (service_tasks): ECS service events only
+point at the tasks to read, because they outlive the tasks they describe. A log error spike
+seen at detection is read again (`errors`); an RDS spike or slow queries are read again
+(`metric`). Medic resolves only after two healthy rounds in a row (MedicRunner), so one lucky
+read does not close an incident.
 
 A round is *waiting*, not failing, while a service's rollout is IN_PROGRESS (more than one
 deployment) or, after a fix PR merged, no deployment has started since the merge: the checks
@@ -37,33 +40,84 @@ def rollout_wait(
 
 
 _TASK_ID = re.compile(r"\(task ([0-9a-f]{12,})\)")
+_CHUNK = 100
 
 
-def current_health_events(
-    service: dict[str, Any], tasks: list[dict[str, Any]], since: datetime
+def _task_id(task: dict[str, Any]) -> str:
+    return str(task.get("taskArn", "")).rsplit("/", 1)[-1]
+
+
+def service_tasks(
+    reader: AwsReader,
+    region: str | None,
+    cluster: str,
+    service: dict[str, Any],
+    stopped: list[dict[str, Any]],
+    since: datetime,
 ) -> list[dict[str, Any]]:
-    """ECS health-check failure events about the tasks running now: after the fix and after
-    the current (primary) deployment started, and not about a task that has stopped since. ECS
-    keeps old events: the failure of a task the fix replaced is not a failure of the fix."""
-    primary: dict[str, Any] = next(
-        (d for d in service.get("deployments", []) if d.get("status") == "PRIMARY"), {}
+    """Blocking (boto3). Every task verify must judge, each with its own record: the stopped
+    ones rules.fetch_ecs listed (one capped page, in no set order), the service's running tasks,
+    and every task a health-check failure event since the fix names that is in neither (ECS
+    keeps a stopped task describable for an hour). Service events are only pointers to tasks."""
+    known = {_task_id(t): t for t in stopped}
+    running = reader.paginate(
+        "ecs",
+        region,
+        "ListTasks",
+        "taskArns",
+        cluster=cluster,
+        serviceName=str(service.get("serviceName") or ""),
+        desiredStatus="RUNNING",
     )
-    started = rules.to_time(primary.get("createdAt"))
-    cutoff = max(since, started) if started is not None else since
-    stopped = {str(t.get("taskArn", "")).rsplit("/", 1)[-1] for t in tasks}
-    out = []
-    for e in service.get("events", []):
-        message = str(e.get("message", ""))
-        at = rules.to_time(e.get("createdAt"))
-        if at is None or at <= cutoff:
-            continue
-        if not rules.HEALTH.search(message) or "fail" not in message.lower():
-            continue
-        task = _TASK_ID.search(message)
-        if task is not None and task.group(1) in stopped:
-            continue
-        out.append(e)
-    return out
+    wanted = [str(a).rsplit("/", 1)[-1] for a in running]
+    for event in service.get("events", []):
+        at = rules.to_time(event.get("createdAt"))
+        message = str(event.get("message", ""))
+        found = _TASK_ID.search(message)
+        if found and at is not None and at > since and rules.HEALTH.search(message):
+            wanted.append(found.group(1))
+    missing = [i for i in dict.fromkeys(wanted) if i not in known]
+    for i in range(0, len(missing), _CHUNK):
+        described = reader.call(
+            "ecs", region, "DescribeTasks", cluster=cluster, tasks=missing[i : i + _CHUNK]
+        ).get("tasks", [])
+        for task in described:
+            known[_task_id(task)] = task
+    return list(known.values())
+
+
+def _started(task: dict[str, Any]) -> datetime | None:
+    return rules.to_time(task.get("startedAt")) or rules.to_time(task.get("createdAt"))
+
+
+def started_since(task: dict[str, Any], since: datetime) -> bool:
+    """A task of the fix: started after it. A task the fix replaced (running the broken config
+    when the fix landed) may fail, exit, or be reported unhealthy afterwards; that is not the
+    fix failing."""
+    started = _started(task)
+    return started is not None and started > since
+
+
+def health_failures(
+    tasks: list[dict[str, Any]], since: datetime
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Tasks started since the fix that stopped for failing health checks, and tasks running now
+    (meant to keep running) whose health is UNHEALTHY."""
+    stopped = [
+        t
+        for t in tasks
+        if started_since(t, since)
+        and t.get("lastStatus") == "STOPPED"
+        and rules.HEALTH.search(str(t.get("stoppedReason", "")))
+    ]
+    unhealthy = [
+        t
+        for t in tasks
+        if t.get("lastStatus") == "RUNNING"
+        and t.get("desiredStatus", "RUNNING") == "RUNNING"
+        and t.get("healthStatus") == "UNHEALTHY"
+    ]
+    return stopped, unhealthy
 
 
 def _service_checks(
@@ -97,23 +151,24 @@ def _service_checks(
     rollout = primary.get("rolloutState") or "-"
     detail = f"{svc.name}: {running}/{desired} tasks running, rollout {rollout}"
     out = [VerifyCheck(name="rollout", ok=ok, detail=detail)]
-    after = [t for t in tasks if (rules.to_time(t.get("stoppedAt")) or since) > since]
-    health = [t for t in after if rules.HEALTH.search(str(t.get("stoppedReason", "")))]
-    # A running task can fail every health check without being stopped yet.
-    health_events = current_health_events(service, tasks, since)
+    tasks = service_tasks(reader, svc.region, cluster, service, tasks, since)
+    health, unhealthy = health_failures(tasks, since)
+    # Only tasks of the fix: one the restart replaced exits non-zero on its way out.
     crashed = [
         t
-        for t in after
-        if t not in health
+        for t in tasks
+        if started_since(t, since)
+        and t.get("lastStatus") == "STOPPED"
+        and t not in health
         and any(c.get("exitCode") not in (None, 0) for c in t.get("containers", []))
     ]
     out.append(
         VerifyCheck(
             name="health",
-            ok=not health and not health_events,
+            ok=not health and not unhealthy,
             detail=(
-                f"{svc.name}: {len(health)} tasks failed health checks since the fix, "
-                f"{len(health_events)} health-check failures reported by ECS"
+                f"{svc.name}: {len(health)} tasks started since the fix failed health checks, "
+                f"{len(unhealthy)} running tasks unhealthy"
             ),
         )
     )
@@ -121,7 +176,7 @@ def _service_checks(
         VerifyCheck(
             name="errors",
             ok=not crashed,
-            detail=f"{svc.name}: {len(crashed)} tasks exited non-zero since the fix",
+            detail=f"{svc.name}: {len(crashed)} tasks started since the fix exited non-zero",
         )
     )
     if check_logs:
