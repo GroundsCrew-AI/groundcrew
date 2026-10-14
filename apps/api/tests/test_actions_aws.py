@@ -199,6 +199,7 @@ async def test_secret_rollback_moves_stages_and_never_reads_the_value(
     actions, cid = await _setup(session_factory, workspace, world)
     plan = await actions.plan_secret_rollback_version(cid, SECRET)
     assert (plan.current, plan.desired) == (BAD, GOOD)
+    assert plan.summary.endswith(f"back to version {GOOD}")  # the full id, never 8 characters
     run = await medic_run(session_factory, workspace)
     token = await approve_medic_action(
         session_factory, workspace, run, action=plan.action, plan_hash=plan.plan_hash()

@@ -10,6 +10,7 @@ A round is *waiting*, not failing, while a service's rollout is IN_PROGRESS (mor
 deployment) or, after a fix PR merged, no deployment has started since the merge: the checks
 then describe the old tasks, so the UI shows "waiting for rollout" until the deadline."""
 
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -33,6 +34,36 @@ def rollout_wait(
     if deploy_after is not None and (started is None or started < deploy_after):
         return f"{name}: no deploy since the fix PR merged"
     return None
+
+
+_TASK_ID = re.compile(r"\(task ([0-9a-f]{12,})\)")
+
+
+def current_health_events(
+    service: dict[str, Any], tasks: list[dict[str, Any]], since: datetime
+) -> list[dict[str, Any]]:
+    """ECS health-check failure events about the tasks running now: after the fix and after
+    the current (primary) deployment started, and not about a task that has stopped since. ECS
+    keeps old events: the failure of a task the fix replaced is not a failure of the fix."""
+    primary: dict[str, Any] = next(
+        (d for d in service.get("deployments", []) if d.get("status") == "PRIMARY"), {}
+    )
+    started = rules.to_time(primary.get("createdAt"))
+    cutoff = max(since, started) if started is not None else since
+    stopped = {str(t.get("taskArn", "")).rsplit("/", 1)[-1] for t in tasks}
+    out = []
+    for e in service.get("events", []):
+        message = str(e.get("message", ""))
+        at = rules.to_time(e.get("createdAt"))
+        if at is None or at <= cutoff:
+            continue
+        if not rules.HEALTH.search(message) or "fail" not in message.lower():
+            continue
+        task = _TASK_ID.search(message)
+        if task is not None and task.group(1) in stopped:
+            continue
+        out.append(e)
+    return out
 
 
 def _service_checks(
@@ -69,13 +100,7 @@ def _service_checks(
     after = [t for t in tasks if (rules.to_time(t.get("stoppedAt")) or since) > since]
     health = [t for t in after if rules.HEALTH.search(str(t.get("stoppedReason", "")))]
     # A running task can fail every health check without being stopped yet.
-    health_events = [
-        e
-        for e in service.get("events", [])
-        if (rules.to_time(e.get("createdAt")) or since) > since
-        and rules.HEALTH.search(str(e.get("message", "")))
-        and "fail" in str(e.get("message", "")).lower()
-    ]
+    health_events = current_health_events(service, tasks, since)
     crashed = [
         t
         for t in after

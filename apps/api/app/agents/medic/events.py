@@ -43,6 +43,7 @@ IncidentStatus = Literal[
     "verifying",  # re-checking the signals that opened it
     "resolved",  # signals recovered
     "failed",  # gave up: verify timed out, every fix rejected, budget, or an error
+    "merged",  # a newer incident on a related resource took it over (same outage)
 ]
 Severity = Literal["critical", "high", "medium", "low"]
 DetectedBy = Literal["watcher", "user"]
@@ -81,6 +82,10 @@ class Signal(BaseModel):
     resource_name: str | None = None
     detail: str = Field(examples=["3 tasks stopped with exit code 137 (OutOfMemoryError)"])
     at: datetime
+    # The service is down although no health check says so: nearly every operation fails
+    # (an error spike where >= 90% of its log lines are errors for 2+ minutes). Medic treats
+    # it like a failing health check: emergency fixes may be proposed.
+    down: bool = False
 
 
 class ChangeMarker(BaseModel):

@@ -10,12 +10,13 @@ only from `remembered_at`: at resolve, or, with a fix PR still open then, once t
 or closed (app.incidents.followups); a closed PR's fix is left out ("rollback only").
 """
 
+import re
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.medic.events import MemoryHit
+from app.agents.medic.events import ChangeMarker, MemoryHit
 from app.db.models import Incident, Resource
 from app.llm.budget import RunBudget
 from app.llm.client import LLMConfigError, LLMError, TokenFactory
@@ -72,8 +73,36 @@ def _jaccard(a: set[Any], b: set[Any]) -> float:
     return len(a & b) / len(a | b) if a | b else 0.0
 
 
+def _contained(a: set[Any], b: set[Any]) -> float:
+    """Overlap coefficient: 1.0 when one set holds the other."""
+    return len(a & b) / min(len(a), len(b)) if a and b else 0.0
+
+
+_SECRET = re.compile(r":secret:([^:]+?)(?:-[A-Za-z0-9]{6})?(?::|$)")
+
+
+def change_target(kind: str | None, ref: str | None, label: str | None = None) -> str | None:
+    """What a change was made to, the same across versions: "secret:checkout/database-url" for
+    any version of that secret. Only for changes that are the same fault when repeated (a secret
+    or config); a new commit or deploy is a different change every time."""
+    if kind == "secret_change" and ref:
+        found = _SECRET.search(ref)
+        return f"secret:{found.group(1)}" if found else None
+    if kind == "config" and (ref or label):
+        return f"config:{ref or label}"
+    return None
+
+
+def _past_target(past: Incident) -> str | None:
+    change = ((past.state or {}).get("root_cause") or {}).get("triggering_change") or {}
+    return change_target(change.get("kind"), change.get("ref"), change.get("description"))
+
+
 async def similar(
-    session: AsyncSession, incident: Incident, vector: list[float] | None
+    session: AsyncSession,
+    incident: Incident,
+    vector: list[float] | None,
+    changes: list[ChangeMarker] | None = None,
 ) -> list[MemoryHit]:
     base = select(Incident).where(
         Incident.workspace_id == incident.workspace_id,
@@ -97,12 +126,26 @@ async def similar(
         return [_hit(past, 1.0 - float(d)) for past, d in rows]
     rules = {s.get("rule") for s in incident.signals}
     affected = set(incident.affected_resource_ids)
+    # Changes in this incident's window, by what they changed (any version of the secret).
+    targets = {t for c in changes or [] if (t := change_target(c.kind, c.ref, c.label))}
     scored = []
     for past in await session.scalars(base.order_by(Incident.resolved_at.desc()).limit(50)):
-        score = FALLBACK_MAX * (
-            0.5 * _jaccard(rules, {s.get("rule") for s in past.signals})
-            + 0.5 * _jaccard(affected, set(past.affected_resource_ids))
-        )
+        past_rules = {s.get("rule") for s in past.signals}
+        past_resources = set(past.affected_resource_ids)
+        if _past_target(past) in targets:
+            # The same thing changed again before the same symptoms (checkout/database-url,
+            # then connection failures): the root cause most likely repeats. One service of
+            # the same outage (the worker's errors of an api + worker outage) is not penalized
+            # for being part of it: containment, not Jaccard.
+            score = FALLBACK_MAX * (
+                0.25 * _contained(rules, past_rules)
+                + 0.25 * _contained(affected, past_resources)
+                + 0.5
+            )
+        else:
+            score = FALLBACK_MAX * (
+                0.5 * _jaccard(rules, past_rules) + 0.5 * _jaccard(affected, past_resources)
+            )
         if score > 0:
             scored.append((score, past))
     scored.sort(key=lambda pair: -pair[0])

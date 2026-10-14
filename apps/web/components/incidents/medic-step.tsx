@@ -135,7 +135,11 @@ export function MedicStep({ step }: { step: Step }) {
             </p>
           ) : (
             <p className="text-muted-foreground">
-              {data.hits.length ? `${data.hits.length} similar past incidents, none close enough to reuse` : "No similar past incident"}
+              {data.hits.length
+                ? `${data.hits.length} similar past incidents, none close enough to reuse (best ${Math.round(
+                    Math.max(...data.hits.map((h) => h.similarity)) * 100,
+                  )}% similar)`
+                : "No similar past incident"}
             </p>
           )}
         </div>

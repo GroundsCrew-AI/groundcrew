@@ -2062,6 +2062,10 @@ export interface components {
             memory: components["schemas"]["MemoryUse"] | null;
             /** Memory Reused */
             memory_reused: boolean;
+            /** Merged From */
+            merged_from?: string[];
+            /** Merged Into */
+            merged_into?: string | null;
             /**
              * Opened At
              * Format: date-time
@@ -2094,7 +2098,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed";
+            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed" | "merged";
             /**
              * Test
              * @default false
@@ -2264,6 +2268,10 @@ export interface components {
             id: string;
             /** Memory Reused */
             memory_reused: boolean;
+            /** Merged From */
+            merged_from?: string[];
+            /** Merged Into */
+            merged_into?: string | null;
             /**
              * Opened At
              * Format: date-time
@@ -2288,7 +2296,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed";
+            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed" | "merged";
             /**
              * Test
              * @default false
@@ -2336,7 +2344,7 @@ export interface components {
              */
             merged_into: string | null;
             /** Previous Status */
-            previous_status: ("open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed") | null;
+            previous_status: ("open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed" | "merged") | null;
             /**
              * Reason
              * @default null
@@ -2346,7 +2354,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed";
+            status: "open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed" | "merged";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3089,6 +3097,11 @@ export interface components {
              * @example 3 tasks stopped with exit code 137 (OutOfMemoryError)
              */
             detail: string;
+            /**
+             * Down
+             * @default false
+             */
+            down: boolean;
             /**
              * Resource Id
              * @default null
@@ -4137,7 +4150,7 @@ export interface operations {
         parameters: {
             query: {
                 workspace_id: string;
-                status?: ("open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed") | null;
+                status?: ("open" | "investigating" | "waiting_approval" | "applying" | "verifying" | "resolved" | "failed" | "merged") | null;
                 severity?: ("critical" | "high" | "medium" | "low") | null;
                 /** @description Incidents affecting this resource */
                 resource?: string | null;

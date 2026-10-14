@@ -44,7 +44,7 @@ REDIAGNOSE_JOB: Final = "rediagnose_incident"
 SPIKE_GROWTH = 3.0
 _ERROR_LINES = re.compile(r"^(\d+) error lines")
 OPEN_STATUSES: frozenset[str] = frozenset(
-    s for s in get_args(IncidentStatus) if s not in ("resolved", "failed")
+    s for s in get_args(IncidentStatus) if s not in ("resolved", "failed", "merged")
 )
 MAX_SIGNALS = 50
 # Signals before the first one still belong to the incident's story (a deploy, a secret change).
@@ -204,18 +204,29 @@ def material_signals(
     existing: list[dict[str, object]], fresh: list[dict[str, object]]
 ) -> list[dict[str, object]]:
     """New signals that change the picture: a rule the incident has not seen (slow queries,
-    health checks after an error spike), or an error spike SPIKE_GROWTH times the largest
-    before it (8 error lines, then 112)."""
+    health checks after an error spike), a resource it has not seen (the api's errors after the
+    worker's: the same outage on a neighbor), a spike that now means "down", or an error spike
+    SPIKE_GROWTH times the largest before it (8 error lines, then 112)."""
     rules = {s.get("rule") for s in existing}
+    resources = {s.get("resource_id") for s in existing}
+    down = {s.get("resource_id") for s in existing if s.get("down")}
     largest = max((_error_lines(s) for s in existing), default=0)
     out = []
     for signal in fresh:
-        if signal.get("rule") not in rules or (
-            signal.get("rule") == "log_error_spike"
-            and _error_lines(signal) >= max(SPIKE_GROWTH * largest, largest + 1)
+        if (
+            signal.get("rule") not in rules
+            or signal.get("resource_id") not in resources
+            or (signal.get("down") and signal.get("resource_id") not in down)
+            or (
+                signal.get("rule") == "log_error_spike"
+                and _error_lines(signal) >= max(SPIKE_GROWTH * largest, largest + 1)
+            )
         ):
             out.append(signal)
         rules.add(signal.get("rule"))
+        resources.add(signal.get("resource_id"))
+        if signal.get("down"):
+            down.add(signal.get("resource_id"))
         largest = max(largest, _error_lines(signal))
     return out
 
@@ -318,7 +329,8 @@ async def open_incident(
         affected_resource_ids=unique_ids,
         group_resource_ids=group,
         signals=[*prior_signals, *(s.model_dump(mode="json") for s in signals)][-MAX_SIGNALS:],
-        state={},
+        # Kept by MedicState (extra fields): the incidents this one took over.
+        state={"merged_from": [str(p.id) for p in merged]} if merged else {},
         is_test=is_test,
     )
     session.add(incident)
@@ -351,6 +363,10 @@ async def open_incident(
         ),
     )
     for prior in merged:
+        # Its own status: the outage goes on in the newer incident, it did not "fail".
+        previous = prior.status
+        prior.status = "merged"
+        prior.state = {**(prior.state or {}), "merged_into": str(incident.id)}
         prior_run = await latest_run(session, prior.id)
         if prior_run is not None:
             await record_step(
@@ -360,8 +376,8 @@ async def open_incident(
                 output_summary=f"Merged into a newer incident: {incident.title}"[:300],
                 data=IncidentUpdated(
                     incident_id=prior.id,
-                    status="failed",
-                    previous_status="failed",
+                    status="merged",
+                    previous_status=previous if previous in get_args(IncidentStatus) else None,
                     at=now,
                     reason="The same outage showed up on a related resource.",
                     merged_into=incident.id,

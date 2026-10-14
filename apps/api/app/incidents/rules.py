@@ -33,6 +33,11 @@ RECENT = timedelta(minutes=5)
 BASELINE = timedelta(minutes=25)
 MIN_ERRORS = 5
 ERROR_RATE_FACTOR = 3.0
+# An error spike means "down" when this share of the service's log lines are errors, over at
+# least DOWN_MIN_SPAN and DOWN_MIN_LINES lines (no health check needed).
+DOWN_ERROR_SHARE = 0.9
+DOWN_MIN_SPAN = timedelta(minutes=2)
+DOWN_MIN_LINES = 3
 CPU_FLOOR = 40.0
 LATENCY_FLOOR_MS = 20.0
 SPIKE_FACTOR = 2.0
@@ -194,6 +199,8 @@ def log_signal(
     base_rate = len(before) / base_seconds * 60
     if len(recent) < MIN_ERRORS or recent_rate < ERROR_RATE_FACTOR * base_rate + 0.5:
         return None
+    share = error_share(events, min(recent), max(recent))
+    down = share is not None
     return Signal(
         rule="log_error_spike",
         resource_id=resource_id,
@@ -201,9 +208,30 @@ def log_signal(
         detail=(
             f"{len(recent)} error lines in the last 5 minutes "
             f"({recent_rate:.1f}/min, before {base_rate:.1f}/min)"
+            + (
+                f"; {share:.0%} of its log lines are errors: nearly every operation fails"
+                if down
+                else ""
+            )
         ),
         at=min(recent),
+        down=down,
     )
+
+
+def error_share(
+    events: list[tuple[datetime, str]], first: datetime, last: datetime
+) -> float | None:
+    """The share of log lines that are errors from the first recent error to the last, when it
+    means the service is down: DOWN_ERROR_SHARE or more, over DOWN_MIN_SPAN or longer, with at
+    least DOWN_MIN_LINES lines (a worker whose every poll fails). None otherwise."""
+    if last - first < DOWN_MIN_SPAN:
+        return None
+    lines = [message for at, message in events if first <= at <= last]
+    if len(lines) < DOWN_MIN_LINES:
+        return None
+    share = sum(1 for message in lines if is_error_line(message)) / len(lines)
+    return share if share >= DOWN_ERROR_SHARE else None
 
 
 def fetch_logs(

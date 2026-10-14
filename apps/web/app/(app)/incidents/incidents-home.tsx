@@ -18,6 +18,8 @@ const TABS: { label: string; status?: IncidentStatus; pendingFix?: boolean }[] =
   { label: "Resolved", status: "resolved" },
   { label: "Fix pending", pendingFix: true },
   { label: "Not resolved", status: "failed" },
+  // Hidden from "All": they live on in the incident that took them over.
+  { label: "Merged", status: "merged" },
 ];
 const PENDING_TAB = TABS.findIndex((t) => t.pendingFix);
 

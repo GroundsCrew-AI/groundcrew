@@ -29,6 +29,13 @@ describe("IncidentsHome", () => {
     expect(useIncidents).toHaveBeenLastCalledWith("ws-1", { pending_fix: true });
   });
 
+  it("hides merged incidents from All and shows them under Merged", async () => {
+    render(<IncidentsHome />);
+    expect(useIncidents).toHaveBeenLastCalledWith("ws-1", {});
+    await userEvent.click(screen.getByRole("tab", { name: "Merged" }));
+    expect(useIncidents).toHaveBeenLastCalledWith("ws-1", { status: "merged" });
+  });
+
   it("opens on the filter from the overview link", () => {
     render(<IncidentsHome initialPendingFix />);
     expect(screen.getByRole("tab", { name: "Fix pending" })).toHaveAttribute("aria-selected", "true");

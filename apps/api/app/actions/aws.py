@@ -246,7 +246,7 @@ class AwsEmergencyActions:
             params={"secret_arn": secret_arn},
             current=current,
             desired=previous,
-            summary=f"Move AWSCURRENT of {_short(secret_arn)} back to version {previous[:8]}",
+            summary=f"Move AWSCURRENT of {_short(secret_arn)} back to version {previous}",
             planned_at=datetime.now(UTC),
         )
 
