@@ -147,3 +147,15 @@ All additive.
   never returned by incident memory, and is never deduped or merged with real incidents (or real
   ones with it). The Report dialog has a "This is a test" checkbox; the list shows a "Test" tag.
   Migration `a4f2c7e9b1d6` adds `incidents.is_test`.
+
+## Phase 5: emergency fix retry (2026-10-14)
+
+All additive.
+- `POST /incidents/{incident_id}/fixes/{fix_id}/retry` -> `IncidentDetail`. Only for a fix with
+  `kind=emergency` and `status=failed` on an unresolved incident, while Medic is done or
+  verifying (409 otherwise; 404 for an unknown fix). Plans the action again from the current
+  state; 422 with the reason when it cannot be planned (e.g. "rollback needs PassRole on ...").
+  On success the fix (and the fixes it held back via `depends_on`) are `waiting_approval` with
+  new approvals (`tool_call_id` `medic:<incident>:<fix>:retry-<n>`) on the same Medic run, which
+  goes back to `waiting_approval`; the incident too. Approving resumes the run as usual.
+- Research results are de-duplicated by URL.

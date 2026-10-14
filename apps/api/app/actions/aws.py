@@ -7,17 +7,25 @@ OperateSecretArns. `execute` consumes the approved action before its first write
 the state first: if it no longer matches the plan, nothing is written (ok=False).
 
 - ecs_rollback_service: UpdateService to the newest ACTIVE revision of the family older than
-  the one running now (task definitions are never deregistered by Groundcrew).
+  the one running now (task definitions are never deregistered by Groundcrew). ECS checks
+  iam:PassRole on that revision's execution and task roles, so the plan first reads the
+  operate role's PassRole scope (OperatePassRoleArns, via the read-only role's
+  iam:GetRolePolicy) and stops with "rollback needs PassRole on ..." when a role is outside it,
+  instead of an approval that AWS would refuse.
 - secret_rollback_version: UpdateSecretVersionStage moves AWSCURRENT to the version holding
   AWSPREVIOUS, by version id. GetSecretValue is never called (and denied by the role).
 - force_redeploy: UpdateService(forceNewDeployment=True), so new tasks read secrets again.
 """
 
 import asyncio
+import json
+import logging
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from fnmatch import fnmatchcase
 from typing import Any
+from urllib.parse import unquote
 
 from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import select
@@ -39,6 +47,12 @@ from app.policy.actions import ApprovedAction, consume_approved_action
 
 Client = Any
 
+logger = logging.getLogger("groundcrew.actions")
+
+ECS_TASKS = "ecs-tasks.amazonaws.com"
+# The template's explicit Deny (NeverPassGroundcrewRoles), whatever OperatePassRoleArns says.
+NEVER_PASSED = "arn:*:iam::*:role/groundcrew-*"
+
 
 def _short(arn: str | None) -> str:
     if not arn:
@@ -46,6 +60,42 @@ def _short(arn: str | None) -> str:
     if ":secret:" in arn:
         return arn.split(":secret:", 1)[1]
     return arn.rsplit("/", 1)[-1]
+
+
+def _listed(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def pass_role_patterns(document: Any) -> list[str]:
+    """Role ARN patterns an inline policy lets the holder pass to ECS tasks: Allow statements
+    on iam:PassRole whose iam:PassedToService condition (if any) includes ecs-tasks."""
+    if isinstance(document, str):
+        document = json.loads(unquote(document))
+    out: list[str] = []
+    for st in _listed((document or {}).get("Statement")):
+        actions = [str(a).lower() for a in _listed(st.get("Action"))]
+        if st.get("Effect") != "Allow" or not {"iam:passrole", "iam:*", "*"} & set(actions):
+            continue
+        services: list[str] = []
+        for op, keys in (st.get("Condition") or {}).items():
+            for key, value in keys.items():
+                if key.lower() == "iam:passedtoservice" and op.startswith("String"):
+                    services += [str(v) for v in _listed(value)]
+        if services and ECS_TASKS not in services:
+            continue
+        out += [str(r) for r in _listed(st.get("Resource"))]
+    return out
+
+
+def roles_outside(roles: list[str], patterns: list[str]) -> list[str]:
+    """The roles no pattern allows passing (IAM wildcards: * any run, ? one character)."""
+    return [
+        role
+        for role in roles
+        if fnmatchcase(role, NEVER_PASSED) or not any(fnmatchcase(role, p) for p in patterns)
+    ]
 
 
 def _revision(arn: str) -> tuple[str, int]:
@@ -61,24 +111,50 @@ class AwsEmergencyActions:
         settings: Settings | None = None,
         *,
         client_for: Callable[[Connection, str], Client] | None = None,
+        read_client_for: Callable[[Connection, str], Client] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.settings = settings or get_settings()
         self._client_for = client_for or self._operate_client
+        self._read_client_for = read_client_for or self._read_client
 
     def _operate_client(self, conn: Connection, service: str) -> Client:
         session = ConnectionCredentialsProvider([conn]).aws_operate_session(conn.id)
         return session.client(service, region_name=self.settings.discovery_regions[0])
 
-    async def _client(self, connection_id: uuid.UUID, service: str) -> Client:
+    def _read_client(self, conn: Connection, service: str) -> Client:
+        session = ConnectionCredentialsProvider([conn]).aws_session(conn.id)
+        return session.client(service, region_name=self.settings.discovery_regions[0])
+
+    async def _connection(self, connection_id: uuid.UUID) -> Connection:
         async with self.session_factory() as session:
             conn = await session.scalar(select(Connection).where(Connection.id == connection_id))
         if conn is None or conn.kind != "aws":
             raise EmergencyActionError("The AWS connection no longer exists.")
+        return conn
+
+    async def _client(self, connection_id: uuid.UUID, service: str) -> Client:
+        conn = await self._connection(connection_id)
         try:
             return await asyncio.to_thread(self._client_for, conn, service)
         except CredentialsError as exc:
             raise EmergencyActionError(str(exc)) from None
+
+    async def _pass_role_patterns(self, connection_id: uuid.UUID) -> list[str] | None:
+        """What the operate role may pass to ECS tasks (its stack's OperatePassRoleArns), read
+        from its inline policy with the read-only role; None when that cannot be read (the plan
+        then goes ahead and AWS has the last word at execute time)."""
+        conn = await self._connection(connection_id)
+        role = str((conn.config or {}).get("operate_role_arn") or "").rsplit("/", 1)[-1]
+        if not role:
+            return None
+        try:
+            iam = await asyncio.to_thread(self._read_client_for, conn, "iam")
+            found = await self._call(iam, "get_role_policy", RoleName=role, PolicyName=role)
+            return pass_role_patterns(found.get("PolicyDocument"))
+        except (CredentialsError, EmergencyActionError, ValueError):
+            logger.warning("could not read the operate role's PassRole scope", exc_info=True)
+            return None
 
     @staticmethod
     async def _call(client: Client, operation: str, **params: Any) -> Any:
@@ -128,6 +204,20 @@ class AwsEmergencyActions:
         if not older:
             raise EmergencyActionError(f"{service} has no earlier task definition revision.")
         previous = max(older, key=lambda arn: _revision(arn)[1])
+        described = await self._call(ecs, "describe_task_definition", taskDefinition=previous)
+        definition = described.get("taskDefinition") or {}
+        roles = [
+            str(definition[k]) for k in ("executionRoleArn", "taskRoleArn") if definition.get(k)
+        ]
+        if roles:
+            patterns = await self._pass_role_patterns(connection_id)
+            missing = roles_outside(roles, patterns) if patterns is not None else []
+            if missing:
+                raise EmergencyActionError(
+                    f"rollback needs PassRole on {', '.join(dict.fromkeys(missing))}; update the "
+                    "connection: add the role to OperatePassRoleArns on the "
+                    "groundcrew-read-only stack (EnableOperate=true), then plan again."
+                )
         return ActionPlan(
             action=ECS_ROLLBACK_SERVICE,
             connection_id=connection_id,

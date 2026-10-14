@@ -8,9 +8,10 @@ Description: >-
   only create and change groundcrew-* resources tagged project=groundcrew (and write, never
   read, groundcrew/* secrets). EnableOperate=true (independent of Tier) creates the
   groundcrew-operate role for approved emergency fixes: roll an ECS service back to an existing
-  task definition revision, restart it, or move a secret's AWSCURRENT stage back to the previous
-  version, only on the services and secrets listed in OperateServiceArns / OperateSecretArns and
-  never reading a secret value. Delete this stack to remove all access.
+  revision, restart it, or move a secret's AWSCURRENT stage back to the previous version, only
+  on the services and secrets listed in OperateServiceArns / OperateSecretArns and never
+  reading a secret value (rollbacks may pass OperatePassRoleArns to ECS). Delete this stack to
+  remove all access.
 
 Parameters:
   GroundcrewPrincipalArn:
@@ -71,6 +72,16 @@ Parameters:
       Secrets Manager secrets whose version stages the operate role may move, as ARNs; a prefix
       wildcard is allowed (arn:aws:secretsmanager:REGION:ACCOUNT:secret:checkout/*). Used only
       with EnableOperate=true.
+  OperatePassRoleArns:
+    Type: CommaDelimitedList
+    Default: "arn:aws:iam::*:role/none"
+    Description: >-
+      IAM roles a rollback may hand back to ECS: the execution and task roles of the task
+      definition revisions the services above run (ECS needs iam:PassRole on them to change a
+      service's revision), as ARNs; a name wildcard is allowed
+      (arn:aws:iam::ACCOUNT:role/checkout-*). Passed to ecs-tasks.amazonaws.com only, never a
+      groundcrew-* role. The default matches nothing: rollbacks of services whose revisions have
+      roles then stop at the plan. Used only with EnableOperate=true.
 
 Rules:
   # The defaults above match nothing; turning operate on needs real ARNs in both lists.
@@ -505,8 +516,9 @@ Resources:
           Value: groundcrew
 
   # ------------------------------------------------------------------ EnableOperate=true only
-  # Approved emergency fixes on the customer's own resources. No create, delete, or IAM; a
-  # rollback reuses an existing task definition revision, so no iam:PassRole is needed.
+  # Approved emergency fixes on the customer's own resources. No create or delete; the only IAM
+  # action is iam:PassRole on OperatePassRoleArns to ECS tasks, which UpdateService needs to
+  # point a service at a revision that has an execution or task role.
   OperateRole:
     Type: AWS::IAM::Role
     Condition: IsOperate
@@ -549,6 +561,18 @@ Resources:
                   - secretsmanager:UpdateSecretVersionStage
                   - secretsmanager:DescribeSecret
                 Resource: !Ref OperateSecretArns
+              - Sid: PassListedRolesToEcsTasksForRollback
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Ref OperatePassRoleArns
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+              # Even if OperatePassRoleArns is written too wide, Groundcrew's own roles stay out.
+              - Sid: NeverPassGroundcrewRoles
+                Effect: Deny
+                Action: iam:PassRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/groundcrew-*"
               # Explicit deny wins over any allow, including ones added to this role later.
               - Sid: NeverReadSecretValuesOrData
                 Effect: Deny

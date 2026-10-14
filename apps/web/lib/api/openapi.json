@@ -8612,6 +8612,74 @@
         ]
       }
     },
+    "/incidents/{incident_id}/fixes/{fix_id}/retry": {
+      "post": {
+        "description": "Retry a failed emergency fix after its cause (for example a missing permission) was\nfixed: plans it again from the current state and requests a new approval on the same Medic\nrun. Nothing changes in AWS until someone approves.",
+        "operationId": "retry_incident_fix_incidents__incident_id__fixes__fix_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "fix_id",
+            "required": true,
+            "schema": {
+              "title": "Fix Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Incident or fix not found for this user."
+          },
+          "409": {
+            "description": "The fix did not fail, or Medic is still working."
+          },
+          "422": {
+            "description": "The fix cannot be planned now; the detail says what to change."
+          }
+        },
+        "summary": "Retry Incident Fix",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
     "/me": {
       "get": {
         "operationId": "me_me_get",

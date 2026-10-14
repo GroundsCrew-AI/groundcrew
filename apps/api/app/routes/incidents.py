@@ -9,19 +9,22 @@ like everywhere else). Live progress is on the Medic run's event stream.
 import base64
 import binascii
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 
 from app.accounts import NotFoundError, member_workspace
+from app.actions import get_emergency_actions
+from app.actions.base import EmergencyActionError, EmergencyActions
 from app.agents.medic.events import IncidentStatus, Severity
+from app.agents.medic.retry import RetryError, retry_fix
 from app.connectors.github import GitHubApp, get_github_app
 from app.db.models import Incident
 from app.incidents import views
 from app.incidents.store import ResourceNotFoundError, open_incident
-from app.routes.deps import CurrentUser, SessionDep
+from app.routes.deps import CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
 from app.routes.incident_schemas import (
     IncidentCreate,
     IncidentCreated,
@@ -48,6 +51,14 @@ def get_github() -> GitHubApp | None:
 
 
 GitHubDep = Annotated[GitHubApp | None, Depends(get_github)]
+
+
+def get_actions(factory: SessionFactoryDep, settings: SettingsDep) -> EmergencyActions:
+    """The emergency actions a retry plans with (groundcrew-operate); tests override it."""
+    return get_emergency_actions(factory, settings)
+
+
+ActionsDep = Annotated[EmergencyActions, Depends(get_actions)]
 
 
 @router.post(
@@ -160,3 +171,38 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         return datetime.fromisoformat(created), uuid.UUID(incident_id)
     except (binascii.Error, UnicodeDecodeError, ValueError):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid cursor.") from None
+
+
+@router.post(
+    "/{incident_id}/fixes/{fix_id}/retry",
+    responses={
+        404: {"description": "Incident or fix not found for this user."},
+        409: {"description": "The fix did not fail, or Medic is still working."},
+        422: {"description": "The fix cannot be planned now; the detail says what to change."},
+    },
+)
+async def retry_incident_fix(
+    incident_id: uuid.UUID,
+    fix_id: str,
+    user: CurrentUser,
+    session: SessionDep,
+    actions: ActionsDep,
+) -> IncidentDetail:
+    """Retry a failed emergency fix after its cause (for example a missing permission) was
+    fixed: plans it again from the current state and requests a new approval on the same Medic
+    run. Nothing changes in AWS until someone approves."""
+    incident = await session.get(Incident, incident_id)
+    if incident is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Incident not found.")
+    await _check_member(session, user, incident.workspace_id, what="Incident")
+    try:
+        await retry_fix(session, incident, fix_id, actions, now=datetime.now(UTC))
+    except RetryError as exc:
+        await session.rollback()
+        code = status.HTTP_404_NOT_FOUND if "not found" in str(exc) else status.HTTP_409_CONFLICT
+        raise HTTPException(code, str(exc)) from None
+    except EmergencyActionError as exc:
+        await session.rollback()
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from None
+    await session.refresh(incident)
+    return await views.detail(session, incident)

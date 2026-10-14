@@ -26,6 +26,8 @@ describe("AwsOperateDialog", () => {
     expect(screen.getByText("EnableOperate")).toBeInTheDocument();
     expect(screen.getByText("arn:aws:ecs:us-east-2:881050425883:service/CLUSTER/*")).toBeInTheDocument();
     expect(screen.getByText("arn:aws:secretsmanager:us-east-2:881050425883:secret:PREFIX/*")).toBeInTheDocument();
+    expect(screen.getByText("OperatePassRoleArns")).toBeInTheDocument();
+    expect(screen.getByText("arn:aws:iam::881050425883:role/checkout-*")).toBeInTheDocument();
     expect(screen.getByText(/only after a person approves each fix/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Verify" }));
     expect(mutate).toHaveBeenCalledWith({ connectionId: conn.id, enabled: true }, expect.anything());

@@ -446,6 +446,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/incidents/{incident_id}/fixes/{fix_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Incident Fix
+         * @description Retry a failed emergency fix after its cause (for example a missing permission) was
+         *     fixed: plans it again from the current state and requests a new approval on the same Medic
+         *     run. Nothing changes in AWS until someone approves.
+         */
+        post: operations["retry_incident_fix_incidents__incident_id__fixes__fix_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -4089,6 +4111,52 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    retry_incident_fix_incidents__incident_id__fixes__fix_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                incident_id: string;
+                fix_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentDetail"];
+                };
+            };
+            /** @description Incident or fix not found for this user. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The fix did not fail, or Medic is still working. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The fix cannot be planned now; the detail says what to change. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

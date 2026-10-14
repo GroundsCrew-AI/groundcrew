@@ -1,12 +1,13 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ExternalLink, GitPullRequest, X } from "lucide-react";
+import { Check, ExternalLink, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useState } from "react";
 import { toast } from "sonner";
 
 import { ChangeStrip } from "@/components/incidents/change-strip";
+import { Fixes } from "@/components/incidents/fix-list";
 import { IncidentStatusPill, SeverityTag } from "@/components/incidents/incident-list";
 import { RootCausePanel } from "@/components/incidents/root-cause-panel";
 import { Timeline } from "@/components/runs/timeline";
@@ -16,7 +17,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, type Approval, type Decision } from "@/lib/api/client";
 import { elapsedMs, formatCost, formatDuration, formatRelative, formatTimestamp, formatTokens } from "@/lib/format";
-import { fixLabel, incidentKeys, type IncidentDetail, OPEN_STATUSES, ruleLabel, useIncident } from "@/lib/incidents";
+import {
+  fixLabel,
+  incidentKeys,
+  type IncidentDetail,
+  OPEN_STATUSES,
+  ruleLabel,
+  useIncident,
+  useRetryFix,
+} from "@/lib/incidents";
 import { useDecide, useRunDetail, useStopRun } from "@/lib/queries";
 import { initialTimeline, timelineReducer } from "@/lib/timeline";
 import { useRunStream } from "@/lib/use-run-stream";
@@ -36,31 +45,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h2 className="text-[13px] font-medium">{title}</h2>
       {children}
     </section>
-  );
-}
-
-function Fixes({ incident }: { incident: IncidentDetail }) {
-  if (incident.fixes.length === 0) return null;
-  return (
-    <Section title="Fixes">
-      <ol className="divide-y rounded-lg border">
-        {incident.fixes.map((f) => (
-          <li key={f.fix.fix_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[13px]">
-            <span className="text-subtle">{f.fix.order}.</span>
-            <span className="min-w-0 flex-1">{f.fix.title}</span>
-            <span className="text-[12px] text-muted-foreground">{f.fix.kind === "pr" ? "Pull request" : "Emergency action"}</span>
-            <span className="text-[12px] font-medium capitalize">{f.status.replaceAll("_", " ")}</span>
-            {f.pull_request && (
-              <a href={f.pull_request.url} target="_blank" rel="noreferrer"
-                className="inline-flex items-center gap-1 font-mono text-[12px] underline-offset-4 hover:underline">
-                <GitPullRequest aria-hidden="true" className="size-3.5" />#{f.pull_request.number} {f.pull_request.state}
-                <span className="sr-only">(opens in a new tab)</span>
-              </a>
-            )}
-          </li>
-        ))}
-      </ol>
-    </Section>
   );
 }
 
@@ -95,6 +79,8 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
   const [deciding, setDeciding] = useState<{ id: string; decision: Decision } | null>(null);
   const decide = useDecide();
   const stop = useStopRun();
+  const retry = useRetryFix(incidentId);
+  const [retryError, setRetryError] = useState<{ fixId: string; message: string } | null>(null);
 
   const detail = useRunDetail(runId, { enabled: Boolean(runId) });
   useEffect(() => {
@@ -128,6 +114,22 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
       );
     },
     [decide],
+  );
+
+  const onRetry = useCallback(
+    (fixId: string) => {
+      setRetryError(null);
+      retry.mutate(fixId, {
+        onSuccess: async () => {
+          toast.success("Planned again. Approve it in the timeline to run it.");
+          // The run is open again: reload it and follow its stream.
+          const reloaded = await detail.refetch();
+          if (reloaded.data) dispatch({ type: "reopened", run: reloaded.data });
+        },
+        onError: (error) => setRetryError({ fixId, message: error.message }),
+      });
+    },
+    [retry, detail],
   );
 
   const parent = <Link href="/incidents" className="hover:text-foreground">Incidents</Link>;
@@ -251,13 +253,18 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
             <ChangeStrip changes={i.changes} windowStart={i.window.start} windowEnd={i.window.end ?? i.resolved_at} signals={i.signals} />
           </Section>
         )}
-        <Fixes incident={i} />
+        <Fixes
+          incident={i}
+          onRetry={onRetry}
+          retrying={retry.isPending ? (retry.variables ?? null) : null}
+          retryError={retryError}
+        />
         <Verify incident={i} />
         {i.research.length > 0 && (
           <Section title="Research">
             <ul className="space-y-1 text-[12.5px]">
-              {i.research.map((r) => (
-                <li key={r.url}>
+              {i.research.map((r, n) => (
+                <li key={`${n}-${r.url}`}>
                   <a href={r.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline-offset-4 hover:underline">
                     {r.title}<ExternalLink aria-hidden="true" className="size-3" />
                     <span className="sr-only">(opens in a new tab)</span>
