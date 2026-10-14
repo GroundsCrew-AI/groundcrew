@@ -1195,12 +1195,18 @@ class MedicRunner:
         state.outcome = Outcome(result="resolved", reason=reason)
         _save(incident, state)
         await self._status(session, incident, run, "resolved", "signals recovered")
-        # A fix PR not deployed yet: the repo still has the bad change. Track it, and keep the
-        # incident out of memory until the PR is merged or closed.
+        # A fix PR not deployed yet, or a rollback with no fix PR: the repo still has the bad
+        # change. Track it; an open fix PR keeps the incident out of memory until it is merged
+        # or closed.
         created = await fu.create_on_resolve(session, incident, state, now)
-        fu.remember_if_settled(incident, any(f.state == "open" for f in created), now)
+        fu.remember_if_settled(incident, fu.holds_memory(created), now)
         if created:
-            pending = ", ".join(f"{f.repo}#{f.number}" for f in created)
+            pending = ", ".join(
+                f"{f.repo}#{f.number}"
+                if f.kind == "fix_pr"
+                else f"commit {(f.triggering_commit or '')[:7]} still in {f.repo}"
+                for f in created
+            )
             await fu.record_change(session, incident, run, f"Permanent fix pending: {pending}", now)
         applied = [r for r in state.fixes if r.status == "applied"]
         detect_ms = (

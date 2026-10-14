@@ -185,3 +185,9 @@ All additive.
 - `incident_updated` "No fix yet; waiting 90 s for related signals" before "No fix".
 - Secret version ids are shown in full (plan summary, the Map's `version_stages` keys).
 
+- `FollowUp.kind` `change_in_repo` (rolled back, no fix PR on its way): states `open`,
+  `reverted`, `dismissed`; `number` and `url` are null. New `FollowUp.dismissed_at` and
+  `dismissed_by`. `POST /incidents/{incident_id}/followups/{followup_id}/dismiss` ->
+  `IncidentDetail` (409 unless an open `change_in_repo`).
+  Migration `c3e8a1f4b6d7` (after `b7d1e3f5a9c2`): number, url, installation_id nullable;
+  dismissed_at, dismissed_by added.

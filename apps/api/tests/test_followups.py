@@ -11,8 +11,9 @@ import pytest
 from sqlalchemy import select
 
 from app.agents.medic import memory as mem
+from app.agents.medic.events import ChangeMarker
 from app.agents.medic.state import MedicState
-from app.db.models import Incident, IncidentFollowUp, Run, RunStep
+from app.db.models import Connection, Incident, IncidentFollowUp, Run, RunStep
 from app.db.session import SessionFactory
 from app.incidents import followups as fu
 from tests.discovery_helpers import INSTALLATION, Recorded, github_app
@@ -294,3 +295,170 @@ async def test_medic_resolve_records_the_followup_on_its_run(
         )
     assert step is not None and step.data is not None
     assert step.data["type"] == "incident_updated" and step.data["followups"][0]["number"] == 9
+
+
+# --- change_in_repo: rolled back, no fix PR on its way -------------------------------------------
+
+PARENT = "c" * 40
+OLDER, NEWEST = "d" * 40, "e" * 40
+TASK = "worker/ecs-task.json"
+
+
+async def _rolled_back(sf: SessionFactory, ws: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
+    """Resolved by the rollback; the fix PR was rejected. The workspace's GitHub connection
+    lists the repo."""
+    ids = await _demo(sf, ws)
+    incident_id, run_id = await _open(sf, ws, ids["worker"], "ecs_tasks_stopped")
+    async with sf() as session:
+        session.add(
+            Connection(
+                workspace_id=ws,
+                kind="github",
+                name="GroundsCrew-AI",
+                status="connected",
+                config={"installation_id": INSTALLATION, "repos": [REPO]},
+            )
+        )
+        incident = await session.get_one(Incident, incident_id)
+        state = _state(incident_id, uuid.uuid4(), ids["conn"])
+        rc = state.root_cause
+        assert rc is not None and rc.triggering_change is not None
+        state.root_cause = rc.model_copy(
+            update={
+                "triggering_change": rc.triggering_change.model_copy(
+                    update={"kind": "commit", "ref": BAD[:7]}
+                )
+            }
+        )
+        state.changes = [
+            ChangeMarker(kind="commit", ref=BAD, at=T0, label="cap memory", commit=BAD, repo=REPO)
+        ]
+        pr_fix = state.fixes[1]
+        state.fixes[1] = pr_fix.model_copy(update={"status": "rejected", "pull_request": None})
+        incident.state = state.model_dump(mode="json")
+        incident.status, incident.resolved_at = "resolved", T0
+        created = await fu.create_on_resolve(session, incident, state, T0)
+        fu.remember_if_settled(incident, fu.holds_memory(created), T0)
+        await session.commit()
+    return incident_id, run_id
+
+
+def _deploys(*heads: tuple[str, str]) -> dict[str, Any]:
+    return {
+        "workflow_runs": [
+            {
+                "path": ".github/workflows/deploy.yml",
+                "conclusion": "success",
+                "head_sha": head,
+                "created_at": created,
+                "updated_at": created,
+                "html_url": f"https://github.com/{REPO}/actions/runs/{head[:4]}",
+            }
+            for head, created in heads
+        ]
+    }
+
+
+def _github(blob_at_newest: str) -> Any:
+    """GitHub for the revert check: the bad commit changed one file; at its parent the file is
+    "good"; at the newest deploy's head it is `blob_at_newest`."""
+
+    def contents(request: httpx.Request) -> dict[str, str]:
+        ref = request.url.params["ref"]
+        return {"sha": "good" if ref == PARENT else blob_at_newest if ref == NEWEST else "bad"}
+
+    return github_app(
+        extra_routes={
+            f"GET /repos/{REPO}": {"default_branch": "main"},
+            RUNS: _deploys((OLDER, "2026-10-14T10:30:00Z"), (NEWEST, "2026-10-14T11:00:00Z")),
+            f"GET /repos/{REPO}/commits/{BAD}": {
+                "sha": BAD,
+                "parents": [{"sha": PARENT}],
+                "files": [{"filename": TASK, "status": "modified"}],
+            },
+            f"GET /repos/{REPO}/contents/{TASK}": contents,
+        }
+    )
+
+
+async def test_a_rollback_without_a_fix_pr_tracks_the_change_still_in_the_repo(
+    session_factory: SessionFactory, frank: Member
+) -> None:
+    sf = session_factory
+    incident_id, run_id = await _rolled_back(sf, frank.workspace_id)
+    (row,) = await _followups(sf, incident_id)
+    assert (row.kind, row.state, row.repo, row.triggering_commit) == (
+        "change_in_repo",
+        "open",
+        REPO,
+        BAD,
+    )
+    assert (row.installation_id, row.number, row.base) == (INSTALLATION, None, "")
+    # The rollback was really applied: memory may use the incident now.
+    assert (await _incident(sf, incident_id)).remembered_at == T0
+
+    # The newest deploy still has the change: still open.
+    assert await fu.track_followups(sf, _github("bad"), now=T0 + timedelta(minutes=5)) == 0
+    (row,) = await _followups(sf, incident_id)
+    assert (row.state, row.base) == ("open", "main")
+    # A newer deploy whose diff reverts it (the file is as before the commit): reverted.
+    assert await fu.track_followups(sf, _github("good"), now=T0 + timedelta(minutes=8)) == 1
+    (row,) = await _followups(sf, incident_id)
+    assert (
+        row.state == "reverted" and row.deploy_url == f"https://github.com/{REPO}/actions/runs/eeee"
+    )
+    async with sf() as session:
+        step = await session.scalar(
+            select(RunStep).where(RunStep.run_id == run_id).order_by(RunStep.seq.desc())
+        )
+    assert step is not None and step.data is not None
+    assert step.data["reason"] == f"Commit {BAD[:7]} is no longer in the deployed code (reverted)"
+
+
+async def test_no_change_in_repo_followup_with_a_fix_pr_or_without_a_rollback(
+    session_factory: SessionFactory, frank: Member
+) -> None:
+    sf = session_factory
+    ids = await _demo(sf, frank.workspace_id)
+    with_pr, _ = await _resolved(sf, frank.workspace_id, ids=ids)
+    assert [r.kind for r in await _followups(sf, with_pr)] == ["fix_pr"]
+    async with sf() as session:
+        incident = await session.get_one(Incident, with_pr)
+        state = MedicState.model_validate(incident.state)
+        state.fixes = [r for r in state.fixes if r.fix.kind != "emergency"]
+        state.fixes[0] = state.fixes[0].model_copy(update={"status": "rejected"})
+        other = Incident(workspace_id=frank.workspace_id, title="no rollback", status="resolved")
+        session.add(other)
+        await session.flush()
+        assert await fu.create_on_resolve(session, other, state, T0) == []
+
+
+async def test_a_person_dismisses_the_change_in_repo(
+    session_factory: SessionFactory, client: httpx.AsyncClient, frank: Member
+) -> None:
+    sf = session_factory
+    incident_id, _ = await _rolled_back(sf, frank.workspace_id)
+    (row,) = await _followups(sf, incident_id)
+    base = f"/incidents/{incident_id}/followups"
+    r = await client.post(f"{base}/{uuid.uuid4()}/dismiss", headers=frank.headers)
+    assert r.status_code == 404
+    r = await client.post(f"{base}/{row.id}/dismiss", headers=frank.headers)
+    assert r.status_code == 200, r.text
+    (followup,) = r.json()["followups"]
+    assert followup["state"] == "dismissed" and followup["dismissed_by"] == "frank-followups"
+    assert r.json()["has_open_followups"] is False
+    r = await client.post(f"{base}/{row.id}/dismiss", headers=frank.headers)
+    assert r.status_code == 409
+    # A dismissed follow-up is never checked again.
+    assert await fu.track_followups(sf, _github("good"), now=T0 + timedelta(minutes=5)) == 0
+
+
+async def test_only_change_in_repo_can_be_dismissed(
+    session_factory: SessionFactory, client: httpx.AsyncClient, frank: Member
+) -> None:
+    incident_id, _ = await _resolved(session_factory, frank.workspace_id)
+    (row,) = await _followups(session_factory, incident_id)
+    r = await client.post(
+        f"/incidents/{incident_id}/followups/{row.id}/dismiss", headers=frank.headers
+    )
+    assert r.status_code == 409

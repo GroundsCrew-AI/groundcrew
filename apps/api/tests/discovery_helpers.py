@@ -47,6 +47,8 @@ def mock_transport(routes: dict[str, Any], recorded: Recorded | None = None) -> 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.requests.append(request)
         body = routes.get(f"{request.method} {request.url.path}")
+        if callable(body):  # answers from the request (e.g. a file at ?ref=)
+            body = body(request)
         if body is None:
             return httpx.Response(404, json={"message": "Not Found"})
         if isinstance(body, str):  # a raw file

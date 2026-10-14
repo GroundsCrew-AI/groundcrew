@@ -25,6 +25,7 @@ import {
   OPEN_STATUSES,
   ruleLabel,
   useIncident,
+  useDismissFollowUp,
   useRetryFix,
 } from "@/lib/incidents";
 import { useDecide, useRunDetail, useStopRun } from "@/lib/queries";
@@ -81,6 +82,7 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
   const decide = useDecide();
   const stop = useStopRun();
   const retry = useRetryFix(incidentId);
+  const dismiss = useDismissFollowUp(incidentId);
   const [retryError, setRetryError] = useState<{ fixId: string; message: string } | null>(null);
 
   const detail = useRunDetail(runId, { enabled: Boolean(runId) });
@@ -271,7 +273,18 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
               )}
             </p>
           )}
-          {i.status === "resolved" && <FollowUpNotes followups={i.followups ?? []} />}
+          {i.status === "resolved" && (
+            <FollowUpNotes
+              followups={i.followups ?? []}
+              onDismiss={(id) =>
+                dismiss.mutate(id, {
+                  onSuccess: () => toast.success("Dismissed."),
+                  onError: (error) => toast.error(error.message),
+                })
+              }
+              dismissing={dismiss.isPending ? (dismiss.variables ?? null) : null}
+            />
+          )}
         </div>
 
         {i.root_cause && <RootCausePanel rootCause={i.root_cause} evidence={i.evidence} />}

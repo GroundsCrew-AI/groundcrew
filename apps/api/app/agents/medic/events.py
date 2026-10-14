@@ -119,11 +119,15 @@ class IncidentOpened(BaseModel):
     merged_from: list[uuid.UUID] = Field(default_factory=list)
 
 
-FollowUpKind = Literal["fix_pr"]
-# open: the fix PR is not merged. merged: merged, its deploy not seen yet. deployed: a successful
-# deploy run contains the merge (done). closed_unmerged: closed without merging; the running
-# service is only on the emergency rollback and the next deploy brings the failure back.
-FollowUpState = Literal["open", "merged", "closed_unmerged", "deployed"]
+# fix_pr: the permanent fix PR, until it is deployed. change_in_repo: the service runs on an
+# emergency rollback and no fix PR is open (rejected or never proposed), so the repo still has
+# the triggering commit; done when a later deploy no longer contains it, or a person dismisses it.
+FollowUpKind = Literal["fix_pr", "change_in_repo"]
+# fix_pr: open (not merged) -> merged (deploy not seen yet) -> deployed (a successful deploy run
+# contains the merge; done), or closed_unmerged (the service is only on the rollback).
+# change_in_repo: open -> reverted (a newer successful deploy no longer has the change; done) or
+# dismissed (by a person).
+FollowUpState = Literal["open", "merged", "closed_unmerged", "deployed", "reverted", "dismissed"]
 PENDING_FOLLOWUP_STATES: tuple[FollowUpState, ...] = ("open", "merged")
 
 
@@ -134,16 +138,20 @@ class FollowUp(BaseModel):
     kind: FollowUpKind = "fix_pr"
     state: FollowUpState
     repo: str = Field(examples=["GroundsCrew-AI/checkout-demo"])
-    number: int
-    url: str
+    # The PR (fix_pr only).
+    number: int | None = None
+    url: str | None = None
     # The commit that caused the incident; still in the repo until the PR merges.
     triggering_commit: str | None = None
     merge_commit: str | None = None
     merged_at: datetime | None = None
     deployed_at: datetime | None = None
-    # The workflow run that deployed the merge.
+    # The workflow run that deployed the merge (fix_pr) or the revert (change_in_repo).
     deploy_url: str | None = None
     closed_at: datetime | None = None
+    dismissed_at: datetime | None = None
+    # Login or name of the person who dismissed it.
+    dismissed_by: str | None = None
     created_at: datetime
     updated_at: datetime
     # Checked through the GitHub App until then (7 days after it was created).

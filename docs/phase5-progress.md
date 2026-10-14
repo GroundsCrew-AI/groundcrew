@@ -311,6 +311,12 @@ back and nothing said so.
   errors.
 - Not checked: the ECS deployment of the new revision itself; the deploy workflow's success
   stands for it. Tracking runs only while INCIDENT_WATCH_ENABLED=true (watcher schedule).
+- `change_in_repo` follow-ups: resolved by a rollback with no fix PR open (rejected or never
+  proposed): red "Running on a rollback; the repo still contains commit <sha>, so the next deploy
+  will bring the failure back." Done when the newest successful deploy after it has every file
+  the commit touched as in the commit's parent (reverted), or when a person dismisses it
+  (`POST /incidents/{id}/followups/{followup_id}/dismiss`, a Dismiss button on the note). Not
+  backfilled for incidents resolved before this.
 - Files (Ahmed's Medic / incidents code marked *): app/db/models.py, app/db/migrations/versions/
   20261014_b7d1e3f5a9c2_incident_followups.py, app/incidents/followups.py (new)*,
   app/incidents/{views,watcher}.py*, app/agents/medic/{agent,events,memory}.py*,
@@ -319,7 +325,8 @@ back and nothing said so.
   components/incidents/{followup-note,incident-list}.tsx*, components/incidents/
   {followup-note,incidents-home}.test.tsx, components/incidents/incidents.test.tsx*,
   app/(app)/incidents/{page,incidents-home}.tsx*, app/(app)/incidents/[id]/incident-view.tsx*,
-  app/(app)/page.tsx, lib/incidents.ts, lib/api/*, tests/incident-fixtures.ts.
+  app/(app)/page.tsx, lib/incidents.ts, lib/api/*, tests/incident-fixtures.ts,
+  tests/discovery_helpers.py (routes may answer per request).
 
 ## Live broken-env rerun: merged, down without health checks, verify, research, memory (2026-10-14)
 
