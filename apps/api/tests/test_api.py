@@ -431,6 +431,7 @@ async def test_me_and_summary(
         "daily_usd_cap": 2.0,
         "usd_total": 0.012,
         "total_usd_cap": 25.0,
+        "pending_permanent_fixes": 0,
     }
 
 

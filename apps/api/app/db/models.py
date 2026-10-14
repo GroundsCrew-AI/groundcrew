@@ -267,6 +267,46 @@ class Incident(TimestampMixin, Base):
     # A test incident (POST /incidents with test: true): never in Medic's memory, never
     # deduped or merged with real incidents.
     is_test: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # When incident memory may find it (app.agents.medic.memory.similar). Set at resolve, or,
+    # with a fix PR still open then, once the PR is merged or closed (incident_followups), so
+    # memory never reuses a fix that was not applied.
+    remembered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class IncidentFollowUp(TimestampMixin, Base):
+    """Work left after an incident resolved: a fix PR that was not merged (or not deployed) yet.
+    Tracked read-only through the GitHub App (app.incidents.followups)."""
+
+    __tablename__ = "incident_followups"
+    __table_args__ = (
+        UniqueConstraint("incident_id", "repo", "number", name="uq_incident_followups_pr"),
+        Index("ix_incident_followups_state", "state"),
+    )
+
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("incidents.id", ondelete="CASCADE"), index=True
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), default="fix_pr", server_default="fix_pr")
+    # open | merged | closed_unmerged | deployed
+    state: Mapped[str] = mapped_column(String(16), default="open", server_default="open")
+    repo: Mapped[str] = mapped_column(String(200))
+    number: Mapped[int] = mapped_column(Integer)
+    url: Mapped[str] = mapped_column(String(500))
+    base: Mapped[str] = mapped_column(String(200))
+    installation_id: Mapped[int] = mapped_column(BigInteger)
+    # The commit that caused the incident (still in the repo until the PR merges).
+    triggering_commit: Mapped[str | None] = mapped_column(String(64))
+    merge_commit: Mapped[str | None] = mapped_column(String(64))
+    merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deployed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The workflow run that deployed the merge (html_url).
+    deploy_url: Mapped[str | None] = mapped_column(String(500))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Last GitHub check (at most every FOLLOWUP_CHECK_EVERY per PR).
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Run(TimestampMixin, Base):

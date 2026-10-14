@@ -106,6 +106,7 @@ export function incidentSummary(overrides: Partial<IncidentSummary> = {}): Incid
     cost_usd: 0.0042,
     time_to_detect_ms: 60000,
     duration_ms: null,
+    has_open_followups: false,
     ...overrides,
   };
 }

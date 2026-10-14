@@ -366,6 +366,7 @@ async def test_a_closed_incident_does_not_absorb_new_reports(
             "at": NOW.isoformat().replace("+00:00", "Z"),
             "reason": "healthy",
             "merged_into": None,
+            "followups": None,
         }
 
 

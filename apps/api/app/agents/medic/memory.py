@@ -5,7 +5,9 @@ With embeddings (Qwen3-Embedding-8B, 1024 dims), similarity is pgvector cosine o
 PRICE_EMBED_PER_M), a fallback compares the detector rules and affected resources, so a re-run of
 the same scenario still finds its predecessor. Test incidents are never found. A hit at or above
 MEDIC_MEMORY_THRESHOLD is reused: the past diagnosis and fix go into the prompt, research is
-skipped, and the diagnosis runs on the cheaper `confirm_root_cause` route.
+skipped, and the diagnosis runs on the cheaper `confirm_root_cause` route. An incident is found
+only from `remembered_at`: at resolve, or, with a fix PR still open then, once the PR is merged
+or closed (app.incidents.followups); a closed PR's fix is left out ("rollback only").
 """
 
 from typing import Any
@@ -45,17 +47,23 @@ async def embed_symptom(llm: TokenFactory, budget: RunBudget, text: str) -> list
 def _hit(past: Incident, similarity: float) -> MemoryHit:
     state: dict[str, Any] = past.state or {}
     root = state.get("root_cause") or {}
-    applied = [
-        str((f.get("fix") or {}).get("title"))
-        for f in state.get("fixes", [])
-        if f.get("status") == "applied"
-    ]
+    applied, unmerged = [], False
+    for f in state.get("fixes", []):
+        if f.get("status") != "applied":
+            continue
+        if (f.get("pull_request") or {}).get("state") == "closed":
+            unmerged = True  # opened, never merged: not part of what fixed it
+            continue
+        applied.append(str((f.get("fix") or {}).get("title")))
+    summary = "; ".join(applied)
+    if unmerged:
+        summary = f"{summary} (rollback only: the fix PR was closed without merging)".strip()
     return MemoryHit(
         incident_id=past.id,
         title=past.title,
         similarity=round(similarity, 3),
         root_cause=root.get("summary") or past.root_cause,
-        fix_summary="; ".join(applied) or None,
+        fix_summary=summary or None,
         resolved_at=past.resolved_at,
     )
 
@@ -73,6 +81,8 @@ async def similar(
         Incident.status == "resolved",
         # Test incidents (POST /incidents with test: true) are never reused for real ones.
         Incident.is_test.is_(False),
+        # Not while its fix PR is still open: that fix was not applied yet.
+        Incident.remembered_at.is_not(None),
     )
     if vector is not None:
         distance = Incident.embedding.cosine_distance(vector)

@@ -114,6 +114,37 @@ class IncidentOpened(BaseModel):
     merged_from: list[uuid.UUID] = Field(default_factory=list)
 
 
+FollowUpKind = Literal["fix_pr"]
+# open: the fix PR is not merged. merged: merged, its deploy not seen yet. deployed: a successful
+# deploy run contains the merge (done). closed_unmerged: closed without merging; the running
+# service is only on the emergency rollback and the next deploy brings the failure back.
+FollowUpState = Literal["open", "merged", "closed_unmerged", "deployed"]
+PENDING_FOLLOWUP_STATES: tuple[FollowUpState, ...] = ("open", "merged")
+
+
+class FollowUp(BaseModel):
+    """Work left after an incident resolved: its permanent fix PR, until it is deployed."""
+
+    id: uuid.UUID
+    kind: FollowUpKind = "fix_pr"
+    state: FollowUpState
+    repo: str = Field(examples=["GroundsCrew-AI/checkout-demo"])
+    number: int
+    url: str
+    # The commit that caused the incident; still in the repo until the PR merges.
+    triggering_commit: str | None = None
+    merge_commit: str | None = None
+    merged_at: datetime | None = None
+    deployed_at: datetime | None = None
+    # The workflow run that deployed the merge.
+    deploy_url: str | None = None
+    closed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    # Checked through the GitHub App until then (7 days after it was created).
+    tracked_until: datetime
+
+
 class IncidentUpdated(BaseModel):
     """Every status change, so the UI can update the incident header without a reload."""
 
@@ -125,6 +156,9 @@ class IncidentUpdated(BaseModel):
     reason: str | None = None
     # Set on a failed incident when a newer one took it over (IncidentOpened.merged_from).
     merged_into: uuid.UUID | None = None
+    # Set when follow-ups were created or changed (the status may stay "resolved"): all of the
+    # incident's follow-ups, as they are now.
+    followups: list[FollowUp] | None = None
 
 
 class EvidenceSourceSummary(BaseModel):
