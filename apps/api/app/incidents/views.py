@@ -118,6 +118,7 @@ def _summary_fields(
         "total_tokens": t.prompt_tokens + t.completion_tokens,
         "cost_usd": float(t.cost_usd) if t.cost_usd is not None else None,
         "ultra_equiv_usd": float(t.ultra_equiv_usd) if t.ultra_equiv_usd is not None else None,
+        "first_signal_at": incident.first_signal_at,
         "time_to_detect_ms": _ms(incident.created_at, incident.first_signal_at),
         "duration_ms": _ms(incident.resolved_at, incident.created_at),
         "merged_into": _uuid((incident.state or {}).get("merged_into")),

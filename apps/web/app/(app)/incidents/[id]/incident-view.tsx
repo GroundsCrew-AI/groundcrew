@@ -290,7 +290,7 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
         {i.root_cause && <RootCausePanel rootCause={i.root_cause} evidence={i.evidence} />}
         {i.changes.length > 0 && (
           <Section title="What changed">
-            <ChangeStrip changes={i.changes} windowStart={i.window.start} windowEnd={i.window.end ?? i.resolved_at} signals={i.signals} />
+            <ChangeStrip changes={i.changes} windowStart={i.window.start} windowEnd={i.window.end ?? i.resolved_at} signals={i.signals} firstSignalAt={i.first_signal_at} />
           </Section>
         )}
         <Fixes

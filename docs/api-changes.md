@@ -191,3 +191,19 @@ All additive.
   `IncidentDetail` (409 unless an open `change_in_repo`).
   Migration `c3e8a1f4b6d7` (after `b7d1e3f5a9c2`): number, url, installation_id nullable;
   dismissed_at, dismissed_by added.
+
+## Phase 5: live broken-env follow-ups (2026-10-14)
+
+All additive.
+- `IncidentSummary.first_signal_at`: the onset of the signal that opened the incident (not the
+  earliest signal of an incident it took over). The timeline's "First signal" mark uses it.
+- A re-diagnosis that proposes the same fixes (same plans or PR drafts, same order) keeps them,
+  their fix ids, and their approvals; a `fix_proposed` step says "Same fixes as before the new
+  signals; their approvals stay". A decision made during the re-diagnosis goes on. Different
+  fixes close the old approvals (`decided_via` "Medic: superseded by new signals") as before.
+- Change markers: changes to tooling resources (`groundcrew:role=tooling`, name rules) are left
+  out unless the incident names the resource; Vercel deployments whose `meta` has
+  `groundcrew:role` or `groundcrew_role` = `tooling` are skipped; Vercel redeploys are labeled
+  "<project> redeploy READY (same source, commit <sha>)". The UI folds back-to-back repeats into
+  one row with a count.
+

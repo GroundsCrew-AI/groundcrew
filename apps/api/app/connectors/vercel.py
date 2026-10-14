@@ -169,6 +169,12 @@ class VercelClient:
                     "commit_ref": meta.get("githubCommitRef"),
                     "commit_message": str(meta.get("githubCommitMessage") or "")[:200] or None,
                     "source": d.get("source"),
+                    # Set by tooling that redeploys (checkout-demo's API_URL Lambda): not a change
+                    # to the app (app.graph.roles: groundcrew:role=tooling).
+                    "tooling": str(
+                        meta.get("groundcrew:role") or meta.get("groundcrew_role") or ""
+                    ).lower()
+                    == "tooling",
                 }
             )
         return out

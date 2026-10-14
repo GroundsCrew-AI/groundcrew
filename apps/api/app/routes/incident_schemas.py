@@ -99,6 +99,9 @@ class IncidentSummary(BaseModel):
     total_tokens: int
     cost_usd: float | None
     ultra_equiv_usd: float | None = None
+    # When the signal that opened the incident began (its onset), not the earliest signal of an
+    # incident it took over. The timeline's "First signal" mark.
+    first_signal_at: datetime | None = None
     # First signal -> incident opened, and opened -> resolved.
     time_to_detect_ms: int | None
     duration_ms: int | None

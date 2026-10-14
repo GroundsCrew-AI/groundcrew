@@ -391,6 +391,31 @@ demo-tooling/vercel-token secret) is demo tooling, tagged `groundcrew:role=tooli
   app/routes/discovery_schemas.py, app/discovery/aws.py, app/connectors/aws.py,
   app/telemetry/collect.py*, README.md.
 
+## Live broken-env follow-ups: kept approvals, what changed, first signal (2026-10-14)
+
+Incident c9c38b96 (see also #40, verify):
+2. 11:03:49 new signals re-diagnosed the incident; it proposed the same three fixes, but their
+   approvals had already been rejected ("superseded"), so they were approved twice. Re-diagnosis
+   now parks the waiting fixes (`MedicState.superseded`, approvals still pending); identical
+   fixes (`_same_fixes`: action and plan hash or PR draft hash, in order; wording ignored) are
+   kept with their ids and approvals, and a decision made meanwhile resumes the run. Different
+   fixes, no fix, resolve, or fail close the parked approvals as before.
+3. "What changed" was mostly "checkout-demo deployment READY": Vercel redeploys (`source:
+   redeploy`, same commit 5f63808) made by the API_URL Lambda every few minutes.
+   `telemetry.collect` drops change markers on tooling resources (`app.graph.roles`) unless the
+   incident names them; the Vercel reader skips deployments with meta `groundcrew:role` /
+   `groundcrew_role` = `tooling` and labels redeploys "redeploy READY (same source, commit ...)";
+   the strip folds back-to-back repeats into one row ("×3, last ..."). The Lambda does not set
+   that meta yet (a checkout-demo change, to verify against Vercel's API before it ships).
+4. The strip's "First signal" was the earliest signal (10:13, from the incident it took over);
+   it now uses `first_signal_at`, the opening signal's onset (10:57:59), exposed on the API.
+- Tests: tests/test_live_fixes_5.py (7), tests/test_live_fixes_3.py (the same draft keeps its
+  approval); web change-strip.test.tsx (2).
+- Files (Ahmed's code marked *): app/agents/medic/{agent,state}.py*, app/telemetry/{collect,
+  vercel}.py*, app/connectors/vercel.py, app/incidents/views.py*, app/routes/incident_schemas.py;
+  web components/incidents/change-strip.tsx*, app/(app)/incidents/[id]/incident-view.tsx*,
+  lib/api/*.
+
 ## How to resume
 
 ```bash

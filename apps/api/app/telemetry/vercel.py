@@ -16,10 +16,12 @@ async def read_project(
     out = ReaderOutput()
     for d in await client.production_deployments(project_id, limit=MAX_DEPLOYMENTS):
         created = parse_time(d.get("created_at"))
-        if created is None or not since <= created <= until:
+        if created is None or not since <= created <= until or d.get("tooling"):
             continue
         commit = str(d.get("commit_sha") or "")[:7]
-        text = f"production deployment {d.get('url')} {d.get('state')}"
+        # A redeploy reuses the last deployment's source: an environment change, not code.
+        kind = "redeploy" if d.get("source") == "redeploy" else "deployment"
+        text = f"production {kind} {d.get('url')} {d.get('state')}"
         if commit:
             text += f" from commit {commit}: {d.get('commit_message') or ''}".rstrip(": ")
         out.lines.append(line(created, SOURCE, name, text))
@@ -28,7 +30,8 @@ async def read_project(
                 kind="deploy",
                 ref=str(d.get("uid")),
                 at=created,
-                label=f"{name} deployment {d.get('state')}",
+                label=f"{name} {kind} {d.get('state')}"
+                + (f" (same source, commit {commit})" if kind == "redeploy" and commit else ""),
                 url=f"https://{d['url']}" if d.get("url") else None,
             )
         )

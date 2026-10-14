@@ -429,10 +429,15 @@ async def test_new_signals_while_waiting_for_approval_rediagnose_before_any_fix(
     assert [f.fix.title for f in state.fixes] == [
         "Recreate orders.customer_email index concurrently"
     ]
+    # The same fix again (same draft): its approval stays, nothing new to approve.
+    assert state.fixes[0].approval_id == first_approval and state.superseded == []
     async with sf() as session:
         old = await session.get(Approval, first_approval)
-        assert old is not None and old.status == ApprovalStatus.rejected
-        assert old.decided_via == "Medic: superseded by new signals"
+        assert old is not None and old.status == ApprovalStatus.pending
+        pending = await session.scalars(
+            select(Approval).where(Approval.status == ApprovalStatus.pending)
+        )
+        assert [a.id for a in pending] == [first_approval]
     assert incident.status == "waiting_approval"
     # The fix prompt says how to title it.
     assert "never mention alerts, false alarms" in fx.FIX_SYSTEM

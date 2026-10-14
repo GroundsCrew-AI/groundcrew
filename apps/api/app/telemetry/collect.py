@@ -316,8 +316,30 @@ async def collect(
             c if c.resource_id else c.model_copy(update={"resource_id": resource.id})
             for c in out.changes
         )
+    evidence.changes = await _without_tooling(
+        session_factory, workspace_id, evidence.changes, {r.id for r in affected}
+    )
     evidence.changes.sort(key=lambda c: c.at)
     return evidence
+
+
+async def _without_tooling(
+    session_factory: SessionFactory,
+    workspace_id: uuid.UUID,
+    changes: list[ChangeMarker],
+    named: set[uuid.UUID],
+) -> list[ChangeMarker]:
+    """Changes to tooling (app.graph.roles: groundcrew:role=tooling, a state bucket, ...) are not
+    changes to the app; one the incident names directly stays."""
+    ids = {c.resource_id for c in changes if c.resource_id and c.resource_id not in named}
+    if not ids:
+        return changes
+    async with session_factory() as session:
+        rows = await session.scalars(
+            select(Resource).where(Resource.workspace_id == workspace_id, Resource.id.in_(ids))
+        )
+        tooling = {r.id for r in rows if role_of(r.type, r.name, r.tags) == "tooling"}
+    return [c for c in changes if c.resource_id not in tooling]
 
 
 class GraphEvidenceCollector:
