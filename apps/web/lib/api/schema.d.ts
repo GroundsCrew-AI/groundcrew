@@ -468,6 +468,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/incidents/{incident_id}/followups/{followup_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss Followup
+         * @description A person says the change still in the repo is handled (reverted another way, or
+         *     accepted): the change_in_repo follow-up is closed as dismissed, with who did it.
+         */
+        post: operations["dismiss_followup_incidents__incident_id__followups__followup_id__dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -1792,6 +1813,16 @@ export interface components {
              */
             deployed_at: string | null;
             /**
+             * Dismissed At
+             * @default null
+             */
+            dismissed_at: string | null;
+            /**
+             * Dismissed By
+             * @default null
+             */
+            dismissed_by: string | null;
+            /**
              * Id
              * Format: uuid
              */
@@ -1799,9 +1830,9 @@ export interface components {
             /**
              * Kind
              * @default fix_pr
-             * @constant
+             * @enum {string}
              */
-            kind: "fix_pr";
+            kind: "fix_pr" | "change_in_repo";
             /**
              * Merge Commit
              * @default null
@@ -1812,8 +1843,11 @@ export interface components {
              * @default null
              */
             merged_at: string | null;
-            /** Number */
-            number: number;
+            /**
+             * Number
+             * @default null
+             */
+            number: number | null;
             /**
              * Repo
              * @example GroundsCrew-AI/checkout-demo
@@ -1823,7 +1857,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "open" | "merged" | "closed_unmerged" | "deployed";
+            state: "open" | "merged" | "closed_unmerged" | "deployed" | "reverted" | "dismissed";
             /**
              * Tracked Until
              * Format: date-time
@@ -1839,8 +1873,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-            /** Url */
-            url: string;
+            /**
+             * Url
+             * @default null
+             */
+            url: string | null;
         };
         /** GitHubInstallationOut */
         GitHubInstallationOut: {
@@ -4257,6 +4294,54 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    dismiss_followup_incidents__incident_id__followups__followup_id__dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                incident_id: string;
+                followup_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentDetail"];
+                };
+            };
+            /** @description Incident or follow-up not found for this user. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an open change_in_repo follow-up. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

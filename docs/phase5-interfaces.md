@@ -201,6 +201,7 @@ Code: `app/routes/incidents.py` (live since M4, behind auth and membership like 
 | POST | `/incidents` | `IncidentCreate` | 202 `IncidentCreated` `{incident_id, run_id, deduped}` |
 | GET | `/incidents` | `workspace_id`; filters `status`, `severity`, `resource` (resource id), `since` (opened at or after), `pending_fix` (true: a follow-up is open or merged; false: none is), combined with AND; `limit` (1..100, 25), `cursor` | 200 `IncidentPage` `{items, next_cursor}`, newest first |
 | POST | `/incidents/{incident_id}/fixes/{fix_id}/retry` | | 200 `IncidentDetail` (a failed emergency fix planned again with a new approval) |
+| POST | `/incidents/{incident_id}/followups/{followup_id}/dismiss` | | 200 `IncidentDetail`; 409 unless an open `change_in_repo` follow-up |
 | GET | `/incidents/{incident_id}` | | 200 `IncidentDetail` |
 
 **Report incident** (`IncidentCreate`, unknown fields are a 422):
@@ -251,7 +252,7 @@ group of related resources: reporting resources an open incident covers returns 
 | `memory` | `{incident_id, title, similarity, reused: [diagnosis \| fix \| research]}` when a past incident was reused |
 | `research` | Tavily results `[{title, url, snippet}]` (max 3) |
 | `run_ids`, `error` | every Medic run for it, oldest first |
-| `followups` | `[FollowUp {id, kind: fix_pr, state, repo, number, url, triggering_commit, merge_commit, merged_at, deployed_at, deploy_url, closed_at, created_at, updated_at, tracked_until}]` (below) |
+| `followups` | `[FollowUp {id, kind: fix_pr \| change_in_repo, state, repo, number, url, triggering_commit, merge_commit, merged_at, deployed_at, deploy_url, closed_at, dismissed_at, dismissed_by, created_at, updated_at, tracked_until}]` (below) |
 
 **Follow-ups** (2026-10-14, `app/incidents/followups.py`, table `incident_followups`). An
 emergency rollback can resolve an incident while its fix PR is still open; the default branch
@@ -264,6 +265,15 @@ read-only, each at most every 2 minutes and for 7 days after creation:
   contains the merge commit (same SHA, or `compare` says ahead or identical). Done.
 - `open` -> `closed_unmerged`: the service runs only on the rollback; `triggering_commit` is the
   change still in the repo.
+- `change_in_repo` (no PR: `number`, `url` null): resolved by an emergency rollback with no fix
+  PR open (rejected, closed, or never proposed) and a known triggering commit and repo. Red note
+  "Running on a rollback; the repo still contains commit <sha>, so the next deploy will bring
+  the failure back." `open` -> `reverted` when the newest successful deploy run on the default
+  branch, created after the follow-up, no longer has the change: every file the commit touched
+  (at most 30) has the same blob at the deploy's head as at the commit's parent. `open` ->
+  `dismissed` by a person (`dismissed_by`). The installation comes from the workspace's GitHub
+  connections; without one it is shown but not tracked. It does not hold memory back (the
+  rollback was applied).
 Each change records `incident_updated` on the incident's latest run (status unchanged,
 `followups` set). Incident memory finds an incident only from `incidents.remembered_at`: at
 resolve when no fix PR is open, else when the follow-up is merged or closed; a closed PR's fix is
