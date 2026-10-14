@@ -368,6 +368,29 @@ and restarts worked (errors normal on both), but the run looked like two failure
   web lib/incidents.ts, app/(app)/incidents/incidents-home.tsx*, app/(app)/incidents/[id]/
   incident-view.tsx*, components/incidents/medic-step.tsx*, lib/api/*.
 
+## Marking your own tooling: groundcrew:role (2026-10-14)
+
+checkout-demo's checkout-vercel-api-url Lambda (and its role, log group, rule, and the
+demo-tooling/vercel-token secret) is demo tooling, tagged `groundcrew:role=tooling`.
+- `app/graph/roles.py`: the AWS tag `groundcrew:role` or the Kubernetes label `groundcrew/role`
+  (`tooling` or `app`, case-insensitive) decides before the name rules; `app` keeps a
+  tooling-looking name in the app. The name rules stay as the fallback.
+- Map: `ResourceOut.role` uses the tags, so tagged tooling folds into the collapsed Tooling group.
+- Summary: `digest` leaves out tooling that no edge connects to an app resource (edges among
+  tooling, e.g. the Lambda to its secret, do not count); `summary_check` uses the same rule.
+- Medic: `telemetry.collect.load_resources` skips tooling neighbors; tooling the incident names
+  directly is still read.
+- Discovery: Lambda tags from `lambda:ListTags`, IAM role tags from `iam:GetRole` (ListFunctions
+  and ListRoles leave tags out); log groups, EventBridge rules, and other inventory types get
+  their tags from Resource Explorer or the tagging API; secrets from ListSecrets. Both calls are
+  already in the read-only role (infra/aws-connect.yaml): no template change, no republish.
+  `lambda:ListTags` was added to the code allowlist (`AWS_READ_OPERATIONS`).
+- Tests: tests/test_tooling_role.py (7); tests/test_edges.py (the digest leaves tooling out instead
+  of noting it); tests/aws_fixture.py (`iam:GetRole`).
+- Files (Ahmed's code marked *): app/graph/{roles,digest,summary_check}.py,
+  app/routes/discovery_schemas.py, app/discovery/aws.py, app/connectors/aws.py,
+  app/telemetry/collect.py*, README.md.
+
 ## How to resume
 
 ```bash

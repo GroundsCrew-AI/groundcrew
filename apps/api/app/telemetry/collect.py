@@ -2,7 +2,9 @@
 
 1. Load the affected resources (workspace-scoped) and their neighbors: outgoing `uses` (secret),
    `logs_to` (log group), `reads` (database), `deployed_by` (workflow), `defined_in` (repo), and
-   `calls` in both directions (callers break too).
+   `calls` in both directions (callers break too). Tooling neighbors (app.graph.roles: the
+   groundcrew:role=tooling tag, a state bucket, Groundcrew's role) are skipped; tooling the
+   incident names directly is still read.
 2. Pick a reader per resource type and run them in parallel, each with a timeout. A reader
    that fails leaves one line saying so; the others still count.
 3. Return lines per source, the merged timeline, and the change markers the readers saw.
@@ -29,6 +31,7 @@ from app.connectors.github import GitHubApp, get_github_app
 from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Edge, Resource
 from app.db.session import SessionFactory
+from app.graph.roles import role_of
 from app.telemetry import cloudwatch_logs, ecs, github, rds, secrets, vercel
 from app.telemetry.evidence import Line, ReaderOutput, line, render
 from app.telemetry.timeline import timeline
@@ -144,18 +147,18 @@ async def load_resources(
         )
         neighbor_ids = {e.to_id for e in edges} | {e.from_id for e in edges if e.kind == "calls"}
         neighbor_ids -= set(ids)
-        neighbors = (
+        found = (
             list(
                 await session.scalars(
                     select(Resource)
                     .where(Resource.workspace_id == workspace_id, Resource.id.in_(neighbor_ids))
                     .order_by(Resource.type, Resource.name)
-                    .limit(MAX_NEIGHBORS)
                 )
             )
             if neighbor_ids
             else []
         )
+        neighbors = [r for r in found if role_of(r.type, r.name, r.tags) == "app"][:MAX_NEIGHBORS]
         connections = list(
             await session.scalars(select(Connection).where(Connection.workspace_id == workspace_id))
         )

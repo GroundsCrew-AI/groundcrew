@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 from app.discovery.types import DiscoveredResource
 from app.graph.edges import EdgeKind, InferredEdge, key
-from app.graph.roles import role
+from app.graph.roles import linked_to_app, role
 
 _BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 # Words that claim a kind of resource -> the types that would back the claim.
@@ -90,11 +90,13 @@ class _Graph:
         self.resources = list(resources)
         self.by_key = {key(r): r for r in resources}
         self.pairs: set[frozenset[str]] = set()
-        self.app_linked: set[str] = set()
         for e in edges:
             self.pairs.add(frozenset((e.source, e.target)))
-            if e.kind != EdgeKind.defined_in:
-                self.app_linked |= {e.source, e.target}
+        # Linked to an app resource: edges among tooling do not count.
+        self.app_linked = linked_to_app(
+            {k: role(r) for k, r in self.by_key.items()},
+            ((e.source, e.target) for e in edges if e.kind != EdgeKind.defined_in),
+        )
         clusters = {r.external_id: key(r) for r in resources if r.type == "ecs:cluster"}
         for r in resources:
             cluster = clusters.get(str(r.config.get("cluster_arn")))

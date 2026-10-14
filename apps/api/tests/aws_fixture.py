@@ -493,6 +493,11 @@ FIXTURE: dict[str, Any] = {
     "iam:ListAttachedRolePolicies": {"AttachedPolicies": []},
 }
 
+# GetRole: the listed role (discovery reads its tags there; ListRoles leaves them out).
+FIXTURE["iam:GetRole"] = lambda p: {
+    "Role": next(r for r in FIXTURE["iam:ListRoles"]["Roles"] if r["RoleName"] == p["RoleName"])
+}
+
 
 class _Http:
     def __init__(self, status_code: int) -> None:
