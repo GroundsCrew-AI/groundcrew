@@ -415,6 +415,33 @@ Incident c9c38b96 (see also #40, verify):
   vercel}.py*, app/connectors/vercel.py, app/incidents/views.py*, app/routes/incident_schemas.py;
   web components/incidents/change-strip.tsx*, app/(app)/incidents/[id]/incident-view.tsx*,
   lib/api/*.
+## Verify: health from task records, not service events (2026-10-14)
+
+Live broken-env, incident c9c38b96 (with #38 running: memory matched at 0.95). The fix (secret
+rollback + restarts) landed at 11:05:03; checkout-api's new task 602e5a1d was HEALTHY, yet every
+round from 11:06:50 to the deadline said "1 health-check failures reported by ECS", and the
+incident failed.
+- Source: the ECS **service event** "(task a759e4db...) failed container health checks" at
+  11:05:56. a759e4db started at 11:04:10 on the broken secret (deployment ecs-svc/3472...) and
+  was stopped for health at 11:06:34: a task the fix replaced. #38 counted service events after
+  max(fix, primary deployment start) unless the task was in the stopped list, but that list is
+  one `ListTasks STOPPED` page capped at 50 in no set order; a759e4db was not on it (the detail
+  also said "0 tasks failed health checks since the fix", so verify never saw the task). Not
+  the cause: task healthStatus (602e5a1d HEALTHY) or the deployment's failedTasks (0).
+- Fix (`app/agents/medic/verify.py`): `service_tasks` reads the service's running tasks and
+  describes every task a health event since the fix names (ECS keeps stopped tasks describable
+  for an hour); events only point at tasks and are never counted. `health_failures` counts tasks
+  *started* since the fix that stopped for health, and running tasks (desired RUNNING) that are
+  UNHEALTHY now. "Exited non-zero" counts only tasks started since the fix too (a replaced task
+  exits non-zero on its way out). Details: "N tasks started since the fix failed health checks,
+  M running tasks unhealthy", "N tasks started since the fix exited non-zero".
+- Checked against live AWS through Groundcrew's read-only role, since = 11:05:03: rollout
+  COMPLETED, 0 health failures, 0 unhealthy, 0 exits: all pass.
+- Not changed: the watcher's detection rule (`rules.ecs_signals`) still reads service events over
+  the last 5 minutes; `_closed_at` keeps a resolved incident from reopening on them.
+- Tests: tests/test_live_fixes_4.py (the live shape: the replaced task off the stopped page,
+  named only by the event; the fix's own task failing, stopped or running; a draining task).
+- Files (Ahmed's code marked *): app/agents/medic/verify.py*, tests/test_live_fixes_4.py.
 
 ## How to resume
 

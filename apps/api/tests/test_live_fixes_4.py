@@ -5,7 +5,8 @@
    both as Not resolved.
 2. The worker has no health check: every poll failed, yet its spike was not "down", so no
    emergency fix; and "No fix" came 30 s before the api's signal.
-3. Verify kept "1 health-check failures reported by ECS" from the task the restart replaced.
+3. Verify kept "1 health-check failures reported by ECS" from the task the restart replaced
+   (the follow-up fix judges each task by its own record; see the verify test).
 4. The first search was the raw JSON log line; the follow-up brought SQL Server articles.
 5. Memory found the earlier broken-env incident at 0.79 (threshold 0.85).
 6. The secret rollback said "back to version terrafor".
@@ -30,7 +31,7 @@ from app.agents.medic.jobs import (
     no_fix_deadline_job,
     rediagnose_incident_job,
 )
-from app.agents.medic.verify import current_health_events
+from app.agents.medic.verify import health_failures, service_tasks, started_since
 from app.db.models import Incident, Job, Run, RunStatus, RunStep, Workspace
 from app.db.session import SessionFactory
 from app.incidents import rules
@@ -287,34 +288,90 @@ async def test_a_taken_over_incident_is_merged_linked_both_ways_and_hidden_by_de
 # --- 3. verify counts only the current tasks' health failures ------------------------------------
 
 
-def test_a_replaced_tasks_health_failure_is_not_a_failure_of_the_fix() -> None:
-    fix = datetime(2026, 10, 14, 6, 52, 26, tzinfo=UTC)
-    old, new = "825dad504bde41a9b316786c2f3c517e", "9a1b2c3d4e5f60718293a4b5c6d7e8f9"
+class _Ecs:
+    """ListTasks / DescribeTasks for the verify checks, recording what was described."""
+
+    def __init__(self, running: list[dict[str, Any]], describable: list[dict[str, Any]]) -> None:
+        self.running, self.describable = (
+            running,
+            {t["taskArn"].rsplit("/", 1)[-1]: t for t in describable},
+        )
+        self.described: list[str] = []
+
+    def paginate(self, service: str, region: Any, op: str, key: str, **kw: Any) -> list[str]:
+        assert (op, kw["desiredStatus"], kw["serviceName"]) == (
+            "ListTasks",
+            "RUNNING",
+            "checkout-api",
+        )
+        return [t["taskArn"] for t in self.running]
+
+    def call(self, service: str, region: Any, op: str, **kw: Any) -> dict[str, Any]:
+        assert op == "DescribeTasks"
+        self.described += kw["tasks"]
+        return {"tasks": [self.describable[i] for i in kw["tasks"] if i in self.describable]}
+
+
+def _task(task_id: str, started: datetime, **fields: Any) -> dict[str, Any]:
+    return {
+        "taskArn": f"arn:aws:ecs:us-east-2:1:task/checkout/{task_id}",
+        "startedAt": started,
+        **fields,
+    }
+
+
+def test_verify_judges_each_task_by_its_own_record_not_by_service_events() -> None:
+    """Live broken-env, 2026-10-14 11:05: the fix (secret rollback + restart) landed at 11:05:03.
+    Task a759e4db had started at 11:04:10 on the broken secret; ECS reported "(task a759e4db...)
+    failed container health checks" at 11:05:56 and stopped it at 11:06:34. It was not on the one
+    capped page of stopped tasks verify read, so for 14 rounds the event counted as "1
+    health-check failures reported by ECS" while the fix's task 602e5a1d was HEALTHY."""
+    fix = datetime(2026, 10, 14, 11, 5, 3, tzinfo=UTC)
+    old, new = "a759e4dbd308403387eb0e99dc45cd4a", "602e5a1d53d745dca0fa28eef089a8bf"
     service = {
+        "serviceName": "checkout-api",
         "deployments": [{"status": "PRIMARY", "createdAt": fix + timedelta(seconds=1)}],
         "events": [
-            # The task the restart replaced, still reported for 14 rounds in the live run.
             {
-                "createdAt": fix + timedelta(seconds=40),
+                "createdAt": fix + timedelta(seconds=53),
                 "message": f"(service checkout-api) (task {old}) failed container health checks.",
-            },
-            # Before the current deployment started.
-            {
-                "createdAt": fix + timedelta(milliseconds=500),
-                "message": "(service checkout-api) failed container health checks.",
             },
         ],
     }
-    stopped = [{"taskArn": f"arn:aws:ecs:us-east-2:1:task/checkout/{old}"}]
-    assert current_health_events(service, stopped, fix) == []
-    # The task running now failing its checks still counts.
-    service["events"].append(
-        {
-            "createdAt": fix + timedelta(minutes=3),
-            "message": f"(service checkout-api) (task {new}) failed container health checks.",
-        }
+    replaced = _task(
+        old,
+        fix - timedelta(seconds=53),
+        lastStatus="STOPPED",
+        desiredStatus="STOPPED",
+        healthStatus="UNHEALTHY",
+        stoppedAt=fix + timedelta(seconds=91),
+        stoppedReason="Task failed container health checks",
+        containers=[{"exitCode": 137}],
     )
-    assert len(current_health_events(service, stopped, fix)) == 1
+    fixed = _task(
+        new, fix + timedelta(seconds=37), lastStatus="RUNNING", desiredStatus="RUNNING",
+        healthStatus="HEALTHY",
+    )  # fmt: skip
+    ecs = _Ecs(running=[fixed], describable=[fixed, replaced])
+    tasks = service_tasks(ecs, "us-east-2", "checkout", service, [], fix)  # type: ignore[arg-type]
+    assert old in ecs.described  # the event only points at the task to read
+    assert {t["taskArn"].rsplit("/", 1)[-1] for t in tasks} == {old, new}
+    assert health_failures(tasks, fix) == ([], [])
+    assert not started_since(replaced, fix) and started_since(fixed, fix)
+
+    # The fix's own task failing its checks counts, stopped or still running.
+    sick = {**fixed, "healthStatus": "UNHEALTHY"}
+    assert health_failures([replaced, sick], fix) == ([], [sick])
+    stopped_new = {
+        **fixed,
+        "lastStatus": "STOPPED",
+        "desiredStatus": "STOPPED",
+        "stoppedReason": "Task failed container health checks",
+    }
+    assert health_failures([replaced, stopped_new], fix) == ([stopped_new], [])
+    # A task being drained that turns unhealthy on its way out does not.
+    draining = {**sick, "desiredStatus": "STOPPED"}
+    assert health_failures([draining], fix) == ([], [])
 
 
 # --- 4. research queries and results ------------------------------------------------------------
