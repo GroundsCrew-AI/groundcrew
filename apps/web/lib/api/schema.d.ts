@@ -2043,6 +2043,8 @@ export interface components {
             error?: string | null;
             /** Evidence */
             evidence: components["schemas"]["EvidenceItem"][];
+            /** First Signal At */
+            first_signal_at?: string | null;
             /** Fixes */
             fixes: components["schemas"]["FixState"][];
             /** Fixes Applied */
@@ -2254,6 +2256,8 @@ export interface components {
             detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
+            /** First Signal At */
+            first_signal_at?: string | null;
             /** Fixes Applied */
             fixes_applied: string[];
             /**

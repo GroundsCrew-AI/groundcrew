@@ -82,6 +82,9 @@ class MedicState(BaseModel):
     # "No fix" waits until then for related signals (another service of the same outage) to
     # join the incident before it fails; new material signals re-diagnose it instead.
     no_fix_until: datetime | None = None
+    # Fixes waiting for approval when new signals started a re-diagnosis. Their approvals stay
+    # pending: kept when the re-diagnosis proposes the same fixes, closed when it does not.
+    superseded: list[FixRecord] = Field(default_factory=list)
     # The application's stack for research queries ("postgres", "asyncpg", "sqlalchemy").
     stack: list[str] = Field(default_factory=list)
     no_fix_waited: bool = False

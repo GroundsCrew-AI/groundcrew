@@ -3353,6 +3353,18 @@
             "title": "Evidence",
             "type": "array"
           },
+          "first_signal_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Signal At"
+          },
           "fixes": {
             "items": {
               "$ref": "#/components/schemas/FixState"
@@ -3977,6 +3989,18 @@
               }
             ],
             "title": "Duration Ms"
+          },
+          "first_signal_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Signal At"
           },
           "fixes_applied": {
             "items": {

@@ -160,6 +160,22 @@ def _signals(incident: Incident) -> list[Signal]:
     return [Signal.model_validate(s) for s in incident.signals]
 
 
+def _fix_key(rec: FixRecord) -> tuple[object, ...]:
+    """What a fix does, exactly: the action and the plan's hash (or the PR draft's), and what it
+    waits for. Titles and wording do not count."""
+    fix = rec.fix
+    plan = fix.plan.plan_hash() if fix.plan else None
+    draft = rec.draft.plan_hash() if rec.draft else None
+    return (fix.kind, fix.action, plan, draft, len(fix.depends_on))
+
+
+def _same_fixes(before: list[FixRecord], after: list[FixRecord]) -> bool:
+    """A re-diagnosis that proposes the very same fixes (same plans, same order)."""
+    return len(before) == len(after) and [_fix_key(r) for r in before] == [
+        _fix_key(r) for r in after
+    ]
+
+
 def _round_ids(records: list[FixRecord], round_: int) -> list[FixRecord]:
     """After a re-diagnosis, new fix ids (fix-1-r1) so they never collide with the superseded
     fixes' approvals and timeline cards."""
@@ -248,6 +264,7 @@ class MedicRunner:
         run_status: RunStatus = RunStatus.failed,
         stop: StopReason = StopReason.error,
     ) -> None:
+        await self._close_superseded(session, state)
         state.phase, state.error = "done", reason
         state.outcome = Outcome(result="failed", reason=reason, still_failing=still_failing or [])
         _save(incident, state)
@@ -553,7 +570,12 @@ class MedicRunner:
             on_call=recorder,
             research=follow_up,
         )
-        state.fixes = _round_ids(emergency.records + pr.records, state.rediagnosed)
+        proposed = emergency.records + pr.records
+        if state.superseded and _same_fixes(state.superseded, proposed):
+            await self._keep_superseded(session, incident, run, state, evidence.notes)
+            return
+        await self._close_superseded(session, state)
+        state.fixes = _round_ids(proposed, state.rediagnosed)
         state.notes = [*evidence.notes, *emergency.notes, *pr.notes]
         _save(incident, state)
         await record_step(
@@ -596,6 +618,64 @@ class MedicRunner:
             await self._fail_no_fix(session, incident, run, state)
             return
         await self._request_approvals(session, incident, run, state)
+
+    async def _keep_superseded(
+        self,
+        session: AsyncSession,
+        incident: Incident,
+        run: Run,
+        state: MedicState,
+        notes: list[str],
+    ) -> None:
+        """The re-diagnosis proposes exactly the fixes already waiting for approval: keep them and
+        their approvals (no new cards to approve again). A decision made meanwhile is applied."""
+        state.fixes, state.superseded = state.superseded, []
+        state.notes = notes
+        state.phase = "waiting_approval"
+        _save(incident, state)
+        await record_step(
+            session,
+            run,
+            kind="fix_proposed",
+            output_summary="Same fixes as before the new signals; their approvals stay: "
+            + "; ".join(f.fix.title for f in state.fixes),
+            data=FixProposed(fixes=[f.fix for f in state.fixes]),
+        )
+        await self._status(session, incident, run, "waiting_approval")
+        decided = False
+        for rec in state.fixes:
+            approval = (
+                await session.get(Approval, rec.approval_id, populate_existing=True)
+                if rec.approval_id
+                else None
+            )
+            decided = decided or (
+                approval is not None and approval.status != ApprovalStatus.pending
+            )
+        if decided:
+            # Approved or rejected while Medic diagnosed again: go on as decide_approval would.
+            run.status, run.stop_reason = RunStatus.queued, None
+            await queue.enqueue(session, "resume_run", {"run_id": str(run.id)})
+        else:
+            run.status, run.stop_reason = RunStatus.waiting_approval, StopReason.waiting_approval
+        await session.commit()
+
+    async def _close_superseded(self, session: AsyncSession, state: MedicState) -> None:
+        """Close the approvals of fixes a re-diagnosis did not propose again."""
+        now = self.deps.now()
+        for rec in state.superseded:
+            approval = (
+                await session.get(
+                    Approval, rec.approval_id, with_for_update=True, populate_existing=True
+                )
+                if rec.approval_id
+                else None
+            )
+            if approval is not None and approval.status == ApprovalStatus.pending:
+                approval.status = ApprovalStatus.rejected
+                approval.decided_at = now
+                approval.decided_via = "Medic: superseded by new signals"
+        state.superseded = []
 
     async def _fail_no_fix(
         self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
@@ -1108,7 +1188,6 @@ class MedicRunner:
                 or any(r.status != "waiting_approval" for r in state.fixes)
             ):
                 return
-            pending = []
             for rec in state.fixes:
                 approval = (
                     await session.get(
@@ -1119,13 +1198,9 @@ class MedicRunner:
                 )
                 if approval is not None and approval.status != ApprovalStatus.pending:
                     return  # decided meanwhile
-                if approval is not None:
-                    pending.append(approval)
-            now = self.deps.now()
-            for approval in pending:
-                approval.status = ApprovalStatus.rejected
-                approval.decided_at = now
-                approval.decided_via = "Medic: superseded by new signals"
+            # The approvals stay pending: the re-diagnosis keeps them if it proposes the same
+            # fixes, and closes them otherwise (_settle_superseded).
+            state.superseded = list(state.fixes)
             state.fixes, state.notes, state.phase = [], [], "investigating"
             state.no_fix_until = None
             state.rediagnosed += 1
@@ -1187,6 +1262,7 @@ class MedicRunner:
         reason: str = "Signals recovered for two checks in a row.",
     ) -> None:
         now = self.deps.now()
+        await self._close_superseded(session, state)
         rc = state.root_cause
         mem.remember(
             incident, rc.summary if rc else incident.title, rc.root_cause if rc else "", None
