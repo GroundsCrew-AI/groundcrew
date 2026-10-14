@@ -47,6 +47,14 @@ from app.tools.github_pr import (
 
 DOWN_RULES = frozenset({"health_check", "ecs_deployment_failed", "ecs_tasks_stopped"})
 CRASH_RULES = frozenset({"ecs_deployment_failed", "ecs_tasks_stopped"})
+
+
+def is_down(signal: Signal) -> bool:
+    """Production is down there: a down rule, or an error spike where nearly every operation
+    fails (Signal.down; services without health checks)."""
+    return signal.rule in DOWN_RULES or signal.down
+
+
 # A hex word with at least one letter: a deploy's run id (all digits) is not a SHA.
 _SHA = re.compile(r"\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b")
 
@@ -279,7 +287,7 @@ async def emergency(
     start_order: int = 1,
 ) -> Proposal:
     out = Proposal()
-    if root_cause.false_alarm or not any(s.rule in DOWN_RULES for s in signals):
+    if root_cause.false_alarm or not any(is_down(s) for s in signals):
         return out
     change = root_cause.triggering_change
     kinds = {o.kind for o in root_cause.fix_options}
@@ -332,7 +340,7 @@ async def emergency(
                 )
                 order += 1
         else:
-            crashing = {s.resource_id for s in signals if s.rule in CRASH_RULES}
+            crashing = {s.resource_id for s in signals if s.rule in CRASH_RULES or s.down}
             for rid in graph.affected:
                 found = graph.resources.get(rid)
                 if found is None or found.type != "ecs:service" or rid not in crashing:

@@ -120,7 +120,18 @@ def _summary_fields(
         "ultra_equiv_usd": float(t.ultra_equiv_usd) if t.ultra_equiv_usd is not None else None,
         "time_to_detect_ms": _ms(incident.created_at, incident.first_signal_at),
         "duration_ms": _ms(incident.resolved_at, incident.created_at),
+        "merged_into": _uuid((incident.state or {}).get("merged_into")),
+        "merged_from": [
+            u for u in map(_uuid, (incident.state or {}).get("merged_from") or []) if u
+        ],
     }
+
+
+def _uuid(value: Any) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value)) if value else None
+    except ValueError:
+        return None
 
 
 async def summaries(session: AsyncSession, incidents: list[Incident]) -> list[IncidentSummary]:

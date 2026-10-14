@@ -301,7 +301,8 @@ def tavily(
             {
                 "title": "ECS OOM exit 137",
                 "url": "https://docs.aws.amazon.com/oom",
-                "content": "Exit 137 means...",
+                "content": "Exit 137 means the container was killed for exceeding its memory "
+                "limit (OutOfMemoryError).",
             },
         ]
     }

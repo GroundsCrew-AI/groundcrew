@@ -269,6 +269,8 @@ class Settings(BaseSettings):
     # When only a fix PR was applied: a person merges it and the pipeline deploys it first.
     medic_pr_verify_timeout_seconds: int = 3600
     medic_verify_interval_seconds: int = 30
+    # Before "No fix Medic can apply": wait this long for related signals to merge in.
+    medic_no_fix_grace_seconds: int = 90
     tavily_max_calls_per_incident: int = 2
     medic_memory_threshold: float = 0.85
 

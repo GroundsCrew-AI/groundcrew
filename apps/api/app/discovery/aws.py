@@ -574,7 +574,7 @@ def normalize_secret(secret: dict[str, Any], region: str, account: str) -> Disco
             "rotation_enabled": bool(secret.get("RotationEnabled")),
             "kms_key": "customer managed" if secret.get("KmsKeyId") else "aws managed",
             "version_stages": {
-                vid[:8]: stages
+                vid: stages  # the full id: Terraform ids all start "terraform-"
                 for vid, stages in (secret.get("SecretVersionsToStages") or {}).items()
             },
         },

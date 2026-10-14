@@ -89,13 +89,28 @@ _MESSAGE_KEYS = ("msg", "message", "event")
 _ERROR_KEYS = ("error", "err", "exc", "exception", "error_message", "reason")
 
 
+_JSON_MESSAGE = re.compile(r'"(?:msg|message|event)"\s*:\s*"((?:[^"\\]|\\.)*)"')
+# The exception at the end of a traceback, written into a JSON string ("...\nKeyError: 'x'").
+_EXCEPTION = re.compile(r"(?:^|\\n|\s)([A-Za-z_][\w.]*(?:Error|Exception|Timeout)\b(?::[^\"\\]*)?)")
+
+
+def _broken_json_message(message: str) -> str:
+    """A JSON log line cut short (evidence lines are truncated, a traceback rarely fits): its
+    message and the last exception named in it, found by pattern."""
+    parts = [m.group(1) for m in _JSON_MESSAGE.finditer(message)][:1]
+    exceptions = [m.group(1).strip() for m in _EXCEPTION.finditer(message)]
+    if exceptions:
+        parts.append(exceptions[-1])
+    return " ".join(parts)
+
+
 def _json_message(message: str) -> str:
     """For a JSON log line, its message and error text (the first line of a traceback); the
     other fields (ts, level, service, ...) only make a search worse."""
     try:
         data = json.loads(message)
     except ValueError:
-        return message
+        return _broken_json_message(message)
     if not isinstance(data, dict):
         return message
     parts = []
@@ -117,6 +132,74 @@ def search_query(line: str) -> str:
     return " ".join(_IDS.sub(" ", message).split())[:200]
 
 
+# Words that name the application's stack, by what they imply (asyncpg means Postgres).
+_STACK: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("postgres", ("postgres", "postgresql", "asyncpg", "psycopg", "psycopg2", "pgbouncer")),
+    ("asyncpg", ("asyncpg",)),
+    ("psycopg", ("psycopg", "psycopg2")),
+    ("sqlalchemy", ("sqlalchemy",)),
+    ("mysql", ("mysql", "pymysql", "mysqlclient", "mariadb")),
+    ("redis", ("redis",)),
+    ("mongodb", ("mongodb", "pymongo", "mongoose")),
+    ("django", ("django",)),
+    ("fastapi", ("fastapi",)),
+    ("flask", ("flask",)),
+    ("prisma", ("prisma",)),
+)
+# Databases a result can be about instead of ours (SQL Server articles for a Postgres app).
+_DATABASES: dict[str, tuple[str, ...]] = {
+    "postgres": ("postgres", "postgresql", "asyncpg", "psycopg", "npgsql"),
+    "mysql": ("mysql", "mariadb"),
+    "sqlserver": ("sql server", "sqlserver", "mssql", "t-sql", "azure sql"),
+    "oracle": ("oracle",),
+    "mongodb": ("mongodb", "mongo "),
+}
+_WORD = re.compile(r"[a-z][a-z0-9_]+")
+# Too common in error text to tell two errors apart.
+_GENERIC = frozenset(
+    """
+    error errors failed failure exception traceback most recent call last file line
+    none with from that this when connection connect database request response server
+    client invalid timeout timed could cannot unable while true false
+    """.split()  # noqa: SIM905
+)
+
+
+def stack_terms(lines: Iterable[str], limit: int = 3) -> list[str]:
+    """The application's stack named in its own lines (tracebacks, log fields), most specific
+    last: e.g. ["postgres", "asyncpg", "sqlalchemy"]."""
+    words = set(_WORD.findall(" ".join(lines).lower()))
+    found = [name for name, aliases in _STACK if words & set(aliases)]
+    return found[:limit]
+
+
+def with_stack(query: str, stack: list[str]) -> str:
+    """The query with the stack terms it does not already have ("... postgres asyncpg")."""
+    have = set(_WORD.findall(query.lower()))
+    extra = [t for t in stack if t not in have]
+    return " ".join([query, *extra]).strip()[:250]
+
+
+def relevant(results: list[SearchResult], query: str, stack: list[str]) -> list[SearchResult]:
+    """Results about this error: they share a distinctive term with the query or name the
+    stack, and are not about another database than the application's."""
+    ours = next((db for db in _DATABASES if db in stack), None)
+    terms = {w for w in _WORD.findall(query.lower()) if len(w) >= 4 and w not in _GENERIC}
+    keep = []
+    for r in results:
+        text = f"{r.title} {r.snippet} {r.url}".lower()
+        if ours is not None and not any(a in text for a in _DATABASES[ours]):
+            others = (db for db in _DATABASES if db != ours)
+            if any(a in text for db in others for a in _DATABASES[db]):
+                continue
+        words = set(_WORD.findall(text))
+        if terms & words or set(stack) & words:
+            keep.append(r)
+    return keep
+
+
+_NAMED_EXCEPTION = re.compile(r"\b[A-Z][A-Za-z]*(?:Error|Exception)\b")
+
 # Reader notes and request summaries are Groundcrew's lines, not the application's errors.
 _NOT_APP = ("latency summary", "reader failed", "reader timed out")
 
@@ -127,9 +210,14 @@ def dominant_error(lines: Iterable[str]) -> str:
     counts: Counter[str] = Counter()
     for line in lines:
         message = line.split(" | ")[-1].strip()
-        if message.startswith(_NOT_APP) or not is_error_line(message):
+        named = bool(_NAMED_EXCEPTION.search(message))
+        if message.startswith(_NOT_APP) or not (named or is_error_line(message)):
             continue
         query = search_query(message)
         if query:
             counts[query] += 1
-    return counts.most_common(1)[0][0] if counts else ""
+    if not counts:
+        return ""
+    # Most frequent first; on a tie, the line that names an exception (OutOfMemoryError) says
+    # more than a status ("rollout FAILED").
+    return max(counts, key=lambda q: (counts[q], bool(_NAMED_EXCEPTION.search(q))))

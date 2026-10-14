@@ -58,6 +58,8 @@ export const STATUS: Record<IncidentStatus, { label: string; color: string }> = 
   verifying: { label: "Verifying", color: "var(--status-running)" },
   resolved: { label: "Resolved", color: "var(--status-ok)" },
   failed: { label: "Not resolved", color: "var(--status-failed)" },
+  // A newer incident on a related resource took it over: the outage goes on there.
+  merged: { label: "Merged", color: "var(--status-neutral)" },
 };
 
 export const SEVERITY: Record<Severity, { label: string; color: string }> = {

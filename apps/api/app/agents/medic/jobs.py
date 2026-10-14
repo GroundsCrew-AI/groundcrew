@@ -9,6 +9,7 @@ from app.pipeline.resume import register_resume_handler
 from app.security.redact import redact
 
 VERIFY_JOB = agent.VERIFY_JOB
+NO_FIX_JOB = agent.NO_FIX_JOB
 
 
 def _runner(session_factory: SessionFactory) -> agent.MedicRunner:
@@ -46,6 +47,12 @@ async def rediagnose_incident_job(session_factory: SessionFactory, payload: dict
         uuid.UUID(payload["incident_id"]),
         uuid.UUID(payload["run_id"]),
         [str(s) for s in payload.get("signals") or []],
+    )
+
+
+async def no_fix_deadline_job(session_factory: SessionFactory, payload: dict[str, Any]) -> None:
+    await _runner(session_factory).no_fix_deadline(
+        uuid.UUID(payload["incident_id"]), uuid.UUID(payload["run_id"])
     )
 
 

@@ -174,3 +174,14 @@ was open or merged.
   stay `resolved`).
 - `WorkspaceSummary.pending_permanent_fixes`.
 
+## Phase 5: live broken-env fixes (2026-10-14)
+
+All additive.
+- `IncidentStatus` `merged`: a newer incident on a related resource took this one over (was
+  `failed`). `GET /incidents` leaves merged incidents out unless `status=merged`.
+  `IncidentSummary.merged_into` (uuid or null) and `merged_from` (uuids). `incident_updated`
+  on the merged incident has `status: "merged"`, `previous_status`, `merged_into`.
+- `Signal.down` (bool): an error spike where nearly every operation fails counts as down.
+- `incident_updated` "No fix yet; waiting 90 s for related signals" before "No fix".
+- Secret version ids are shown in full (plan summary, the Map's `version_stages` keys).
+

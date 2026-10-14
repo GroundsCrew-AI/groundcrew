@@ -321,6 +321,46 @@ back and nothing said so.
   app/(app)/incidents/{page,incidents-home}.tsx*, app/(app)/incidents/[id]/incident-view.tsx*,
   app/(app)/page.tsx, lib/incidents.ts, lib/api/*, tests/incident-fixtures.ts.
 
+## Live broken-env rerun: merged, down without health checks, verify, research, memory (2026-10-14)
+
+Incidents "checkout-worker: 5 error lines" and "checkout-api: 6 error lines". The secret rollback
+and restarts worked (errors normal on both), but the run looked like two failures.
+1. Merged: the worker's incident failed with "No fix" at 06:50:40; the api's signal at 06:51:10
+   opened a new incident that took it over, and the list showed both as Not resolved. A taken-over
+   incident now gets status `merged` (`merged_into` in its state; `merged_from` on the new one),
+   linked both ways on the incident page, hidden from the default list, shown under "Merged".
+2. Down without health checks: `Signal.down` when >= 90% of a service's log lines are errors for
+   2+ minutes (>= 3 lines; the worker's every poll failed). `fixes.is_down` treats it like a
+   failing health check (emergency fixes, rollback of the crashing service). "No fix" now waits
+   `MEDIC_NO_FIX_GRACE_SECONDS` (90) for related signals (`medic_no_fix` job); a signal from a
+   new resource (or newly down) is material, joins the incident, and re-diagnoses it.
+3. Verify: ECS keeps old service events, so "(task 825dad...) failed container health checks"
+   from the task the restart replaced counted for 14 rounds. `verify.current_health_events`
+   counts only events after the fix and after the primary deployment started, and not about a
+   task that has stopped.
+4. Research: the evidence line holding the worker's traceback is cut short, so `json.loads`
+   failed and the raw JSON was searched. Broken JSON now yields its `msg` and the last exception
+   named in it. Every path uses the dominant error (app logs, then any source, preferring lines
+   that name an exception). Queries carry the app's stack (`stack_terms`: from its lines, the
+   graph's RDS engine, and the diagnosis, e.g. "postgres asyncpg sqlalchemy"), and results that
+   share no key term, or are about another database (SQL Server for a Postgres app), are dropped.
+5. Memory (fallback, no PRICE_EMBED_PER_M): when a past incident's triggering change was made to
+   the same thing again in this window (any version of secret checkout/database-url), it counts
+   for half the score and rules/resources use containment: the live pair now scores 0.95 (was
+   0.79); unrelated incidents unchanged. The timeline says "(best 79% similar)" when none is
+   close enough.
+6. Secret version ids in full: the plan summary said "back to version terrafor" (8 characters of
+   a Terraform id); the Map's `version_stages` keys too.
+- Tests: tests/test_live_fixes_4.py (9); updated tests/test_live_fixes_3.py (fixed resource id
+  in `_sig`), tests/test_live_missing_index.py (query carries the stack), tests/test_medic.py
+  (realistic Tavily snippet), tests/test_actions_aws.py, tests/test_aws_discovery.py; web
+  incidents.test.tsx (+2), incidents-home.test.tsx (+1).
+- Files (Ahmed's code marked *): app/agents/medic/{agent,events,fixes,jobs,memory,state,
+  verify}.py*, app/incidents/{rules,store,views}.py*, app/tools/tavily.py*, app/actions/aws.py,
+  app/discovery/aws.py, app/config.py, app/worker.py, app/routes/{incidents,incident_schemas}.py;
+  web lib/incidents.ts, app/(app)/incidents/incidents-home.tsx*, app/(app)/incidents/[id]/
+  incident-view.tsx*, components/incidents/medic-step.tsx*, lib/api/*.
+
 ## How to resume
 
 ```bash

@@ -105,6 +105,10 @@ class IncidentSummary(BaseModel):
     # A follow-up (the permanent fix PR) is open or merged but not deployed yet: a resolved
     # incident whose repo still has the bad change.
     has_open_followups: bool = False
+    # status merged: the newer incident that took this one over. merged_from: the incidents
+    # this one took over (same outage on related resources).
+    merged_into: uuid.UUID | None = None
+    merged_from: list[uuid.UUID] = Field(default_factory=list)
 
 
 class IncidentPage(BaseModel):

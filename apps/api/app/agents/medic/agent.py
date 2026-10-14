@@ -81,12 +81,21 @@ from app.security.redact import redact
 from app.steps import record_step
 from app.telemetry.collect import Evidence, GraphEvidenceCollector
 from app.tools.github_pr import FixPullRequests, GitHubFixPullRequests
-from app.tools.tavily import TavilyClient, TavilyError, dominant_error, search_query
+from app.tools.tavily import (
+    TavilyClient,
+    TavilyError,
+    dominant_error,
+    relevant,
+    search_query,
+    stack_terms,
+    with_stack,
+)
 
 logger = logging.getLogger("groundcrew.medic")
 
 AGENT: Final = "medic"
 VERIFY_JOB: Final = "verify_incident"
+NO_FIX_JOB: Final = "medic_no_fix"
 HEALTHY_ROUNDS = 2
 MAX_REDIAGNOSES = 2
 # Evidence sources that carry the application's own log lines.
@@ -365,7 +374,7 @@ class MedicRunner:
         vector = await mem.embed_symptom(llm, budget, symptom)
         if vector is not None and not incident.is_test:
             incident.embedding = vector
-        hits = await mem.similar(session, incident, vector)
+        hits = await mem.similar(session, incident, vector, evidence.changes)
         reused = mem.reusable(hits, self.settings.medic_memory_threshold)
         state.memory_hits = hits
         if reused is not None:
@@ -384,6 +393,12 @@ class MedicRunner:
                 f"Reusing {reused.title} ({reused.similarity:.2f})"
                 if reused
                 else f"{len(hits)} similar past incidents, none close enough to reuse"
+                + (
+                    f" (best {hits[0].similarity:.2f}, needs "
+                    f"{self.settings.medic_memory_threshold:.2f})"
+                    if hits
+                    else ""
+                )
             ),
             data=MemoryChecked(
                 hits=hits,
@@ -393,7 +408,14 @@ class MedicRunner:
         )
         await session.commit()
 
-        # 3. Research
+        # 3. Research. Queries carry the application's stack, from its lines and the graph (an
+        # RDS engine), so a Postgres app's error does not bring back SQL Server articles.
+        graph = await self._graph(session, incident)
+        stack_lines = [
+            *(i.line for i in all_items),
+            *(f"{r.type} {r.config.get('engine') or ''}" for r in graph.resources.values()),
+        ]
+        state.stack = stack_terms(stack_lines)
         results, queries, skipped = await self._research(
             items, all_items, affected, state, reused is not None
         )
@@ -412,7 +434,6 @@ class MedicRunner:
         names = [r.name for r in state.neighbors if r.id in affected] or [
             str(s.resource_name) for s in signals if s.resource_name
         ]
-        graph = await self._graph(session, incident)
         affected_names = [
             graph.resources[r].name for r in incident.affected_resource_ids if r in graph.resources
         ] or names
@@ -495,7 +516,13 @@ class MedicRunner:
         # 4b. Research the root cause itself (an index, a pool setting), for the fix.
         follow_up: list[ResearchResult] = []
         if reused is None and root_cause.search_query:
-            follow_up, query, skipped = await self._search(root_cause.search_query, state)
+            # Cleaned like every other query (no ids, times, raw JSON), with the stack (the
+            # diagnosis may name the libraries the lines did not: "sqlalchemy engine.begin").
+            asked = search_query(root_cause.search_query) or root_cause.search_query
+            state.stack = stack_terms(
+                [*stack_lines, root_cause.summary, root_cause.root_cause, asked]
+            )
+            follow_up, query, skipped = await self._search(asked, state)
             if query:
                 state.research = [*state.research, *follow_up]
                 state.research_queries = [*state.research_queries, query]
@@ -537,17 +564,69 @@ class MedicRunner:
             data=FixProposed(fixes=[f.fix for f in state.fixes]),
         )
         if not state.fixes:
-            await self._fail(
-                session,
-                incident,
-                run,
-                state,
-                "No fix Medic can apply. " + " ".join(state.notes),
-                run_status=RunStatus.succeeded,
-                stop=StopReason.completed,
-            )
+            grace = self.settings.medic_no_fix_grace_seconds
+            if not state.no_fix_waited and grace > 0 and not root_cause.false_alarm:
+                # The same outage may show up on a related service in a moment (a worker's
+                # errors, then the api's): wait for it to join before giving up.
+                now = self.deps.now()
+                state.no_fix_until, state.no_fix_waited = now + timedelta(seconds=grace), True
+                _save(incident, state)
+                await record_step(
+                    session,
+                    run,
+                    kind="incident_updated",
+                    output_summary=f"No fix yet; waiting {grace} s for related signals",
+                    data=IncidentUpdated(
+                        incident_id=incident.id,
+                        status=incident.status,
+                        previous_status=incident.status,
+                        at=now,
+                        reason=f"No fix yet; waiting {grace} s for related signals.",
+                    ),
+                )
+                await queue.enqueue(
+                    session,
+                    NO_FIX_JOB,
+                    {"incident_id": str(incident.id), "run_id": str(run.id)},
+                    run_after=state.no_fix_until,
+                    max_attempts=1,
+                )
+                await session.commit()
+                return
+            await self._fail_no_fix(session, incident, run, state)
             return
         await self._request_approvals(session, incident, run, state)
+
+    async def _fail_no_fix(
+        self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
+    ) -> None:
+        state.no_fix_until = None
+        await self._fail(
+            session,
+            incident,
+            run,
+            state,
+            "No fix Medic can apply. " + " ".join(state.notes),
+            run_status=RunStatus.succeeded,
+            stop=StopReason.completed,
+        )
+
+    async def no_fix_deadline(self, incident_id: uuid.UUID, run_id: uuid.UUID) -> None:
+        """The grace after "No fix" is over and no related signal re-diagnosed it: fail."""
+        async with self.session_factory() as session:
+            loaded = await self._load(session, incident_id, run_id)
+            if loaded is None:
+                return
+            incident, run, state = loaded
+            await session.get(Run, run.id, with_for_update=True, populate_existing=True)
+            if (
+                run.status in TERMINAL_RUN_STATUSES
+                or state.phase != "investigating"
+                or state.no_fix_until is None
+                or state.fixes
+            ):
+                return
+            await self._fail_no_fix(session, incident, run, state)
 
     async def _research(
         self,
@@ -562,6 +641,10 @@ class MedicRunner:
         # The application's most frequent error, not the loudest symptom (a failed health
         # check says nothing a search can use); the best-scored error line otherwise.
         query = dominant_error(i.line for i in all_items if i.source.startswith(APP_LOGS))
+        if not query:
+            # No application error: the dominant error from any source (an OOM stop reason),
+            # never a raw line or the loudest non-error symptom.
+            query = dominant_error(i.line for i in all_items)
         if not query:
             scored = sorted(items, key=lambda i: -ev.score(i, affected))
             query = next((q for i in scored if (q := search_query(i.line))), "")
@@ -579,15 +662,21 @@ class MedicRunner:
             return [], None, "Skipped: TAVILY_API_KEY is not set."
         if state.tavily_calls >= self.settings.tavily_max_calls_per_incident:
             return [], None, "Skipped: research cap for this incident reached."
+        # The application's stack from its own lines ("postgres asyncpg sqlalchemy"), so a
+        # Postgres app's connection error does not bring back SQL Server articles.
+        stack = state.stack
+        query = with_stack(query, stack)
         state.tavily_calls += 1
         try:
             found = await self.deps.tavily.search(query)
         except TavilyError as exc:
             return [], query, f"Research failed: {exc}"
+        kept = relevant(found, query, stack)
+        dropped = len(found) - len(kept)
         return (
-            [ResearchResult(title=r.title, url=r.url, snippet=r.snippet) for r in found],
+            [ResearchResult(title=r.title, url=r.url, snippet=r.snippet) for r in kept],
             query,
-            None,
+            f"Dropped {dropped} unrelated results." if dropped and not kept else None,
         )
 
     async def _request_approvals(
@@ -1007,9 +1096,14 @@ class MedicRunner:
                 return
             incident, run, state = loaded
             await session.get(Run, run.id, with_for_update=True, populate_existing=True)
+            in_grace = (
+                state.phase == "investigating"
+                and state.no_fix_until is not None
+                and not state.fixes
+            )
             if (
                 run.status in TERMINAL_RUN_STATUSES
-                or state.phase != "waiting_approval"
+                or (state.phase != "waiting_approval" and not in_grace)
                 or state.rediagnosed >= MAX_REDIAGNOSES
                 or any(r.status != "waiting_approval" for r in state.fixes)
             ):
@@ -1033,6 +1127,7 @@ class MedicRunner:
                 approval.decided_at = now
                 approval.decided_via = "Medic: superseded by new signals"
             state.fixes, state.notes, state.phase = [], [], "investigating"
+            state.no_fix_until = None
             state.rediagnosed += 1
             _save(incident, state)
             await self._status(

@@ -226,7 +226,8 @@ group of related resources: reporting resources an open incident covers returns 
 | Field | Meaning |
 |---|---|
 | `id`, `workspace_id`, `run_id` | `run_id`: the latest Medic run for it |
-| `title`, `status`, `severity` | status `open`, `investigating`, `waiting_approval`, `applying`, `verifying`, `resolved`, `failed`; severity `critical`, `high`, `medium`, `low` |
+| `title`, `status`, `severity` | status `open`, `investigating`, `waiting_approval`, `applying`, `verifying`, `resolved`, `failed`, `merged` (a newer incident on a related resource took it over; hidden from `GET /incidents` unless `?status=merged`); severity `critical`, `high`, `medium`, `low` |
+| `merged_into`, `merged_from` | the incident that took this one over (status `merged`), and the incidents this one took over |
 | `detected_by`, `detector_rule` | `watcher` or `user`; the rule that fired first: `health_check`, `ecs_deployment_failed`, `ecs_tasks_stopped`, `log_error_spike`, `rds_cpu_latency`, `user_report`, `other` |
 | `opened_at`, `resolved_at`, `window` | `window` = `{start, end}`; `end` is null while open |
 | `affected_resource_ids`, `affected_resources` | ids for Map deep links; `{id, name, type, provider}` for labels |
@@ -272,7 +273,12 @@ left out of the reused fix ("rollback only"). `GET /workspaces/{id}/summary` has
 deployment of the new revision (the deploy workflow's success stands for it).
 
 Stopping the Medic run (`POST /runs/{run_id}/stop`) rejects its pending approvals and closes the
-incident as `failed` ("Stopped by <login>."). Fix PR states are refreshed from GitHub when the
+incident as `failed` ("Stopped by <login>."). When Medic finds no fix, it waits
+`MEDIC_NO_FIX_GRACE_SECONDS` (90) for related signals before failing: a signal from a resource or
+rule the incident has not seen (the api's errors after the worker's) joins it and re-diagnoses.
+`Signal.down`: an error spike where 90% or more of the service's log lines are errors for 2+
+minutes (at least 3 lines) means "down" like a failing health check, so emergency fixes can be
+proposed for services without health checks. Fix PR states are refreshed from GitHub when the
 detail is read, at most once a minute.
 
 Approve a fix with the existing `POST /approvals/{approval_id}/decide`; it also shows in the

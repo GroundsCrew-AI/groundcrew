@@ -134,10 +134,13 @@ def test_a_deploy_restart_is_not_an_error_spike() -> None:
 # --- B2: new signals and "false alarm" ----------------------------------------------------------
 
 
+API_ID = uuid.UUID("9c78ba1f-3751-48ae-a256-e6b38353018a")
+
+
 def _sig(rule: str, detail: str, minutes: float = 1.0) -> dict[str, Any]:
     return Signal(
         rule=rule,
-        resource_id=uuid.uuid4(),
+        resource_id=API_ID,
         resource_name="checkout-api",
         detail=detail,
         at=datetime(2026, 10, 13, 11, 17, tzinfo=UTC) + timedelta(minutes=minutes),

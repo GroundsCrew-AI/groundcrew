@@ -59,6 +59,18 @@ describe("MedicStep", () => {
     expect(screen.getByText("1 uncited item dropped")).toBeInTheDocument();
   });
 
+  it("shows the best memory score when none is close enough", () => {
+    const hit = (similarity: number) => ({ incident_id: `inc-${similarity}`, title: "past", similarity, root_cause: null, fix_summary: null, resolved_at: null });
+    const data = { type: "memory_checked" as const, hits: [hit(0.47), hit(0.79)], reused_incident_id: null, reused: [] };
+    render(<MedicStep step={medicStep(3, data)} />);
+    expect(screen.getByText("2 similar past incidents, none close enough to reuse (best 79% similar)")).toBeInTheDocument();
+  });
+
+  it("labels a merged incident as Merged, not Not resolved", () => {
+    render(<MedicStep step={medicStep(4, { type: "incident_updated", incident_id: "inc-0", status: "merged", previous_status: "failed", at: "2026-10-14T06:51:10Z", reason: null, merged_into: null, followups: null })} />);
+    expect(screen.getByText("Merged")).toBeInTheDocument();
+  });
+
   it("links a memory hit to the past incident", () => {
     const data = {
       type: "memory_checked" as const,

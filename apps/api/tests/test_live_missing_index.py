@@ -260,7 +260,8 @@ async def test_live_missing_index_opens_the_migration_pr_through_the_installatio
     sent = [json.loads(r.content)["query"] for r in searched.requests]
     assert len(sent) == 2 and sent == state.research_queries
     assert "asyncpg" in sent[0] and "statement timeout" in sent[0] and "health" not in sent[0]
-    assert sent[1] == ROOT_QUERY
+    # The root-cause query carries the app's stack (from its lines and the RDS engine).
+    assert sent[1] == f"{ROOT_QUERY} asyncpg sqlalchemy"
     assert state.tavily_calls == 2
     fix_prompt = llm.calls[-1]["messages"][-1]["content"]
     assert "Background from web research" in fix_prompt and "Index scans" in fix_prompt

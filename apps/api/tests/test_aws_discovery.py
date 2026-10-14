@@ -100,6 +100,11 @@ async def test_secret_is_metadata_only() -> None:
         "kms_key",
         "version_stages",
     }
+    # Full version ids: Terraform's all start "terraform-", so 8 characters said "terrafor".
+    assert secret.config["version_stages"] == {
+        "11111111-aaaa": ["AWSCURRENT"],
+        "22222222-bbbb": ["AWSPREVIOUS"],
+    }
     assert "postgresql://" not in json.dumps([r.config for r in result.resources])
 
 

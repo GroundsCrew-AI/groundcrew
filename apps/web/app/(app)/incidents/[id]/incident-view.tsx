@@ -237,7 +237,32 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
               ({Math.round(i.memory.similarity * 100)}% similar), reused its {i.memory.reused.join(" and ")}.
             </p>
           )}
-          {i.outcome && (
+          {i.merged_into && (
+            <p className="text-[13px]">
+              Merged into{" "}
+              <Link href={`/incidents/${i.merged_into}`} className="font-medium underline underline-offset-2">
+                a newer incident
+              </Link>
+              <span className="text-muted-foreground">
+                : the same outage showed up on a related resource, and Medic carried on there.
+              </span>
+            </p>
+          )}
+          {(i.merged_from ?? []).length > 0 && (
+            <p className="text-[12.5px] text-muted-foreground">
+              Took over{" "}
+              {(i.merged_from ?? []).map((id, n) => (
+                <span key={id}>
+                  {n > 0 && ", "}
+                  <Link href={`/incidents/${id}`} className="text-foreground underline underline-offset-2">
+                    an earlier incident
+                  </Link>
+                </span>
+              ))}{" "}
+              on a related resource (same outage).
+            </p>
+          )}
+          {i.outcome && !i.merged_into && (
             <p className={i.outcome.result === "resolved" ? "text-[13px] text-[var(--status-ok)]" : "text-[13px] text-[var(--status-failed)]"}>
               {i.outcome.result === "resolved" ? "Resolved" : "Not resolved"}
               {i.outcome.reason && <span className="text-muted-foreground">: {i.outcome.reason}</span>}

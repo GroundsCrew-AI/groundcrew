@@ -34,8 +34,10 @@ def default_handlers() -> dict[str, Handler]:
     # Imported here so `app.queue` users do not load every agent and tool.
     from app.agents.base import run_agent_job
     from app.agents.medic.jobs import (
+        NO_FIX_JOB,
         VERIFY_JOB,
         investigate_incident_job,
+        no_fix_deadline_job,
         rediagnose_incident_job,
         verify_incident_job,
     )
@@ -56,6 +58,7 @@ def default_handlers() -> dict[str, Handler]:
         INVESTIGATE_JOB: investigate_incident_job,
         VERIFY_JOB: verify_incident_job,
         REDIAGNOSE_JOB: rediagnose_incident_job,
+        NO_FIX_JOB: no_fix_deadline_job,
         WATCH_JOB: watch_incidents_job,
     }
 

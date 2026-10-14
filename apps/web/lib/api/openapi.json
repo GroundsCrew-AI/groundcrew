@@ -3354,6 +3354,26 @@
             "title": "Memory Reused",
             "type": "boolean"
           },
+          "merged_from": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Merged From",
+            "type": "array"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
           "opened_at": {
             "format": "date-time",
             "title": "Opened At",
@@ -3465,7 +3485,8 @@
               "applying",
               "verifying",
               "resolved",
-              "failed"
+              "failed",
+              "merged"
             ],
             "title": "Status",
             "type": "string"
@@ -3934,6 +3955,26 @@
             "title": "Memory Reused",
             "type": "boolean"
           },
+          "merged_from": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Merged From",
+            "type": "array"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
           "opened_at": {
             "format": "date-time",
             "title": "Opened At",
@@ -4003,7 +4044,8 @@
               "applying",
               "verifying",
               "resolved",
-              "failed"
+              "failed",
+              "merged"
             ],
             "title": "Status",
             "type": "string"
@@ -4142,7 +4184,8 @@
                   "applying",
                   "verifying",
                   "resolved",
-                  "failed"
+                  "failed",
+                  "merged"
                 ],
                 "type": "string"
               },
@@ -4172,7 +4215,8 @@
               "applying",
               "verifying",
               "resolved",
-              "failed"
+              "failed",
+              "merged"
             ],
             "title": "Status",
             "type": "string"
@@ -6158,6 +6202,11 @@
             ],
             "title": "Detail",
             "type": "string"
+          },
+          "down": {
+            "default": false,
+            "title": "Down",
+            "type": "boolean"
           },
           "resource_id": {
             "anyOf": [
@@ -8527,7 +8576,8 @@
                     "applying",
                     "verifying",
                     "resolved",
-                    "failed"
+                    "failed",
+                    "merged"
                   ],
                   "type": "string"
                 },
