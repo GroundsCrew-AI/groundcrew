@@ -133,6 +133,28 @@ every resource, how they connect, and why Groundcrew thinks so.
 Running Groundcrew yourself? See [docs/self-hosting.md](docs/self-hosting.md) for the one AWS identity
 and the GitHub App it needs.
 
+### Marking your own tooling
+
+Some of what discovery finds manages or watches your app without being part of it: Terraform state
+buckets and lock tables, CI roles, a Lambda that updates DNS, a cluster's Argo CD. Groundcrew puts
+those in a collapsed **Tooling** group on the Map, leaves them out of the system summary, and does not
+read them as neighbors when Medic investigates an incident (it still reads one an incident names
+directly).
+
+It recognizes some by name (state buckets, lock tables, its own `groundcrew-*` roles). Mark the rest
+yourself:
+
+| Where | Key | Value |
+|---|---|---|
+| AWS tag (Lambda, IAM role, log group, EventBridge rule, secret, anything taggable) | `groundcrew:role` | `tooling` |
+| Kubernetes label | `groundcrew/role` | `tooling` |
+
+The tag wins over the name rules. Set it to `app` to keep a resource in the app view when its name
+looks like tooling (a bucket called `uploads-tfstate-export`, say). Values are case-insensitive;
+anything else is ignored. Discovery reads the tags with the read-only role's existing permissions
+(the inventory, `lambda:ListTags`, `iam:GetRole`, secret metadata), so the role needs no update. Run
+discovery again after you tag.
+
 ## Repository layout
 
 - `apps/api`: FastAPI control plane (Python 3.12, uv)

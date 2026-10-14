@@ -24,10 +24,9 @@ from app.agents.scout.summary import ResourceSummary
 from app.db.models import Edge, Resource
 from app.discovery.types import DiscoveredResource
 from app.graph.edges import Confidence, EdgeKind, InferredEdge, key
-from app.graph.roles import role
+from app.graph.roles import linked_to_app, role
 
 TOKEN_CAP = 6_000
-TOOLING_NOTE = "role=tooling (manages the app's infrastructure; the app does not use it)"
 CHARS_PER_TOKEN = 4
 # Room for Scout's system prompt and the "N more resources" line.
 _RESERVED_CHARS = 1_000
@@ -185,9 +184,7 @@ def _fold(items: list[ResourceSummary], *, keep_linked: bool) -> list[ResourceSu
     groups: dict[tuple[str, str], list[ResourceSummary]] = defaultdict(list)
     kept: list[ResourceSummary] = []
     for item in items:
-        linked = item.relations or (
-            item.notes and ("Risk:" in item.notes or TOOLING_NOTE in item.notes)
-        )
+        linked = item.relations or (item.notes and "Risk:" in item.notes)
         if keep_linked and linked:
             kept.append(item)
         else:
@@ -206,21 +203,24 @@ def digest(
 ) -> list[ResourceSummary]:
     """The workspace graph for Scout: sorted, risks in notes, under `token_cap` tokens when
     folding can get it there (Scout drops whatever still does not fit, and says so)."""
+    roles = {key(r): role(r) for r in resources}
+    # Tooling (state buckets, template buckets, Groundcrew's role, anything tagged
+    # groundcrew:role=tooling) is not part of the app: left out, so the model cannot describe
+    # the app as using it, unless an edge connects it to an app resource.
+    app_linked = linked_to_app(
+        roles, ((e.source, e.target) for e in edges if e.kind != EdgeKind.defined_in)
+    )
+    left_out = {k for k, r in roles.items() if r == "tooling" and k not in app_linked}
+    resources = [r for r in resources if key(r) not in left_out]
     by_key = {key(r): r for r in resources}
     relations: dict[str, list[str]] = defaultdict(list)
-    linked: set[str] = set()
     for e in edges:
         if e.kind in _RELATION_KINDS and e.target in by_key and e.confidence != Confidence.low:
+            if e.source not in by_key:
+                continue
             target = by_key[e.target]
             relations[e.source].append(f"{e.kind.value} {target.name} ({_type_name(target.type)})")
-        if e.kind != EdgeKind.defined_in:
-            linked |= {e.source, e.target}
     risk_notes: dict[str, list[str]] = defaultdict(list)
-    # Tooling (state buckets, template buckets, Groundcrew's role) is not part of the app:
-    # tagged, so the model does not describe the app as using it unless an edge says so.
-    for r in resources:
-        if role(r) == "tooling" and key(r) not in linked:
-            risk_notes[key(r)].insert(0, TOOLING_NOTE)
     for risk in risks:
         risk_notes[risk.resource].append(risk.text)
     items = [

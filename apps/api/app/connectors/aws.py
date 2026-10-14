@@ -59,6 +59,7 @@ AWS_READ_OPERATIONS: frozenset[str] = frozenset(
         "ec2:DescribeSecurityGroups",
         "ec2:DescribeNetworkInterfaces",
         "lambda:ListFunctions",
+        "lambda:ListTags",
         "logs:DescribeLogGroups",
         "logs:FilterLogEvents",
         "cloudwatch:GetMetricData",

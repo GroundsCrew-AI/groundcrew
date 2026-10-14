@@ -55,6 +55,9 @@ EXTRA_TYPES = frozenset(
     }
 )
 
+# Per-resource tag lookups (Lambda ListTags) per region, at most.
+MAX_TAG_CALLS = 100
+
 # Inventory type -> (Cloud Control type name, how to get its identifier from the ARN).
 CLOUD_CONTROL_TYPES: dict[str, tuple[str, Callable[[str], str]]] = {
     "s3:bucket": ("AWS::S3::Bucket", lambda arn: arn.rsplit(":", 1)[-1]),
@@ -925,7 +928,20 @@ class AwsDiscovery:
 
     def functions(self, region: str) -> list[DiscoveredResource]:
         fns = self.reader.paginate("lambda", region, "ListFunctions", "Functions")
-        return [normalize_function(f, region, self.account) for f in fns]
+        out = [normalize_function(f, region, self.account) for f in fns]
+        # ListFunctions has no tags; groundcrew:role=tooling and the rest come from ListTags
+        # (lambda:ListTags is in the read-only role). The inventory adds tags too, when it
+        # lists the function.
+        for resource in out[:MAX_TAG_CALLS]:
+            try:
+                tags = self.reader.call(
+                    "lambda", region, "ListTags", Resource=resource.external_id
+                ).get("Tags")
+            except Exception as exc:
+                logger.info("lambda tags failed", extra={"error": error_text(exc)})
+                continue
+            resource.tags = {**resource.tags, **{str(k): str(v) for k, v in (tags or {}).items()}}
+        return out
 
     def log_groups(self, region: str) -> list[DiscoveredResource]:
         groups = self.reader.paginate("logs", region, "DescribeLogGroups", "logGroups", limit=500)
@@ -952,8 +968,14 @@ class AwsDiscovery:
             if role["RoleName"] in wanted or github_oidc_subjects(trust):
                 picked.append(role)
         out = []
-        for role in picked:
-            name = role["RoleName"]
+        for listed in picked:
+            name = listed["RoleName"]
+            # ListRoles leaves out tags; GetRole has them (groundcrew:role=tooling).
+            try:
+                role = {**listed, **self.reader.call("iam", None, "GetRole", RoleName=name)["Role"]}
+            except Exception as exc:
+                logger.info("iam get role failed", extra={"error": error_text(exc)})
+                role = listed
             inline: dict[str, dict[str, Any]] = {}
             for policy_name in self.reader.paginate(
                 "iam", None, "ListRolePolicies", "PolicyNames", RoleName=name

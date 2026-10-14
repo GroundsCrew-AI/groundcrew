@@ -296,7 +296,7 @@ class ResourceOut(BaseModel):
             coverage=r.coverage
             if r.coverage in ("observed", "diagnosable", "actionable")
             else "observed",
-            role=role_of(r.type, r.name),
+            role=role_of(r.type, r.name, r.tags),
             stale=r.stale,
             iac_path=r.iac_path,
             iac_url=_iac_url(r),
