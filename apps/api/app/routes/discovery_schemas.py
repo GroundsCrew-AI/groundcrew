@@ -69,6 +69,8 @@ class ConnectionOut(BaseModel):
     # approved emergency fixes). Null for other kinds.
     capabilities: list[AwsCapability] | None = None
     operate_role_arn: str | None = None
+    # AWS: the region the connect stack was created in (CloudFormation console links).
+    region: str | None = None
     # Kubernetes: namespaces the kubeconfig could list when it was verified.
     namespaces: int | None = None
     error: str | None = None
@@ -102,6 +104,7 @@ class ConnectionOut(BaseModel):
             deploy_role_arn=c.get("deploy_role_arn"),
             capabilities=capabilities(conn) if conn.kind == "aws" else None,
             operate_role_arn=c.get("operate_role_arn"),
+            region=c.get("region") if conn.kind == "aws" else None,
             namespaces=c.get("namespaces"),
             error=c.get("last_error"),
             resource_count=resource_count,

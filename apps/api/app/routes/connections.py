@@ -19,7 +19,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts import NotFoundError, member_workspace, require_owner
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.connectors import kubernetes as kube
 from app.connectors.aws import AwsError, get_sessions, new_external_id, parse_role_arn
 from app.connectors.deploy_infra import deploy_role_arn, operate_role_arn
@@ -611,7 +611,7 @@ async def discover_connection(
 
 def _cleanup_steps(conn: Connection) -> list[str]:
     c = conn.config or {}
-    region = c.get("region") or "us-east-2"
+    region = c.get("region") or get_settings().discovery_regions[0]
     if conn.kind == "aws":
         return [
             f"Delete the CloudFormation stack {STACK_NAME} in {region} (account "
