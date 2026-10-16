@@ -550,6 +550,7 @@ async def k8s_connect(
     cluster cannot be read."""
     await _check_member(session, user, body.workspace_id)
     try:
+        kube.check_kubeconfig(body.kubeconfig)
         summary = kubeconfig_summary(body.kubeconfig)
         reader = kube.live_reader(body.kubeconfig)
         try:

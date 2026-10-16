@@ -12,10 +12,13 @@ objects are never listed. Pod and template env values are dropped except endpoin
 """
 
 import asyncio
+import ipaddress
 import json
+import socket
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 import yaml
 
@@ -35,6 +38,93 @@ def check_kind(kind: str) -> str:
     if kind not in K8S_READ_KINDS:
         raise KubeReadRefusedError(f"Groundcrew does not list {kind} in Kubernetes.")
     return kind
+
+
+# What a stored kubeconfig may contain. Credentials must be inline: an exec plugin or auth
+# provider would run a command on Groundcrew's servers, and a *-file / path key would read a
+# local file. A proxy would send cluster traffic somewhere else.
+_USER_KEYS = frozenset({"token", "client-certificate-data", "client-key-data"})
+_CLUSTER_KEYS = frozenset(
+    {"server", "certificate-authority-data", "tls-server-name", "insecure-skip-tls-verify"}
+)
+
+
+class UnsafeKubeconfigError(ConnectorError):
+    """The kubeconfig asks for something Groundcrew never does with a customer's file."""
+
+
+def _private(host: str) -> bool:
+    """True when the host is, or resolves to, a loopback, private, link-local, or reserved
+    address (cloud metadata endpoints included). Unresolvable names are left to the client."""
+    try:
+        addresses = {ipaddress.ip_address(host)}
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+        except (OSError, UnicodeError):
+            return False
+        addresses = {ipaddress.ip_address(info[4][0]) for info in infos}
+    return any(
+        a.is_private
+        or a.is_loopback
+        or a.is_link_local
+        or a.is_reserved
+        or a.is_multicast
+        or a.is_unspecified
+        for a in addresses
+    )
+
+
+def check_kubeconfig(data: Any, *, allow_private: bool | None = None) -> dict[str, Any]:
+    """Refuse a kubeconfig that could run commands, read files, or reach internal addresses
+    from Groundcrew's servers. Returns the parsed config. `allow_private` (default: the
+    K8S_ALLOW_PRIVATE_SERVERS setting, on in APP_ENV=dev for the local kind cluster) allows API
+    servers on private addresses."""
+    if isinstance(data, str):
+        try:
+            data = yaml.safe_load(data)
+        except yaml.YAMLError:
+            raise ConnectorError("That is not a valid kubeconfig (YAML).") from None
+    if not isinstance(data, dict):
+        raise ConnectorError("That is not a valid kubeconfig.")
+    if allow_private is None:
+        from app.config import get_settings
+
+        settings = get_settings()
+        allow_private = (
+            settings.k8s_allow_private_servers
+            if settings.k8s_allow_private_servers is not None
+            else settings.app_env == "dev"
+        )
+    for entry in data.get("users") or []:
+        user = (entry or {}).get("user") or {}
+        extra = sorted(set(user) - _USER_KEYS)
+        if extra:
+            raise UnsafeKubeconfigError(
+                f"User {entry.get('name')!r} uses {', '.join(extra)}. Groundcrew only accepts a "
+                "service account token or inline client certificate data (no exec plugins, "
+                "auth providers, or file paths)."
+            )
+    for entry in data.get("clusters") or []:
+        cluster = (entry or {}).get("cluster") or {}
+        extra = sorted(set(cluster) - _CLUSTER_KEYS)
+        if extra:
+            raise UnsafeKubeconfigError(
+                f"Cluster {entry.get('name')!r} uses {', '.join(extra)}. Put the CA inline "
+                "(certificate-authority-data); proxies and file paths are not accepted."
+            )
+        server = str(cluster.get("server") or "")
+        parsed = urlparse(server)
+        if parsed.scheme not in ("https", "http") or not parsed.hostname:
+            raise UnsafeKubeconfigError(f"Cluster {entry.get('name')!r} has no https server URL.")
+        if parsed.scheme == "http" and not allow_private:
+            raise UnsafeKubeconfigError("The cluster's server must use https.")
+        if not allow_private and _private(parsed.hostname):
+            raise UnsafeKubeconfigError(
+                f"The cluster's server {parsed.hostname} is a private or internal address. "
+                "Groundcrew reaches clusters over the internet only."
+            )
+    return data
 
 
 def kubeconfig_summary(text: str) -> dict[str, Any]:
@@ -108,17 +198,20 @@ def _pod_shape(item: dict[str, Any]) -> dict[str, Any]:
 
 
 class LiveKubeReader:
-    """Lists K8S_READ_KINDS from a live cluster with the kubeconfig's credentials (token,
-    client certificate, or exec plugin). Calls are blocking, so each runs in a thread. Items
-    come back as plain dicts in the API's own shape (camelCase), like `kubectl get -o json`."""
+    """Lists K8S_READ_KINDS from a live cluster with the kubeconfig's credentials (token or
+    client certificate). Calls are blocking, so each runs in a thread. Items
+    come back as plain dicts in the API's own shape (camelCase), like `kubectl get -o json`.
+    The kubeconfig is checked first (`check_kubeconfig`): inline credentials only."""
 
     def __init__(self, kubeconfig: str, *, max_items: int = 2000) -> None:
         from kubernetes import client, config
 
         try:
-            data = yaml.safe_load(kubeconfig)
+            data = check_kubeconfig(kubeconfig)
             configuration = client.Configuration()
             config.load_kube_config_from_dict(data, client_configuration=configuration)
+        except ConnectorError:
+            raise
         except Exception as exc:
             raise ConnectorError(f"Could not load the kubeconfig: {_short(exc)}") from None
         self._api = client.ApiClient(configuration)

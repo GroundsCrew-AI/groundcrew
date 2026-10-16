@@ -255,6 +255,10 @@ class Settings(BaseSettings):
     max_steps_per_run: int = 12
     max_tokens_per_run: int = 400_000
 
+    # Kubernetes API servers on private or loopback addresses (unset: allowed only in
+    # APP_ENV=dev, for the local kind cluster). Kubeconfigs never run exec plugins either way.
+    k8s_allow_private_servers: bool | None = None
+
     # Incident detection (Phase 5). The watcher job checks linked resources every interval;
     # off by default so tests and fresh installs make no AWS calls on their own.
     incident_watch_enabled: bool = False

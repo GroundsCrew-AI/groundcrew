@@ -321,3 +321,56 @@ async def test_engine_discovers_k8s_connections_live(monkeypatch: pytest.MonkeyP
     assert "k8s" not in engine.PREVIEW_KINDS
     assert {r.account for r in result.resources} == {"kind-groundcrew"}
     assert ("k8s:ingress", "web") in {(r.type, r.name) for r in result.resources}
+
+
+# --- kubeconfig safety -----------------------------------------------------------------------
+
+import pytest as _pytest  # noqa: E402
+
+from app.connectors.kubernetes import UnsafeKubeconfigError, check_kubeconfig  # noqa: E402
+
+_SAFE = (
+    "apiVersion: v1\nkind: Config\ncurrent-context: c\n"
+    "contexts: [{name: c, context: {cluster: k, user: u}}]\n"
+    "clusters: [{name: k, cluster: {server: 'https://8.8.8.8:6443', "
+    "certificate-authority-data: Q0E=}}]\n"
+    "users: [{name: u, user: {token: abc}}]\n"
+)
+
+
+def test_a_token_kubeconfig_on_a_public_server_is_accepted() -> None:
+    assert check_kubeconfig(_SAFE, allow_private=False)["users"][0]["user"] == {"token": "abc"}
+
+
+@_pytest.mark.parametrize(
+    "user",
+    [
+        "{exec: {command: /bin/sh, args: ['-c', 'id']}}",
+        "{auth-provider: {name: gcp}}",
+        "{tokenFile: /etc/shadow}",
+        "{client-certificate: /root/cert.pem, client-key: /root/key.pem}",
+    ],
+)
+def test_exec_plugins_providers_and_files_are_refused(user: str) -> None:
+    text = _SAFE.replace("{token: abc}", user)
+    with _pytest.raises(UnsafeKubeconfigError, match="Groundcrew only accepts"):
+        check_kubeconfig(text, allow_private=False)
+
+
+@_pytest.mark.parametrize(
+    "server",
+    ["https://127.0.0.1:6443", "https://169.254.169.254", "https://10.0.0.5", "https://[::1]:443",
+     "http://8.8.8.8"],
+)  # fmt: skip
+def test_internal_or_plain_http_servers_are_refused(server: str) -> None:
+    with _pytest.raises(UnsafeKubeconfigError):
+        check_kubeconfig(_SAFE.replace("https://8.8.8.8:6443", server), allow_private=False)
+    # Dev (the local kind cluster) may use them.
+    check_kubeconfig(_SAFE.replace("https://8.8.8.8:6443", server), allow_private=True)
+
+
+def test_ca_files_and_proxies_are_refused() -> None:
+    for extra in ("certificate-authority: /etc/ca.pem", "proxy-url: 'http://10.0.0.1:3128'"):
+        text = _SAFE.replace("certificate-authority-data: Q0E=", extra)
+        with _pytest.raises(UnsafeKubeconfigError, match="proxies and file paths"):
+            check_kubeconfig(text, allow_private=False)

@@ -204,8 +204,13 @@ class ConnectionCredentialsProvider:
         )
 
     def kubeconfig(self, connection_id: uuid.UUID) -> Path:
+        from app.connectors.kubernetes import check_kubeconfig
+
         conn = self._get(connection_id, "k8s")
-        return self._temp.write(connection_id, self._secret(conn))
+        text = self._secret(conn)
+        # Also stored ones from before the check existed: never load an exec plugin or a path.
+        check_kubeconfig(text)
+        return self._temp.write(connection_id, text)
 
     def azure_credential(self, connection_id: uuid.UUID) -> AzureCredential:
         conn = self._get(connection_id, "azure")
