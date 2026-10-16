@@ -84,7 +84,9 @@ class RequestIdMiddleware:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    setup_logging(get_settings().log_level)
+    settings = get_settings()
+    setup_logging(settings.log_level)
+    settings.require_production_ready()
     yield
     if get_settings().database_url is not None:
         await get_engine().dispose()
@@ -155,4 +157,28 @@ class Health(BaseModel):
 
 @app.get("/health")
 def health() -> Health:
+    """Liveness: the process answers. Use /ready for traffic and deploy checks."""
     return Health(status="ok", version=VERSION)
+
+
+class Ready(BaseModel):
+    status: str
+    version: str
+    database: str
+    migrations: str
+
+
+@app.get("/ready", responses={503: {"model": Ready}})
+async def ready() -> JSONResponse:
+    """Readiness: the database answers and its schema is at this build's migration head."""
+    from app.db.readiness import check
+
+    database, migrations = await check()
+    ok = database == "ok" and migrations == "ok"
+    body = Ready(
+        status="ok" if ok else "unavailable",
+        version=VERSION,
+        database=database,
+        migrations=migrations,
+    )
+    return JSONResponse(status_code=200 if ok else 503, content=body.model_dump())

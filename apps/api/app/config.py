@@ -294,6 +294,37 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Worker housekeeping: finished jobs are deleted after this many days, failed ones after
+    # FAILED_JOB_RETENTION_DAYS (kept longer for debugging).
+    job_retention_days: int = 7
+    failed_job_retention_days: int = 30
+
+    def production_problems(self) -> list[str]:
+        """What a staging or production instance is missing. Dev and test may run without
+        these; a hosted instance must not (secrets would be unset or derived)."""
+        if self.app_env not in ("staging", "production"):
+            return []
+        problems = []
+        for name in ("database_url", "secrets_key", "internal_jwt_secret", "approval_token_key"):
+            value = getattr(self, name)
+            if value is None or not value.get_secret_value():
+                problems.append(f"{name.upper()} is not set")
+        secret = self.internal_jwt_secret
+        if secret is not None and 0 < len(secret.get_secret_value()) < 32:
+            problems.append("INTERNAL_JWT_SECRET is shorter than 32 characters")
+        if "localhost" in self.web_origin or "127.0.0.1" in self.web_origin:
+            problems.append("WEB_ORIGIN still points at localhost")
+        return problems
+
+    def require_production_ready(self) -> None:
+        problems = self.production_problems()
+        if problems:
+            raise RuntimeError(
+                f"APP_ENV={self.app_env} cannot start: "
+                + "; ".join(problems)
+                + ". See docs/self-hosting.md."
+            )
+
 
 @lru_cache
 def get_settings() -> Settings:
