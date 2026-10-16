@@ -252,7 +252,7 @@ class AgentRunner:
             await session.commit()
         schemas = [self.tools.get(name).openai_schema() for name in agent.tools]
         budget = await RunBudget.load(
-            session, run, PgUsageStore(self.session_factory), self.settings
+            session, run, PgUsageStore(self.session_factory, run.workspace_id), self.settings
         )
         recorder = StepRecorder(session, run, agent.name)
 

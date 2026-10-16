@@ -325,13 +325,16 @@ class WorkspaceSummary(BaseModel):
     # DAILY_TOKEN_BUDGET is shared by every workspace; this is what counts against it.
     budget_tokens_today: int
     daily_token_budget: int | None
-    # Token Factory spend in USD across all workspaces (llm_usage), and its caps.
+    # This workspace's Token Factory spend in USD: today against its daily cap (workspace
+    # settings, else the platform default), and in total. No platform-wide figures.
     usd_today: float = 0.0
     daily_usd_cap: float | None = None
     usd_total: float = 0.0
     total_usd_cap: float | None = None
     # Incidents whose permanent fix PR is still open or merged but not deployed.
     pending_permanent_fixes: int = 0
+    # Incidents not resolved or failed yet (investigating, waiting for approval, ...).
+    open_incidents: int = 0
 
 
 # --- SSE payloads -----------------------------------------------------------------------

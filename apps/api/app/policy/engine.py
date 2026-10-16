@@ -44,6 +44,10 @@ class ApprovalNotFoundError(ApprovalStateError):
     pass
 
 
+class ApprovalForbiddenError(Exception):
+    """The workspace lets only owners approve emergency actions, and the decider is not one."""
+
+
 class RunStoppedError(Exception):
     """The run was stopped (by a user) while the agent was working. The agent exits."""
 
@@ -199,6 +203,22 @@ async def _waiting_for(session: AsyncSession, run: Run, approval: Approval) -> s
     return None
 
 
+async def _check_emergency_approver(
+    session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
+    from app.accounts import member_role
+    from app.db.models import Workspace, WorkspaceRole
+    from app.workspace_settings import get_config
+
+    workspace = await session.get_one(Workspace, workspace_id)
+    if get_config(workspace).emergency_approvers == "members":
+        return
+    if await member_role(session, user_id, workspace_id) != WorkspaceRole.owner:
+        raise ApprovalForbiddenError(
+            "Only a workspace owner can approve emergency actions here (workspace settings)."
+        )
+
+
 async def decide_approval(
     session: AsyncSession,
     approval_id: uuid.UUID,
@@ -219,6 +239,14 @@ async def decide_approval(
     run = await session.get_one(Run, approval.run_id, with_for_update=True)
     if run.status in TERMINAL_RUN_STATUSES:
         raise ApprovalStateError(f"The run is already {run.status}.")
+    # Rejecting is always allowed; approving an emergency action may need an owner.
+    # (No decided_by: the dev-only self-approve for live scripts.)
+    if (
+        approval.policy == ToolPolicy.emergency
+        and decision == Decision.approve
+        and decided_by is not None
+    ):
+        await _check_emergency_approver(session, approval.workspace_id, decided_by)
     if decision == Decision.approve:
         waiting = await _waiting_for(session, run, approval)
         if waiting is not None:

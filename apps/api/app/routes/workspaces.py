@@ -16,12 +16,15 @@ from app.db.models import (
     TERMINAL_RUN_STATUSES,
     Approval,
     ApprovalStatus,
+    Incident,
     IncidentFollowUp,
+    LlmWorkspaceUsage,
     Run,
     RunStep,
     User,
 )
-from app.llm.budget import usage_totals
+from app.incidents.store import OPEN_STATUSES
+from app.llm.budget import usage_totals, workspace_daily_cap, workspace_usage_today
 from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.runs import rejected_counts
 from app.routes.schemas import (
@@ -169,17 +172,29 @@ async def summary(
             IncidentFollowUp.state.in_(PENDING_FOLLOWUP_STATES),
         )
     )
+    open_incidents = await session.scalar(
+        select(func.count(Incident.id)).where(
+            Incident.workspace_id == workspace_id, Incident.status.in_(OPEN_STATUSES)
+        )
+    )
     settings = settings or get_settings()
-    usage_today, usage_total = await usage_totals(session)
+    usage_today, _ = await usage_totals(session)
+    spent = await workspace_usage_today(session, workspace_id)
+    spent_total = await session.scalar(
+        select(func.coalesce(func.sum(LlmWorkspaceUsage.usd), 0)).where(
+            LlmWorkspaceUsage.workspace_id == workspace_id
+        )
+    )
     return WorkspaceSummary(
         runs_today=int(runs_today or 0),
         pending_approvals=int(pending or 0),
         workspace_tokens_today=int(workspace_tokens or 0),
         budget_tokens_today=usage_today.tokens,
         daily_token_budget=settings.daily_token_budget,
-        usd_today=float(usage_today.usd),
-        daily_usd_cap=settings.llm_daily_usd_cap,
-        usd_total=float(usage_total),
-        total_usd_cap=settings.llm_total_usd_cap,
+        usd_today=float(spent.usd),
+        daily_usd_cap=float(await workspace_daily_cap(session, workspace_id, settings)),
+        usd_total=float(spent_total or 0),
+        total_usd_cap=None,
         pending_permanent_fixes=int(pending_fixes or 0),
+        open_incidents=int(open_incidents or 0),
     )

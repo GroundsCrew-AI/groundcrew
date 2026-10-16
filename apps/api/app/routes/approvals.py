@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.accounts import NotFoundError, require_member
 from app.db.models import Approval, Run
 from app.policy.engine import (
+    ApprovalForbiddenError,
     ApprovalNotFoundError,
     ApprovalStateError,
     PolicyViolationError,
@@ -40,6 +41,8 @@ async def decide(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Approval not found.") from None
     except ApprovalStateError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    except ApprovalForbiddenError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from None
     run = await session.get_one(Run, approval.run_id)
     return ApprovalOut.build(approval, run, user)
 

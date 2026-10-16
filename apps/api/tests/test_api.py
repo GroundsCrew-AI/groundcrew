@@ -415,8 +415,9 @@ async def test_me_and_summary(
             )
         )
         await session.commit()
-    # Spend across all workspaces comes from llm_usage (the client adds every call to it).
-    await PgUsageStore(session_factory).add(Decimal("0.012"), 100)
+    # This workspace's spend (llm_workspace_usage); another workspace's spend is not shown.
+    await PgUsageStore(session_factory, alice.workspace_id).add(Decimal("0.012"), 100)
+    await PgUsageStore(session_factory).add(Decimal("0.5"), 1)  # platform-only spend
     app.dependency_overrides[get_settings] = lambda: _settings(daily_token_budget=1000)
     summary = (
         await client.get(f"/workspaces/{alice.workspace_id}/summary", headers=alice.headers)
@@ -425,13 +426,14 @@ async def test_me_and_summary(
         "runs_today": 1,
         "pending_approvals": 0,
         "workspace_tokens_today": 100,
-        "budget_tokens_today": 100,
+        "budget_tokens_today": 101,
         "daily_token_budget": 1000,
         "usd_today": 0.012,
         "daily_usd_cap": 2.0,
         "usd_total": 0.012,
-        "total_usd_cap": 25.0,
+        "total_usd_cap": None,
         "pending_permanent_fixes": 0,
+        "open_incidents": 0,
     }
 
 

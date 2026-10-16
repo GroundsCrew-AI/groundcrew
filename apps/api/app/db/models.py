@@ -148,6 +148,28 @@ class WorkspaceMember(TimestampMixin, Base):
     )
 
 
+class WorkspaceInvite(TimestampMixin, Base):
+    """A GitHub login invited to a workspace. It becomes a membership the next time that
+    person signs in (or at once, when they already have an account)."""
+
+    __tablename__ = "workspace_invites"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "github_login", name="uq_workspace_invites_login"),
+    )
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    # Lowercase; GitHub logins are case-insensitive.
+    github_login: Mapped[str] = mapped_column(String(100), index=True)
+    role: Mapped[WorkspaceRole] = mapped_column(
+        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.member
+    )
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
 class Connection(TimestampMixin, Base):
     """A customer account or system we connect to (AWS, Azure, GitHub, cluster, VM)."""
 
@@ -460,6 +482,24 @@ class Job(TimestampMixin, Base):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     locked_by: Mapped[str | None] = mapped_column(String(200))
     last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class LlmWorkspaceUsage(Base):
+    """Token Factory spend per workspace and UTC day: one workspace's daily cap, and what its
+    overview shows. llm_usage keeps the platform-wide totals (the hard stop)."""
+
+    __tablename__ = "llm_workspace_usage"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0, server_default="0")
+    tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class LlmUsage(Base):

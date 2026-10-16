@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.accounts import ForbiddenError
 from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
@@ -27,6 +28,7 @@ from app.routes import (
     graph,
     incidents,
     runs,
+    workspace_admin,
     workspaces,
 )
 from app.routes.schemas import ApprovalStepEvent, RunStatusEvent, StepOut
@@ -108,6 +110,12 @@ app.add_middleware(RequestIdMiddleware)
 _SECRET_INPUT_FIELDS = frozenset({"env"})
 
 
+@app.exception_handler(ForbiddenError)
+async def forbidden(_request: Request, exc: ForbiddenError) -> JSONResponse:
+    """Owner-only actions by a member: 403 with the reason (they can see the workspace)."""
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's default 422, minus the echoed input for secret fields: a too-long or
@@ -123,6 +131,7 @@ async def validation_error(_request: Request, exc: RequestValidationError) -> JS
 
 # Every route except /health and the SSE stream requires the signed-in user (CurrentUser).
 app.include_router(workspaces.router)
+app.include_router(workspace_admin.router)
 app.include_router(runs.router)
 app.include_router(approvals.router)
 app.include_router(connections.router)

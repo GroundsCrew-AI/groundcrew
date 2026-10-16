@@ -5,7 +5,10 @@ changed). On a user's first login they get a workspace named "<login>'s workspac
 
 Workspace access always goes through `member_workspace` / `require_member`, which raise
 NotFoundError for workspaces the user is not a member of: a 404, never a 403, so other
-workspaces' ids cannot be probed.
+workspaces' ids cannot be probed. `require_owner` adds ForbiddenError (403) for members who
+are not owners: they can see the workspace, so a 403 leaks nothing.
+
+Invites (by GitHub login) become memberships when that person next signs in.
 """
 
 import uuid
@@ -14,12 +17,41 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User, Workspace, WorkspaceMember, WorkspaceRole
+from app.db.models import User, Workspace, WorkspaceInvite, WorkspaceMember, WorkspaceRole
 from app.security.auth import WebIdentity
 
 
 class NotFoundError(Exception):
     """Does not exist, or the user may not see it. Maps to 404."""
+
+
+class ForbiddenError(Exception):
+    """A member who is not an owner tried an owner-only action. Maps to 403."""
+
+
+async def apply_invites(session: AsyncSession, user: User) -> None:
+    """Turn this user's pending invites into memberships (the caller commits)."""
+    if not user.github_login:
+        return
+    invites = list(
+        await session.scalars(
+            select(WorkspaceInvite).where(WorkspaceInvite.github_login == user.github_login.lower())
+        )
+    )
+    for invite in invites:
+        exists = await session.scalar(
+            select(WorkspaceMember.id).where(
+                WorkspaceMember.workspace_id == invite.workspace_id,
+                WorkspaceMember.user_id == user.id,
+            )
+        )
+        if exists is None:
+            session.add(
+                WorkspaceMember(workspace_id=invite.workspace_id, user_id=user.id, role=invite.role)
+            )
+        await session.delete(invite)
+    if invites:
+        await session.flush()
 
 
 async def _by_github_id(session: AsyncSession, github_id: int) -> User | None:
@@ -54,6 +86,7 @@ async def _create_user(session: AsyncSession, identity: WebIdentity) -> User:
         WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role=WorkspaceRole.owner)
     )
     await session.flush()
+    await apply_invites(session, user)
     return user
 
 
@@ -85,6 +118,7 @@ async def upsert_user(session: AsyncSession, identity: WebIdentity) -> User:
         and not await _email_taken(session, identity.email, identity.github_id)
     ):
         user.email = identity.email
+    await apply_invites(session, user)
     # Commit either way to end the transaction. (A rollback would expire `user`, and the
     # caller would then lazy-load it outside the async context.)
     await session.commit()
@@ -104,6 +138,26 @@ async def member_workspace(
     if row is None:
         raise NotFoundError("Workspace not found.")
     return row[0], row[1]
+
+
+async def require_owner(session: AsyncSession, user: User, workspace_id: uuid.UUID) -> Workspace:
+    """The workspace when the user owns it. NotFoundError for non-members, ForbiddenError for
+    members who are not owners."""
+    workspace, role = await member_workspace(session, user, workspace_id)
+    if role != WorkspaceRole.owner:
+        raise ForbiddenError("Only a workspace owner can do this.")
+    return workspace
+
+
+async def member_role(
+    session: AsyncSession, user_id: uuid.UUID, workspace_id: uuid.UUID
+) -> WorkspaceRole | None:
+    role: WorkspaceRole | None = await session.scalar(
+        select(WorkspaceMember.role).where(
+            WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user_id
+        )
+    )
+    return role
 
 
 async def require_member(

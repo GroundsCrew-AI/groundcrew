@@ -423,7 +423,10 @@ class _Job:
     async def budget(self) -> RunBudget:
         if self._budget is None:
             self._budget = await RunBudget.load(
-                self.session, self.run, PgUsageStore(self.runner.session_factory), self.settings
+                self.session,
+                self.run,
+                PgUsageStore(self.runner.session_factory, self.run.workspace_id),
+                self.settings,
             )
         return self._budget
 

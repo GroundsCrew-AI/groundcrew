@@ -58,6 +58,8 @@ class Settings(BaseSettings):
 
     # LLM calls
     llm_timeout_seconds: float = 120.0
+    # Ultra with full reasoning and a 10k-token answer can take longer than the default.
+    llm_timeout_seconds_ultra: float = 300.0
     # Tries per model for 429, 5xx, and connection errors (a timeout is retried once at most,
     # because a timed-out request may still be billed). Backoff: base * 2**n plus jitter.
     llm_max_attempts: int = 3
@@ -247,6 +249,9 @@ class Settings(BaseSettings):
     llm_run_usd_cap: float = 0.40
     llm_daily_usd_cap: float = 2.00
     llm_total_usd_cap: float = 25.0
+    # One workspace's spend per UTC day (a workspace owner can set a lower or higher cap in
+    # its settings). Unset: LLM_DAILY_USD_CAP, so one workspace cannot use another's budget.
+    llm_workspace_daily_usd_cap: float | None = None
 
     # Token and call limits. Unset daily token budget or per-incident Ultra limit = no limit.
     daily_token_budget: int | None = None

@@ -7,7 +7,9 @@ With about $30 of credits for the whole hackathon these are not optional:
   run that pauses for approval and resumes in another job keeps its spend.
 - UsageStore: spend per UTC day in the llm_usage table, shared by every worker and script.
   LLM_DAILY_USD_CAP and DAILY_TOKEN_BUDGET apply per day, LLM_TOTAL_USD_CAP to all days: it is
-  the hard stop.
+  the hard stop. With a workspace, its own spend (llm_workspace_usage) has its own daily cap:
+  the workspace's setting, else LLM_WORKSPACE_DAILY_USD_CAP, else LLM_DAILY_USD_CAP, so one
+  workspace cannot use up another's budget.
 
 Each check also caps the next call's max_tokens to what is left, so one call cannot go far
 past a token budget. If what is left is below LLM_MIN_COMPLETION_TOKENS, the run stops
@@ -18,6 +20,7 @@ calls, the overshoot is at most one call each.
 """
 
 import json
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -29,7 +32,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.db.models import LlmUsage, Run, RunStep
+from app.db.models import LlmUsage, LlmWorkspaceUsage, Run, RunStep, Workspace
 from app.db.session import SessionFactory
 from app.llm.models import Tier
 
@@ -53,6 +56,8 @@ class UsageStore(Protocol):
     async def today(self) -> Usage: ...
     async def total_usd(self) -> Decimal: ...
     async def add(self, usd: Decimal, tokens: int) -> None: ...
+    # This store's workspace's spend today, or None when it is not bound to a workspace.
+    async def workspace_today(self) -> Usage | None: ...
 
 
 def _today() -> date:
@@ -60,10 +65,21 @@ def _today() -> date:
 
 
 class PgUsageStore:
-    """llm_usage in Postgres. Each method uses its own short session and commits."""
+    """llm_usage (and llm_workspace_usage for a workspace) in Postgres. Each method uses its
+    own short session and commits."""
 
-    def __init__(self, session_factory: SessionFactory) -> None:
+    def __init__(
+        self, session_factory: SessionFactory, workspace_id: uuid.UUID | None = None
+    ) -> None:
         self.session_factory = session_factory
+        self.workspace_id = workspace_id
+
+    async def workspace_today(self) -> Usage | None:
+        if self.workspace_id is None:
+            return None
+        async with self.session_factory() as session:
+            row = await session.get(LlmWorkspaceUsage, (self.workspace_id, _today()))
+            return Usage(row.usd, row.tokens) if row else Usage(Decimal(0), 0)
 
     async def today(self) -> Usage:
         async with self.session_factory() as session:
@@ -88,6 +104,20 @@ class PgUsageStore:
         )
         async with self.session_factory() as session:
             await session.execute(stmt)
+            if self.workspace_id is not None:
+                ws = insert(LlmWorkspaceUsage).values(
+                    workspace_id=self.workspace_id, day=_today(), usd=usd, tokens=tokens, calls=1
+                )
+                ws = ws.on_conflict_do_update(
+                    index_elements=[LlmWorkspaceUsage.workspace_id, LlmWorkspaceUsage.day],
+                    set_={
+                        "usd": LlmWorkspaceUsage.usd + ws.excluded.usd,
+                        "tokens": LlmWorkspaceUsage.tokens + ws.excluded.tokens,
+                        "calls": LlmWorkspaceUsage.calls + 1,
+                        "updated_at": func.now(),
+                    },
+                )
+                await session.execute(ws)
             await session.commit()
 
 
@@ -98,6 +128,13 @@ class MemoryUsageStore:
     usd_today: Decimal = Decimal(0)
     tokens_today: int = 0
     usd_before_today: Decimal = Decimal(0)
+    # Set to bind the store to a (pretend) workspace.
+    workspace_usd_today: Decimal | None = None
+
+    async def workspace_today(self) -> Usage | None:
+        if self.workspace_usd_today is None:
+            return None
+        return Usage(self.workspace_usd_today, 0)
 
     async def today(self) -> Usage:
         return Usage(self.usd_today, self.tokens_today)
@@ -108,6 +145,8 @@ class MemoryUsageStore:
     async def add(self, usd: Decimal, tokens: int) -> None:
         self.usd_today += usd
         self.tokens_today += tokens
+        if self.workspace_usd_today is not None:
+            self.workspace_usd_today += usd
 
 
 def estimate_prompt_tokens(
@@ -130,6 +169,8 @@ class RunBudget:
     # Ultra calls already made in this run's incident (other runs included). None: no incident.
     incident_ultra_calls: int | None = None
     ultra_equiv_usd: Decimal = Decimal(0)
+    # This run's workspace's daily cap (checked when the usage store has a workspace).
+    workspace_daily_usd_cap: Decimal | None = None
 
     @classmethod
     async def load(
@@ -154,6 +195,7 @@ class RunBudget:
         return cls(
             usage=usage,
             settings=settings,
+            workspace_daily_usd_cap=await workspace_daily_cap(session, run.workspace_id, settings),
             spent_usd=run.cost_usd or Decimal(0),
             tokens=run.total_tokens,
             ultra_calls=int(ultra_calls or 0),
@@ -203,6 +245,15 @@ class RunBudget:
                 "daily_usd_cap",
                 f"${today.usd} spent today (LLM_DAILY_USD_CAP={s.llm_daily_usd_cap})",
             )
+        cap = self.workspace_daily_usd_cap
+        if cap is not None:
+            workspace = await self.usage.workspace_today()
+            if workspace is not None and workspace.usd >= cap:
+                raise BudgetExceededError(
+                    "workspace_daily_usd_cap",
+                    f"${workspace.usd} spent today in this workspace (daily cap ${cap}; "
+                    "an owner can change it in workspace settings)",
+                )
         if s.daily_token_budget is not None and today.tokens >= s.daily_token_budget:
             raise BudgetExceededError(
                 "daily_token_cap",
@@ -253,6 +304,27 @@ class RunBudget:
         if self.ultra_equiv_usd <= 0:
             return 0.0
         return float(100 * (1 - self.spent_usd / self.ultra_equiv_usd))
+
+
+async def workspace_daily_cap(
+    session: AsyncSession, workspace_id: uuid.UUID, settings: Settings | None = None
+) -> Decimal:
+    """The workspace's daily USD cap: its own setting, else the platform default."""
+    from app.workspace_settings import get_config
+
+    settings = settings or get_settings()
+    workspace = await session.get(Workspace, workspace_id)
+    own = get_config(workspace).daily_usd_cap if workspace is not None else None
+    default = settings.llm_workspace_daily_usd_cap
+    value = (
+        own if own is not None else default if default is not None else settings.llm_daily_usd_cap
+    )
+    return Decimal(str(value))
+
+
+async def workspace_usage_today(session: AsyncSession, workspace_id: uuid.UUID) -> Usage:
+    row = await session.get(LlmWorkspaceUsage, (workspace_id, _today()))
+    return Usage(row.usd, row.tokens) if row else Usage(Decimal(0), 0)
 
 
 async def tokens_used_today(session: AsyncSession) -> int:
