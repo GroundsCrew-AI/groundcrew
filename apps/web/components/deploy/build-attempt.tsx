@@ -91,7 +91,7 @@ export function BuildAttemptCard({ attempt }: { attempt: BuildAttempt }) {
         <span className={cn("text-[12.5px]", attempt.ok ? "text-[var(--status-ok)]" : "text-[var(--status-failed)]")}>
           {attempt.ok ? "Passed" : "Failed"}
         </span>
-        <span className="tabular ml-auto flex items-center gap-3 font-mono text-[11.5px] text-muted-foreground">
+        <span className="tabular ml-auto flex items-center gap-3 font-mono text-[12px] text-muted-foreground">
           {call && (
             <>
               <TierBadge tier={call.model_tier} />

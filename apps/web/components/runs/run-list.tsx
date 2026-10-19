@@ -50,7 +50,7 @@ export function RunListHeader() {
   return (
     <div
       aria-hidden="true"
-      className="hidden grid-cols-[116px_88px_minmax(0,1fr)_80px_64px_88px] gap-x-4 border-b px-4 py-2 text-[11.5px] text-subtle sm:grid"
+      className="hidden grid-cols-[116px_88px_minmax(0,1fr)_80px_64px_88px] gap-x-4 border-b px-4 py-2 text-[12px] text-subtle sm:grid"
     >
       <span>Status</span>
       <span>Agent</span>

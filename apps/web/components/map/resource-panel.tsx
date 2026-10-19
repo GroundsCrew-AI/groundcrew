@@ -69,7 +69,7 @@ export function ResourceDetails({ detail, onSelect }: { detail: ResourceDetail; 
           </p>
           <div className="flex flex-wrap items-center gap-2 pt-0.5">
             <CoverageBadge coverage={detail.coverage} />
-            {detail.stale && <span className="text-[11.5px] text-subtle">Not seen in the last discovery</span>}
+            {detail.stale && <span className="text-[12px] text-subtle">Not seen in the last discovery</span>}
           </div>
         </div>
       </header>
@@ -83,7 +83,7 @@ export function ResourceDetails({ detail, onSelect }: { detail: ResourceDetail; 
             {rows.map((row) => (
               <div key={row.label} className="grid grid-cols-[120px_1fr] gap-3 px-3 py-2 text-[12.5px]">
                 <dt className="text-muted-foreground">{row.label}</dt>
-                <dd className="min-w-0 break-words font-mono text-[11.5px]">{row.value}</dd>
+                <dd className="min-w-0 break-words font-mono text-[12px]">{row.value}</dd>
               </div>
             ))}
           </dl>
@@ -162,7 +162,7 @@ export function ResourceDetails({ detail, onSelect }: { detail: ResourceDetail; 
                   {deploy.status && <span className="text-muted-foreground">{deploy.status}</span>}
                   {deploy.at && <span className="ml-auto shrink-0 text-subtle">{formatRelative(deploy.at)}</span>}
                 </div>
-                <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+                <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
                   <span>{deploy.source}</span>
                   {deploy.ref && <span className="font-mono">{deploy.ref}</span>}
                   {deploy.url && (

@@ -63,7 +63,7 @@ function Claim({ text, lines }: { text: string; lines: EvidenceItem[] }) {
         </span>
       </button>
       {open && (
-        <ul className="mt-1 ml-5 space-y-0.5 rounded-md border bg-background px-3 py-2 font-mono text-[11.5px]">
+        <ul className="mt-1 ml-5 space-y-0.5 rounded-md border bg-background px-3 py-2 font-mono text-[12px]">
           {lines.map((line) => (
             <li key={line.id} className="break-words">
               <span className="text-subtle">{formatTimestamp(line.timestamp)}</span>{" "}

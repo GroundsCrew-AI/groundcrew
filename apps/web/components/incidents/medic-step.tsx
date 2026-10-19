@@ -108,7 +108,7 @@ export function MedicStep({ step }: { step: Step }) {
             </p>
           )}
           <More label="Show lines">
-            <ul className="max-h-72 space-y-0.5 overflow-auto rounded-md border bg-background px-3 py-2 font-mono text-[11.5px]">
+            <ul className="max-h-72 space-y-0.5 overflow-auto rounded-md border bg-background px-3 py-2 font-mono text-[12px]">
               {data.items.map((item) => (
                 <li key={item.id} className="break-words">
                   <span className="text-subtle">{item.timestamp.slice(11, 19)}</span>{" "}

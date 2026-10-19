@@ -95,7 +95,7 @@ export default function MapPage() {
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="space-y-3 px-4 pt-4 md:px-6">
             <SystemSummary summary={data.summary} />
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-muted-foreground">
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
               <span className="tabular">
                 {shown.nodes.length} of {data.nodes.length} resources, {shown.edges.length} relationships
               </span>

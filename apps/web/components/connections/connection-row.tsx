@@ -82,22 +82,22 @@ export function ConnectionRow({
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="truncate font-medium">{connection.name}</h3>
           <span
-            className="tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11.5px] font-medium"
+            className="tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[12px] font-medium"
             style={{ "--tint": status.color } as CSSProperties}
           >
             <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
             {status.label}
           </span>
           {connection.kind === "aws" && connection.tier && (
-            <span className="rounded-full border px-2 text-[11.5px] text-muted-foreground">
+            <span className="rounded-full border px-2 text-[12px] text-muted-foreground">
               {connection.tier === "deploy" ? "Deploy" : "Observe"}
             </span>
           )}
           {connection.kind === "aws" && isOperate(connection) && (
-            <span className="rounded-full border px-2 text-[11.5px] text-muted-foreground">Emergency fixes</span>
+            <span className="rounded-full border px-2 text-[12px] text-muted-foreground">Emergency fixes</span>
           )}
         </div>
-        <p className="truncate font-mono text-[11.5px] text-muted-foreground" title={detail(connection)}>
+        <p className="truncate font-mono text-[12px] text-muted-foreground" title={detail(connection)}>
           {detail(connection)}
         </p>
         <p className={last?.status === "failed" ? "text-[12px] text-[var(--status-failed)]" : "text-[12px] text-subtle"}>

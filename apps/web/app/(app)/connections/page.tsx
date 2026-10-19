@@ -144,8 +144,8 @@ export default function ConnectionsPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="font-medium">{provider.name}</h3>
-                    {provider.preview && <span className="text-[11.5px] text-subtle">Preview</span>}
-                    {provider.later && <span className="text-[11.5px] text-subtle">Not available yet</span>}
+                    {provider.preview && <span className="text-[12px] text-subtle">Preview</span>}
+                    {provider.later && <span className="text-[12px] text-subtle">Not available yet</span>}
                   </div>
                   <p className="mt-0.5 text-[12.5px] text-muted-foreground">{provider.access}</p>
                   {provider.kind === "aws" && (
