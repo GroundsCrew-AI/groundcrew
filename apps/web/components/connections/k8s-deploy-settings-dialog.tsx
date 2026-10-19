@@ -4,18 +4,36 @@ import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   type Connection,
   type K8sDeploySettingsIn,
+  useConnections,
   useK8sClearDeploySettings,
   useK8sSetDeploySettings,
 } from "@/lib/discovery";
 import { useWorkspace } from "@/lib/workspace";
 
-function Field({ id, label, hint, children }: { id: string; label: string; hint?: ReactNode; children: ReactNode }) {
+function Field({
+  id,
+  label,
+  hint,
+  children,
+}: {
+  id: string;
+  label: string;
+  hint?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
@@ -37,7 +55,10 @@ function Check({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label htmlFor={id} className="flex min-h-6 cursor-pointer items-center gap-2.5 text-[13px]">
+    <label
+      htmlFor={id}
+      className="flex min-h-6 cursor-pointer items-center gap-2.5 text-[13px]"
+    >
       <input
         id={id}
         type="checkbox"
@@ -50,9 +71,25 @@ function Check({
   );
 }
 
-/** The request body from the form. A blank token keeps the saved one (null). */
+type RegistryAuth = "token" | "ecr";
+
+/** The ECR registry host of an AWS connection (its account, in the region of its stack). */
+export function ecrRegistry(
+  aws: Pick<Connection, "account" | "region">,
+): string {
+  return aws.account && aws.region
+    ? `${aws.account}.dkr.ecr.${aws.region}.amazonaws.com`
+    : "";
+}
+
+/**
+ * The request body from the form. A blank token keeps the saved one (null). With Amazon ECR the
+ * AWS connection logs in at push time: no username or token is sent.
+ */
 export function deploySettingsBody(form: {
   registry: string;
+  auth?: RegistryAuth;
+  awsConnectionId?: string | null;
   username: string;
   token: string;
   pullSecret: boolean;
@@ -60,18 +97,26 @@ export function deploySettingsBody(form: {
   appDomain: string;
   tls: boolean;
   /** API-only settings (cert-manager issuer, verify URL) are kept as saved. */
-  saved?: { tls_cluster_issuer?: string | null; public_url_base?: string | null } | null;
+  saved?: {
+    tls_cluster_issuer?: string | null;
+    public_url_base?: string | null;
+  } | null;
 }): K8sDeploySettingsIn {
-  const username = form.username.trim();
+  const ecr = form.auth === "ecr";
+  const username = ecr ? "" : form.username.trim();
   return {
     registry: form.registry.trim(),
+    registry_auth: ecr ? "ecr" : "token",
+    aws_connection_id: ecr ? (form.awsConnectionId ?? null) : null,
     username: username || null,
     token: username && form.token ? form.token : null,
-    pull_secret: Boolean(username) && form.pullSecret,
+    pull_secret: (ecr || Boolean(username)) && form.pullSecret,
     ingress_class: form.ingressClass.trim() || "nginx",
     app_domain: form.appDomain.trim() || null,
     tls: form.tls,
-    tls_cluster_issuer: form.tls ? (form.saved?.tls_cluster_issuer ?? null) : null,
+    tls_cluster_issuer: form.tls
+      ? (form.saved?.tls_cluster_issuer ?? null)
+      : null,
     public_url_base: form.saved?.public_url_base ?? null,
   };
 }
@@ -93,14 +138,41 @@ export function K8sDeploySettingsDialog({
   const save = useK8sSetDeploySettings(workspace?.id);
   const clear = useK8sClearDeploySettings(workspace?.id);
   const saved = connection.deploy_settings ?? null;
+  const connections = useConnections(workspace?.id);
+  // AWS connections that may deploy: their deploy role pushes to groundcrew-* ECR repositories.
+  const awsDeploy = (connections.data ?? []).filter(
+    (c) => c.kind === "aws" && (c.capabilities ?? []).includes("deploy"),
+  );
+  const [auth, setAuth] = useState<RegistryAuth>(
+    saved?.registry_auth === "ecr" ? "ecr" : "token",
+  );
+  const [awsConnectionId, setAwsConnectionId] = useState<string | null>(
+    saved?.aws_connection_id ?? null,
+  );
   const [registry, setRegistry] = useState(saved?.registry ?? "");
   const [username, setUsername] = useState(saved?.username ?? "");
   const [token, setToken] = useState("");
   const [pullSecret, setPullSecret] = useState(saved?.pull_secret ?? false);
-  const [ingressClass, setIngressClass] = useState(saved?.ingress_class ?? "nginx");
+  const [ingressClass, setIngressClass] = useState(
+    saved?.ingress_class ?? "nginx",
+  );
   const [appDomain, setAppDomain] = useState(saved?.app_domain ?? "");
   const [tls, setTls] = useState(saved?.tls ?? false);
-  const tokenSaved = Boolean(saved?.token_saved) && username.trim() === (saved?.username ?? "");
+  const tokenSaved =
+    Boolean(saved?.token_saved) && username.trim() === (saved?.username ?? "");
+  const ecr = auth === "ecr";
+
+  function chooseAws(id: string) {
+    setAwsConnectionId(id);
+    const aws = awsDeploy.find((c) => c.id === id);
+    if (
+      aws &&
+      (!registry.trim() ||
+        awsDeploy.some((c) => ecrRegistry(c) === registry.trim()))
+    ) {
+      setRegistry(ecrRegistry(aws));
+    }
+  }
   const error = save.error ?? clear.error;
 
   function close(next: boolean) {
@@ -117,7 +189,18 @@ export function K8sDeploySettingsDialog({
     save.mutate(
       {
         connectionId: connection.id,
-        body: deploySettingsBody({ registry, username, token, pullSecret, ingressClass, appDomain, tls, saved }),
+        body: deploySettingsBody({
+          registry,
+          auth,
+          awsConnectionId,
+          username,
+          token,
+          pullSecret,
+          ingressClass,
+          appDomain,
+          tls,
+          saved,
+        }),
       },
       {
         onSuccess: () => {
@@ -131,7 +214,9 @@ export function K8sDeploySettingsDialog({
   function reset() {
     clear.mutate(connection.id, {
       onSuccess: () => {
-        toast.success(`${connection.name} deploys like the local kind cluster again`);
+        toast.success(
+          `${connection.name} deploys like the local kind cluster again`,
+        );
         close(false);
       },
     });
@@ -144,14 +229,87 @@ export function K8sDeploySettingsDialog({
           <DialogHeader>
             <DialogTitle>Deploy settings</DialogTitle>
             <DialogDescription>
-              Where deploys to {connection.name} push images and how the app is reached. Without them the cluster is
-              treated as the local kind cluster, whose registry (localhost:5001) a real cluster cannot pull from.
+              Where deploys to {connection.name} push images and how the app is
+              reached. Without them the cluster is treated as the local kind
+              cluster, whose registry (localhost:5001) a real cluster cannot
+              pull from.
             </DialogDescription>
           </DialogHeader>
+          <fieldset className="space-y-1.5">
+            <legend className="text-[13px] font-medium">Registry login</legend>
+            <div className="flex gap-1 rounded-md border p-0.5 text-[12px]">
+              {(
+                [
+                  ["token", "Username and token"],
+                  ["ecr", "Amazon ECR (through an AWS connection)"],
+                ] as const
+              ).map(([value, label]) => (
+                <label
+                  key={value}
+                  className={`flex-1 cursor-pointer rounded px-2 py-1 text-center ${auth === value ? "bg-muted font-medium" : "text-muted-foreground"}`}
+                >
+                  <input
+                    type="radio"
+                    name="k8s-registry-auth"
+                    value={value}
+                    checked={auth === value}
+                    onChange={() => setAuth(value)}
+                    className="sr-only"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {ecr && (
+            <fieldset className="space-y-1.5">
+              <legend className="text-[13px] font-medium">
+                AWS connection
+              </legend>
+              {awsDeploy.length === 0 ? (
+                <p className="text-[12px] text-muted-foreground">
+                  No AWS connection in this workspace can deploy. Connect an AWS
+                  account with Tier=deploy first.
+                </p>
+              ) : (
+                awsDeploy.map((aws) => (
+                  <label
+                    key={aws.id}
+                    className="flex min-h-6 cursor-pointer items-center gap-2.5 text-[13px]"
+                  >
+                    <input
+                      type="radio"
+                      name="k8s-aws-connection"
+                      className="size-3.5 accent-[var(--primary)]"
+                      checked={awsConnectionId === aws.id}
+                      onChange={() => chooseAws(aws.id)}
+                    />
+                    {aws.name}
+                    {aws.region && (
+                      <span className="text-muted-foreground">
+                        {aws.region}
+                      </span>
+                    )}
+                  </label>
+                ))
+              )}
+              <p className="text-[12px] text-muted-foreground">
+                Groundcrew logs in with the connection&apos;s deploy role at
+                every push (ECR tokens last 12 hours) and pushes to
+                groundcrew-&lt;app&gt;, created if missing. On EKS the nodes
+                usually pull through their node role, so the pull secret is
+                optional there.
+              </p>
+            </fieldset>
+          )}
           <Field
             id="k8s-registry"
             label="Registry"
-            hint="An image repository prefix without https://, like ghcr.io/acme or 123456789012.dkr.ecr.us-east-1.amazonaws.com. Images are pushed as <registry>/<app>:<tag>."
+            hint={
+              ecr
+                ? "The account's ECR registry host without a path, like 123456789012.dkr.ecr.us-east-1.amazonaws.com."
+                : "An image repository prefix without https://, like ghcr.io/acme or 123456789012.dkr.ecr.us-east-1.amazonaws.com. Images are pushed as <registry>/<app>:<tag>."
+            }
           >
             <Input
               id="k8s-registry"
@@ -163,36 +321,50 @@ export function K8sDeploySettingsDialog({
               spellCheck={false}
             />
           </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field id="k8s-username" label="Username" hint="Optional. Leave empty to push without a login.">
-              <Input
+          {!ecr && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
                 id="k8s-username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </Field>
-            <Field
-              id="k8s-token"
-              label="Token"
-              hint={tokenSaved ? "Saved. Leave empty to keep it." : "Stored encrypted, never shown again."}
-            >
-              <Input
+                label="Username"
+                hint="Optional. Leave empty to push without a login."
+              >
+                <Input
+                  id="k8s-username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </Field>
+              <Field
                 id="k8s-token"
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder={tokenSaved ? "saved" : ""}
-                autoComplete="new-password"
-                disabled={!username.trim()}
-              />
-            </Field>
-          </div>
+                label="Token"
+                hint={
+                  tokenSaved
+                    ? "Saved. Leave empty to keep it."
+                    : "Stored encrypted, never shown again."
+                }
+              >
+                <Input
+                  id="k8s-token"
+                  type="password"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder={tokenSaved ? "saved" : ""}
+                  autoComplete="new-password"
+                  disabled={!username.trim()}
+                />
+              </Field>
+            </div>
+          )}
           <Check
             id="k8s-pull-secret"
-            label="Also let the cluster pull with these credentials (imagePullSecret)"
-            checked={pullSecret && Boolean(username.trim())}
+            label={
+              ecr
+                ? "Also let the cluster pull with a fresh ECR token (imagePullSecret, rewritten at every deploy)"
+                : "Also let the cluster pull with these credentials (imagePullSecret)"
+            }
+            checked={pullSecret && (ecr || Boolean(username.trim()))}
             onChange={setPullSecret}
           />
           <div className="grid gap-4 sm:grid-cols-2">
@@ -205,7 +377,11 @@ export function K8sDeploySettingsDialog({
                 spellCheck={false}
               />
             </Field>
-            <Field id="k8s-app-domain" label="App domain" hint="Apps answer at <app>.<domain>.">
+            <Field
+              id="k8s-app-domain"
+              label="App domain"
+              hint="Apps answer at <app>.<domain>."
+            >
               <Input
                 id="k8s-app-domain"
                 value={appDomain}
@@ -215,9 +391,17 @@ export function K8sDeploySettingsDialog({
               />
             </Field>
           </div>
-          <Check id="k8s-tls" label="HTTPS (adds a TLS section to the Ingress)" checked={tls} onChange={setTls} />
+          <Check
+            id="k8s-tls"
+            label="HTTPS (adds a TLS section to the Ingress)"
+            checked={tls}
+            onChange={setTls}
+          />
           {error && (
-            <p role="alert" className="text-[12.5px] text-[var(--status-failed)]">
+            <p
+              role="alert"
+              className="text-[12.5px] text-[var(--status-failed)]"
+            >
               {error.message}
             </p>
           )}
@@ -236,7 +420,12 @@ export function K8sDeploySettingsDialog({
             <Button type="button" variant="ghost" onClick={() => close(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={save.isPending || !registry.trim()}>
+            <Button
+              type="submit"
+              disabled={
+                save.isPending || !registry.trim() || (ecr && !awsConnectionId)
+              }
+            >
               {save.isPending ? "Saving" : "Save"}
             </Button>
           </DialogFooter>

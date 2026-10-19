@@ -28,11 +28,37 @@ Framework = Literal[
     "gin",
     "echo",
     "fiber",
+    "spring",
+    "quarkus",
+    "rails",
+    "sinatra",
+    "rack",
+    "axum",
+    "actix",
+    "rocket",
+    "laravel",
+    "slim",
+    "aspnet",
     "none",
     "other",
 ]
 PackageManager = Literal[
-    "npm", "yarn", "pnpm", "bun", "pip", "poetry", "uv", "pipenv", "go", "other"
+    "npm",
+    "yarn",
+    "pnpm",
+    "bun",
+    "pip",
+    "poetry",
+    "uv",
+    "pipenv",
+    "go",
+    "maven",
+    "gradle",
+    "bundler",
+    "cargo",
+    "composer",
+    "dotnet",
+    "other",
 ]
 Database = Literal["none", "postgres", "mysql", "redis", "other"]
 Source = Literal["rule", "model"]

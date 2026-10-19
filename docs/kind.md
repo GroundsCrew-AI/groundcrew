@@ -226,9 +226,30 @@ The plan card shows the image name, the push login's username, the pull secret (
 Ingress class, and the URL before anything is approved. If the settings change after a plan was
 approved, apply refuses it and the deploy must be planned again.
 
-ECR: the registry's push token from `aws ecr get-login-password` expires after 12 hours, and
-Groundcrew does not create the `<app>` repository on this path; create it first. EKS nodes in
-the same account pull from ECR with their node role, so no imagePullSecret is needed there.
+### Amazon ECR through an AWS connection
+
+An ECR token (`aws ecr get-login-password`) expires after 12 hours, so a saved token stops
+working. Choose **Amazon ECR (through an AWS connection)** under Registry login instead:
+
+- **AWS connection**: an AWS connection of the same workspace with the deploy capability
+  (`groundcrew-read-only` stack with `Tier=deploy`, deploys turned on). Groundcrew uses its
+  `groundcrew-deploy` role (`CredentialsProvider.aws_deploy_session`) and fetches a fresh login
+  (`ecr:GetAuthorizationToken`) at every push. Nothing is stored.
+- **Registry**: the account's registry host without a path,
+  `<account>.dkr.ecr.<region>.amazonaws.com` (filled in when you choose the connection). The
+  account must be the connection's, and the region the one its stack was created in: the deploy
+  role's ECR rights (`infra/aws-connect.yaml`) cover that region only.
+- **Repository**: images go to `groundcrew-<app>` (`<registry>/groundcrew-<app>:<tag>`), because
+  the deploy role may only create and push to `groundcrew-*` repositories. Apply creates it
+  (tagged `project=groundcrew`) when it is missing; preflight checks it read-only and fails with
+  a clear message when the role refuses (wrong region, stack not on `Tier=deploy`, connection
+  not usable).
+- **imagePullSecret** (optional): written again with a fresh token at every deploy (and before a
+  rollback, best effort), so it is valid for 12 hours after each deploy. On EKS the nodes
+  normally pull from ECR through their node role (`AmazonEC2ContainerRegistryReadOnly`), so the
+  pull secret is optional there; turn it on for clusters outside AWS or nodes without that
+  policy. A pod rescheduled more than 12 hours after the last deploy on such a cluster cannot
+  pull until the next deploy.
 
 ## Troubleshooting
 

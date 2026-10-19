@@ -701,3 +701,29 @@ How to set up a cluster: docs/kind.md, Real clusters. API: docs/api-changes.md.
   web lib/discovery.ts, lib/api/{openapi.json,schema.d.ts},
   components/connections/{connection-row,k8s-deploy-settings-dialog}.tsx; docs/kind.md,
   docs/api-changes.md.
+
+## Builder languages and ECR login for Kubernetes deploys (2026-10-19)
+
+Scout and Builder understood Python, Node, and Go only. Now Java (Maven, Gradle; Spring Boot,
+Quarkus), Ruby (Rails, Sinatra, Rack), Rust (axum, actix-web, Rocket), PHP (Laravel, Slim,
+plain, served by php-apache on 80), and .NET (csproj/sln, ASP.NET Core) are detected by rule
+(language, framework, build tool, install/build/start commands, conventional port and health
+path, runtime version, database), their manifests and lockfiles are in Builder's prompt, the
+default ports follow each framework, and the prompt adds Dockerfile guidance per language
+(multi-stage for Java, Rust, .NET; pinned majors; non-root where the image allows). When a
+backend manifest sits next to package.json (Rails, Laravel), the server language wins.
+
+Kubernetes deploy settings can log in to Amazon ECR through an AWS connection
+(`registry_auth: "ecr"`): fresh login at every push through the deploy session, repository
+`groundcrew-<app>` created when missing, pull secret rewritten with a fresh token at every
+deploy. docs/kind.md (Amazon ECR through an AWS connection), docs/api-changes.md.
+- Tests: tests/test_builder_languages.py (31), tests/test_k8s_ecr.py (16), five golden fixtures
+  in tests/test_scout.py (demo/fixtures/{java-spring-maven,ruby-rails,rust-axum,php-laravel,
+  dotnet-aspnet}); web k8s-deploy-settings-dialog.test.tsx (5).
+- Files (teammate-owned areas changed with the user's OK, marked *):
+  app/agents/scout/{appspec,detectors,repo_view,scout}.py*, app/agents/builder/{builder,
+  prompts}.py*, app/targets/k8s.py*, app/targets/k8s_deploy.py*, app/sandbox/registry.py*,
+  app/routes/{connections,discovery_schemas}.py; tests/test_scout.py,
+  tests/test_k8s_deploy_settings.py; web lib/api/{openapi.json,schema.d.ts},
+  components/connections/k8s-deploy-settings-dialog{,.test}.tsx; demo/fixtures/README.md;
+  docs/kind.md, docs/api-changes.md.

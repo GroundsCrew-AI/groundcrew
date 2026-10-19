@@ -60,6 +60,9 @@ class K8sDeploySettingsOut(BaseModel):
     tls: bool
     tls_cluster_issuer: str | None
     public_url_base: str | None
+    # "ecr": aws_connection_id logs in to the ECR registry at push time (no stored token).
+    registry_auth: Literal["token", "ecr"] = "token"
+    aws_connection_id: uuid.UUID | None = None
 
 
 class ConnectionOut(BaseModel):
@@ -216,6 +219,12 @@ class K8sDeploySettingsIn(BaseModel):
     # Image repository prefix without a scheme: ghcr.io/acme, docker.io/acme,
     # 123456789012.dkr.ecr.us-east-1.amazonaws.com. Images are <registry>/<app>:<tag>.
     registry: str = Field(min_length=3, max_length=255)
+    # "token": the username and token below (optional). "ecr": the registry is
+    # <account>.dkr.ecr.<region>.amazonaws.com (no path) and aws_connection_id, an AWS
+    # connection of the same workspace with the deploy capability, logs in at push time;
+    # images go to groundcrew-<app>, created when missing. No username or token then.
+    registry_auth: Literal["token", "ecr"] = "token"
+    aws_connection_id: uuid.UUID | None = None
     # Push credentials. No username clears them. token null keeps the saved one (same
     # username); the token is stored encrypted and never returned.
     username: str | None = Field(default=None, max_length=200)

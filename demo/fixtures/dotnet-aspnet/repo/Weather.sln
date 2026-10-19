@@ -1,0 +1,6 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Weather.Api", "src\Weather.Api\Weather.Api.csproj", "{2D3F4A51-8C1B-4F6E-9D0A-1B2C3D4E5F60}"
+EndProject
+Global
+EndGlobal

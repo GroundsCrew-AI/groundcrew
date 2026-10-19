@@ -75,6 +75,9 @@ _FRAMEWORK_WORDS: dict[str, tuple[str, ...]] = {
     "nextjs": ("next",),
     "nestjs": ("@nestjs", "nest"),
     "sveltekit": ("sveltejs/kit", "svelte"),
+    "spring": ("spring",),
+    "actix": ("actix",),
+    "aspnet": ("microsoft.net.sdk.web", "aspnetcore"),
 }
 _DATABASE_WORDS: dict[str, tuple[str, ...]] = {
     "postgres": ("postgres", "psycopg", "asyncpg", "pg8000", '"pg"', "lib/pq", "pgx"),
@@ -86,11 +89,22 @@ _LANGUAGE_FILES: dict[str, tuple[str, ...]] = {
     "typescript": (".ts", ".tsx", "tsconfig.json"),
     "javascript": (".js", ".mjs", ".cjs", ".jsx", "package.json"),
     "go": (".go", "go.mod"),
+    "java": (".java", ".kt", "pom.xml", "build.gradle", "build.gradle.kts"),
+    "ruby": (".rb", "Gemfile"),
+    "rust": (".rs", "Cargo.toml"),
+    "php": (".php", "composer.json"),
+    "dotnet": (".cs", ".fs", ".csproj", ".fsproj", ".sln"),
 }
 _PM_WORDS: dict[str, tuple[str, ...]] = {
     "npm": ("npm", "package-lock"),
     "pip": ("pip", "requirements"),
     "go": ("go ",),
+    "maven": ("maven", "pom.xml", "mvn"),
+    "gradle": ("gradle",),
+    "bundler": ("bundle", "gem "),
+    "cargo": ("cargo", "[dependencies]"),
+    "composer": ("composer", "require"),
+    "dotnet": ("dotnet", "packagereference", "microsoft.net.sdk"),
 }
 
 

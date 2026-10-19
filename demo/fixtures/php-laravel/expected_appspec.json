@@ -1,0 +1,14 @@
+{
+  "language": "php",
+  "framework": "laravel",
+  "runtime_version": "8.2",
+  "package_manager": "composer",
+  "install_cmd": "composer install --no-dev --optimize-autoloader --no-interaction",
+  "build_cmd": null,
+  "start_cmd": "apache2-foreground",
+  "port": 80,
+  "database": "redis",
+  "health_path": "/up",
+  "has_dockerfile": false,
+  "env_vars": []
+}

@@ -7,10 +7,19 @@ pull from localhost:5001, so its owner sets these on the connection:
 
 - registry: where images go, `host[:port][/path]` (ghcr.io/acme, <acct>.dkr.ecr.<region>.
   amazonaws.com, docker.io/acme). The image is `<registry>/<app>:<tag>`.
-- username + token: optional push credentials. The token is Fernet-encrypted
-  (app.security.crypto) inside the connection's config and never returned by the API.
+- registry_auth "token" (default): username + token are optional push credentials. The token is
+  Fernet-encrypted (app.security.crypto) inside the connection's config and never returned by
+  the API.
+- registry_auth "ecr": the registry is Amazon ECR (`<account>.dkr.ecr.<region>.amazonaws.com`,
+  no path) and `aws_connection_id`, an AWS connection in the same workspace with the deploy
+  capability, logs in. ECR tokens last 12 hours, so the login is fetched at push time through
+  that connection's deploy session (ecr_login), never stored. Images go to the repository
+  `groundcrew-<app>` (the deploy role may create and push to groundcrew-* only), which apply
+  creates when it is missing.
 - pull_secret: also create an imagePullSecret (kubernetes.io/dockerconfigjson) from the same
-  credentials in gc-<app>, and reference it in the Deployment.
+  credentials in gc-<app>, and reference it in the Deployment. With ECR it is written again
+  with a fresh token at every deploy (on EKS the nodes usually pull from ECR through their
+  node role, so it is optional there).
 - ingress_class (default nginx), app_domain (host `<app>.<app_domain>`), tls (+ an optional
   cert-manager cluster issuer annotation).
 - public_url_base: where verify sends requests (with the Host header), e.g. the ingress
@@ -23,13 +32,14 @@ import base64
 import ipaddress
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import Any, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import SecretStr
 
+from app.connectors.credentials import capabilities
 from app.db.models import Connection
 from app.sandbox.base import PushTarget, RegistryLogin
 from app.security.crypto import decrypt
@@ -44,6 +54,12 @@ DOCKER_HUB_AUTH = "https://index.docker.io/v1/"
 _LABEL = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
 _DNS_NAME = re.compile(rf"^{_LABEL}(\.{_LABEL})*$")
 _PATH_PART = re.compile(r"^[a-z0-9]+([._-][a-z0-9]+)*$")
+# An ECR registry host: <account>.dkr.ecr.<region>.amazonaws.com (.com.cn in China).
+_ECR_HOST = re.compile(
+    r"^(\d{12})\.dkr\.ecr\.([a-z]{2}(?:-gov)?-[a-z]+-\d{1,2})\.amazonaws\.com(?:\.cn)?$"
+)
+
+RegistryAuth = Literal["token", "ecr"]
 
 
 class DeploySettingsError(ValueError):
@@ -63,6 +79,12 @@ def _host_ok(host: str) -> bool:
         return True
     except ValueError:
         return bool(_DNS_NAME.match(host)) and len(host) <= 253
+
+
+def parse_ecr_registry(registry: str) -> tuple[str, str] | None:
+    """(account, region) of an ECR registry host without a path, else None."""
+    match = _ECR_HOST.match(registry)
+    return (match.group(1), match.group(2)) if match else None
 
 
 def parse_registry(value: str) -> tuple[str, str]:
@@ -98,6 +120,9 @@ class K8sDeploySettings:
     tls: bool = False
     tls_cluster_issuer: str | None = None
     public_url_base: str | None = None
+    # "ecr": log in through the AWS connection's deploy session at push time (no stored token).
+    registry_auth: RegistryAuth = "token"
+    aws_connection_id: str | None = None
 
     @classmethod
     def from_config(cls, config: dict[str, Any] | None) -> Self | None:
@@ -114,6 +139,8 @@ class K8sDeploySettings:
             tls=bool(raw.get("tls")),
             tls_cluster_issuer=raw.get("tls_cluster_issuer") or None,
             public_url_base=raw.get("public_url_base") or None,
+            registry_auth="ecr" if raw.get("registry_auth") == "ecr" else "token",
+            aws_connection_id=raw.get("aws_connection_id") or None,
         )
 
     def to_config(self) -> dict[str, Any]:
@@ -127,6 +154,8 @@ class K8sDeploySettings:
             "tls": self.tls,
             "tls_cluster_issuer": self.tls_cluster_issuer,
             "public_url_base": self.public_url_base,
+            "registry_auth": self.registry_auth,
+            "aws_connection_id": self.aws_connection_id,
         }
 
     @property
@@ -138,8 +167,17 @@ class K8sDeploySettings:
         return bool(self.username and self.password_encrypted)
 
     @property
+    def uses_ecr(self) -> bool:
+        return self.registry_auth == "ecr" and self.aws_connection_id is not None
+
+    @property
+    def ecr_region(self) -> str | None:
+        found = parse_ecr_registry(self.registry) if self.uses_ecr else None
+        return found[1] if found else None
+
+    @property
     def uses_pull_secret(self) -> bool:
-        return self.pull_secret and self.has_credentials
+        return self.pull_secret and (self.has_credentials or self.uses_ecr)
 
     def image(self, repository: str, tag: str) -> str:
         return f"{self.registry}/{repository}:{tag}"
@@ -156,17 +194,13 @@ class K8sDeploySettings:
     def push_target(self, repository: str, tag: str) -> PushTarget:
         return PushTarget(image=self.image(repository, tag), login=self.login())
 
-    def dockerconfigjson(self) -> str:
-        """The imagePullSecret's `.dockerconfigjson` (decrypts the token)."""
-        login = self.login()
+    def dockerconfigjson(self, login: RegistryLogin | None = None) -> str:
+        """The imagePullSecret's `.dockerconfigjson`: from `login` (a fresh ECR login), else
+        from the saved credentials (decrypts the token)."""
+        login = login or self.login()
         if login is None:
             raise DeploySettingsError("A pull secret needs a registry username and token.")
-        password = login.password.get_secret_value()
-        server = DOCKER_HUB_AUTH if login.registry in DOCKER_HUB else login.registry
-        auth = base64.b64encode(f"{login.username}:{password}".encode()).decode()
-        return json.dumps(
-            {"auths": {server: {"username": login.username, "password": password, "auth": auth}}}
-        )
+        return dockerconfigjson(login)
 
     def public(self) -> dict[str, Any]:
         """What the API returns: everything but the token, which shows only as saved."""
@@ -174,6 +208,52 @@ class K8sDeploySettings:
         out.pop("password_encrypted")
         out["token_saved"] = bool(self.password_encrypted)
         return out
+
+
+def dockerconfigjson(login: RegistryLogin) -> str:
+    password = login.password.get_secret_value()
+    server = DOCKER_HUB_AUTH if login.registry in DOCKER_HUB else login.registry
+    auth = base64.b64encode(f"{login.username}:{password}".encode()).decode()
+    return json.dumps(
+        {"auths": {server: {"username": login.username, "password": password, "auth": auth}}}
+    )
+
+
+def check_ecr_connection(
+    registry: str, conn: Connection | None, workspace_id: Any, regions: Sequence[str]
+) -> str:
+    """The AWS connection that logs in to an ECR registry: in the same workspace, with the
+    deploy capability, in the registry's account, and in a region its deploy role covers
+    (`regions`). Returns its id."""
+    found = parse_ecr_registry(registry.strip().rstrip("/"))
+    if found is None:
+        raise DeploySettingsError(
+            "With Amazon ECR the registry is the account's registry host without a path, like "
+            "123456789012.dkr.ecr.us-east-1.amazonaws.com. Images go to the repository "
+            "groundcrew-<app>."
+        )
+    account, region = found
+    if conn is None or conn.workspace_id != workspace_id:
+        raise DeploySettingsError("Choose an AWS connection of this workspace for ECR.")
+    if conn.kind != "aws":
+        raise DeploySettingsError(f"{conn.name} is not an AWS connection.")
+    if "deploy" not in capabilities(conn):
+        raise DeploySettingsError(
+            f"{conn.name} cannot deploy: update its groundcrew-read-only stack with "
+            "Tier=deploy and turn on deploys for it on the Connections page."
+        )
+    connected = str(conn.config.get("account_id") or "")
+    if connected != account:
+        raise DeploySettingsError(
+            f"The registry is in AWS account {account}, but {conn.name} is account "
+            f"{connected or 'unknown'}."
+        )
+    if region not in regions:
+        raise DeploySettingsError(
+            f"The deploy role of {conn.name} can push to ECR in {', '.join(regions)} (the "
+            f"region of its groundcrew-read-only stack), not {region}."
+        )
+    return str(conn.id)
 
 
 def deploy_settings(conn: Connection) -> K8sDeploySettings | None:
@@ -209,10 +289,23 @@ def build_settings(
     allow_private: bool,
     is_private: Callable[[str], bool],
     encrypt: Callable[[str], str],
+    registry_auth: RegistryAuth = "token",
+    aws_connection_id: str | None = None,
 ) -> K8sDeploySettings:
     """Validated settings from an owner's input. `token` None keeps the saved one (same
-    username); no username clears the credentials."""
+    username); no username clears the credentials. With registry_auth "ecr" the caller has
+    checked the AWS connection (check_ecr_connection) and passes its id; no username or token
+    is kept."""
     registry, host = parse_registry(registry)
+    if registry_auth == "ecr":
+        if aws_connection_id is None:
+            raise DeploySettingsError("Choose the AWS connection that logs in to ECR.")
+        if (username or "").strip() or token:
+            raise DeploySettingsError(
+                "With Amazon ECR, Groundcrew logs in through the AWS connection; leave the "
+                "username and token empty."
+            )
+        username, token, previous = None, None, None
     if not allow_private and is_private(host):
         raise DeploySettingsError(
             f"The registry {host} is a private or internal address. The cluster and Groundcrew "
@@ -231,7 +324,7 @@ def build_settings(
             raise DeploySettingsError("Give the registry token (password) for this username.")
     elif token:
         raise DeploySettingsError("A registry token needs a username.")
-    if pull_secret and secret is None:
+    if pull_secret and secret is None and registry_auth != "ecr":
         raise DeploySettingsError("A pull secret needs a registry username and token.")
     ingress = _dns_name(ingress_class or DEFAULT_INGRESS_CLASS, "The ingress class")
     domain = _dns_name(app_domain, "The app domain") if app_domain and app_domain.strip() else None
@@ -275,4 +368,6 @@ def build_settings(
         tls=tls,
         tls_cluster_issuer=issuer,
         public_url_base=base,
+        registry_auth=registry_auth,
+        aws_connection_id=aws_connection_id if registry_auth == "ecr" else None,
     )

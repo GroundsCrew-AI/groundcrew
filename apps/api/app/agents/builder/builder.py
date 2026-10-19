@@ -48,7 +48,33 @@ GENERATED_DOCKERFILE = "Dockerfile.groundcrew"
 ESCALATE_FROM_ATTEMPT = 4
 TRANSIENT_RETRIES = 2
 RETRY_DELAYS_SECONDS = (10.0, 30.0)
-DEFAULT_PORTS = {"python": 8000, "javascript": 3000, "typescript": 3000, "go": 8080}
+DEFAULT_PORTS = {
+    "python": 8000,
+    "javascript": 3000,
+    "typescript": 3000,
+    "go": 8080,
+    "java": 8080,
+    "ruby": 3000,
+    "rust": 8080,
+    # The php:<v>-apache image the prompt asks for serves on 80.
+    "php": 80,
+    # .NET 8 images listen on 8080 (ASPNETCORE_HTTP_PORTS).
+    "dotnet": 8080,
+}
+# Where a framework's convention differs from its language's (Scout usually sets the port).
+FRAMEWORK_PORTS = {
+    "spring": 8080,
+    "quarkus": 8080,
+    "rails": 3000,
+    "sinatra": 4567,
+    "rack": 9292,
+    "axum": 3000,
+    "actix": 8080,
+    "rocket": 8000,
+    "laravel": 80,
+    "slim": 80,
+    "aspnet": 8080,
+}
 
 # Network trouble in a build log: the build did not fail because of the Dockerfile.
 _TRANSIENT = re.compile(
@@ -95,6 +121,8 @@ def app_port(spec: AppSpec, dockerfile: str | None = None) -> int:
         return spec.port
     if dockerfile and (found := re.search(r"(?im)^\s*EXPOSE\s+(\d+)", dockerfile)):
         return int(found.group(1))
+    if spec.framework in FRAMEWORK_PORTS:
+        return FRAMEWORK_PORTS[spec.framework]
     return DEFAULT_PORTS.get(str(spec.language or ""), 8080)
 
 
