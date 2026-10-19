@@ -3,8 +3,9 @@ linked resources and open (or join) incidents.
 
 Linked resources are ECS services (with the log groups they `logs_to`) and RDS databases (with
 the log groups of the services that `reads` them, for the slow-query rule) on a connected AWS
-connection, not stale. All calls are read-only, through the connection's guarded
-read-only session. One pass:
+connection, and Deployments on a connected Kubernetes cluster (app/incidents/k8s_rules.py:
+rollout, pods, and their logs), not stale. All calls are read-only, through the connection's
+guarded read-only session or its kubeconfig. One pass:
 
 1. Read each resource's signals in parallel threads, each with a timeout; a failure is logged
    and skipped, never an incident.
@@ -32,9 +33,10 @@ from app.agents.medic.events import Signal
 from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader
 from app.connectors.credentials import ConnectionCredentialsProvider
+from app.connectors.kubernetes import KubeReader
 from app.db.models import Connection, Edge, Incident, Job, JobStatus, Resource, Workspace
 from app.db.session import SessionFactory
-from app.incidents import rules
+from app.incidents import k8s_rules, rules
 from app.incidents.store import OPEN_STATUSES, Opened, open_incident, resource_group
 from app.workspace_settings import get_config
 
@@ -42,9 +44,11 @@ logger = logging.getLogger("groundcrew.incidents")
 
 WATCH_JOB: Final = "watch_incidents"
 WATCH_TYPES = ("ecs:service", "rds:db")
+K8S_WATCH_TYPES = ("k8s:deployment",)
 CHECK_TIMEOUT_SECONDS = 30.0
 
 ReaderFor = Callable[[Connection], AwsReader]
+KubeFor = Callable[[Connection], KubeReader]
 
 
 @dataclass
@@ -62,6 +66,16 @@ def default_reader_for(settings: Settings) -> ReaderFor:
     return reader_for
 
 
+def default_kube_for(connection: Connection) -> KubeReader:
+    """A reader on the connection's stored kubeconfig (checked: inline credentials only)."""
+    from app.connectors import kubernetes as kube
+    from app.security.crypto import decrypt
+
+    if not connection.secret_encrypted:
+        raise LookupError(f"{connection.name} has no kubeconfig.")
+    return kube.live_reader(decrypt(connection.secret_encrypted))
+
+
 async def _targets(session_factory: SessionFactory) -> list[Target]:
     async with session_factory() as session:
         rows: list[Any] = list(
@@ -70,9 +84,9 @@ async def _targets(session_factory: SessionFactory) -> list[Target]:
                     select(Resource, Connection)
                     .join(Connection, Connection.id == Resource.connection_id)
                     .where(
-                        Resource.type.in_(WATCH_TYPES),
+                        (Resource.type.in_(WATCH_TYPES) & (Connection.kind == "aws"))
+                        | (Resource.type.in_(K8S_WATCH_TYPES) & (Connection.kind == "k8s")),
                         Resource.stale.is_(False),
-                        Connection.kind == "aws",
                         Connection.status == "connected",
                     )
                     .order_by(Resource.workspace_id, Resource.type, Resource.name)
@@ -138,8 +152,23 @@ def check(target: Target, reader: AwsReader, now: datetime) -> list[Signal]:
     return out
 
 
-async def _check(target: Target, reader_for: ReaderFor, now: datetime) -> list[Signal]:
+async def _check(
+    target: Target, reader_for: ReaderFor, kube_for: KubeFor, now: datetime
+) -> list[Signal]:
     try:
+        if target.connection.kind == "k8s":
+            r = target.resource
+            namespace = str(r.config.get("namespace") or r.region or "default")
+            kube = await asyncio.to_thread(kube_for, target.connection)
+            try:
+                return await asyncio.wait_for(
+                    k8s_rules.check_deployment(kube, r.id, namespace, r.name, now),
+                    CHECK_TIMEOUT_SECONDS,
+                )
+            finally:
+                close = getattr(kube, "close", None)
+                if close is not None:
+                    close()
         reader = await asyncio.to_thread(reader_for, target.connection)
         return await asyncio.wait_for(
             asyncio.to_thread(check, target, reader, now), CHECK_TIMEOUT_SECONDS
@@ -193,6 +222,7 @@ async def watch_once(
     session_factory: SessionFactory,
     *,
     reader_for: ReaderFor | None = None,
+    kube_for: KubeFor | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> list[Opened]:
@@ -200,7 +230,10 @@ async def watch_once(
     now = now or datetime.now(UTC)
     targets = await _targets(session_factory)
     found = await asyncio.gather(
-        *(_check(t, reader_for or default_reader_for(settings), now) for t in targets)
+        *(
+            _check(t, reader_for or default_reader_for(settings), kube_for or default_kube_for, now)
+            for t in targets
+        )
     )
     by_workspace: dict[uuid.UUID, dict[uuid.UUID, list[Signal]]] = {}
     for target, signals in zip(targets, found, strict=True):

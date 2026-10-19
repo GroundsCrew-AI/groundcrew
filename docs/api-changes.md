@@ -218,3 +218,18 @@ All additive, except that `GET /incidents` now lists merged incidents by default
 - `GET /incidents` without `status` now includes `merged` incidents.
   `IncidentSummary.merged_into_title`: the title of the incident that took this one over.
 
+## Phase 5: Kubernetes incidents (2026-10-19)
+
+All additive.
+- `DetectorRule`: `k8s_rollout_failed` (a Deployment passed its progress deadline) and
+  `k8s_pods_crashing` (CrashLoopBackOff, image pull or create errors, OOMKilled or non-zero
+  exits). `health_check` also covers pods failing their readiness probe; `log_error_spike`
+  also reads pod logs. A signal is `down` when no pod of the Deployment is ready.
+- `EmergencyActionName` / `ProposedFix.action`: `k8s_rollout_undo`, `k8s_rollout_restart`;
+  `FixOptionKind` gains the same two.
+- `POST /connections/{connection_id}/k8s/operate` `{enabled}` (owner): turns approved emergency
+  fixes on for a cluster after access reviews show the kubeconfig may patch Deployments and list
+  ReplicaSets (`infra/k8s-operate-rbac.yaml`); 422 with what to apply otherwise.
+  `ConnectionOut.capabilities` is now set for Kubernetes connections too (`observe`, `operate`).
+- `infra/k8s-readonly-rbac.yaml` adds `events`, `replicasets`, and `pods/log` (get): re-apply it
+  on clusters connected before.

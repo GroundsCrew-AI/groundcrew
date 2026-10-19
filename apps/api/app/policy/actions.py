@@ -18,8 +18,9 @@ Approvals for targets use these tool names, and their `arguments` carry `plan_ha
 
 Medic (Phase 5, docs/phase5-interfaces.md) uses the same tokens:
 - `open_fix_pr`: policy `write`, a fix pull request (`plan_hash` of the PR draft).
-- `ecs_rollback_service`, `secret_rollback_version`, `force_redeploy`: policy `emergency`,
-  an `app.actions.base.ActionPlan` (`plan_hash` of the plan).
+- `ecs_rollback_service`, `secret_rollback_version`, `force_redeploy`, `k8s_rollout_undo`,
+  `k8s_rollout_restart`: policy `emergency`, an `app.actions.base.ActionPlan` (`plan_hash` of
+  the plan).
 """
 
 import base64
@@ -44,7 +45,12 @@ TARGET_ROLLBACK: Final = "target_rollback"
 TargetAction = Literal["target_apply", "target_rollback"]
 OPEN_FIX_PR: Final = "open_fix_pr"
 MedicAction = Literal[
-    "open_fix_pr", "ecs_rollback_service", "secret_rollback_version", "force_redeploy"
+    "open_fix_pr",
+    "ecs_rollback_service",
+    "secret_rollback_version",
+    "force_redeploy",
+    "k8s_rollout_undo",
+    "k8s_rollout_restart",
 ]
 ApprovedActionName = TargetAction | MedicAction
 
@@ -57,6 +63,8 @@ _POLICY: dict[str, ToolPolicy] = {
     "ecs_rollback_service": ToolPolicy.emergency,
     "secret_rollback_version": ToolPolicy.emergency,
     "force_redeploy": ToolPolicy.emergency,
+    "k8s_rollout_undo": ToolPolicy.emergency,
+    "k8s_rollout_restart": ToolPolicy.emergency,
 }
 
 

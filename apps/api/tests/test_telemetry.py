@@ -12,6 +12,7 @@ import pytest
 from app.config import get_settings
 from app.connectors.aws import AwsReader
 from app.connectors.github import GitHubApp
+from app.connectors.kubernetes import KubeReader
 from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Edge, Resource, Workspace
 from app.db.session import SessionFactory, get_session_factory
@@ -195,6 +196,9 @@ class FixtureClients:
 
     def vercel(self, connection_id: uuid.UUID) -> VercelClient:
         raise LookupError("no vercel in this test")
+
+    def kube(self, connection_id: uuid.UUID) -> KubeReader:
+        raise LookupError("no cluster in this test")
 
 
 async def _graph(sf: SessionFactory, workspace_id: uuid.UUID) -> dict[str, uuid.UUID]:

@@ -7,8 +7,14 @@ from app.db.session import SessionFactory
 
 
 def get_emergency_actions(session_factory: SessionFactory, settings: Settings) -> EmergencyActions:
-    """The AWS implementation (groundcrew-operate role). It checks each connection's operate
-    capability when it plans, so incidents on accounts without it get no emergency action."""
+    """AWS (groundcrew-operate role) and Kubernetes (the cluster's kubeconfig) behind one
+    router. Each checks the connection's operate capability when it plans, so incidents on
+    accounts or clusters without it get no emergency action."""
     from app.actions.aws import AwsEmergencyActions
+    from app.actions.base import EmergencyActionRouter
+    from app.actions.k8s import K8sEmergencyActions
 
-    return AwsEmergencyActions(session_factory, settings)
+    return EmergencyActionRouter(
+        AwsEmergencyActions(session_factory, settings),
+        K8sEmergencyActions(session_factory, settings),
+    )

@@ -57,6 +57,8 @@ _SEVERITY: dict[str, Severity] = {
     "ecs_tasks_stopped": "high",
     "log_error_spike": "medium",
     "rds_cpu_latency": "medium",
+    "k8s_rollout_failed": "high",
+    "k8s_pods_crashing": "high",
     "user_report": "high",
     "other": "medium",
 }

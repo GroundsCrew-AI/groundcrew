@@ -75,6 +75,8 @@ const RULES: Record<DetectorRule, string> = {
   ecs_tasks_stopped: "Tasks crashing",
   log_error_spike: "Error spike in logs",
   rds_cpu_latency: "Database CPU and latency",
+  k8s_rollout_failed: "Rollout failed",
+  k8s_pods_crashing: "Pods crashing",
   user_report: "Reported by a person",
   other: "Other signal",
 };
@@ -87,6 +89,8 @@ const ACTIONS: Record<string, string> = {
   ecs_rollback_service: "Roll back service",
   secret_rollback_version: "Roll back secret",
   force_redeploy: "Restart service",
+  k8s_rollout_undo: "Roll back Deployment",
+  k8s_rollout_restart: "Restart Deployment",
   pull_request: "Fix pull request",
 };
 

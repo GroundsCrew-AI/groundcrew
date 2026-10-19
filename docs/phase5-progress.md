@@ -471,6 +471,35 @@ same fixes. The model proposed the secret rollback. But every signal was an erro
   components/incidents/{fix-approval-card,incident-list}.tsx, app/(app)/incidents/
   incidents-home.tsx, lib/api/{openapi.json,schema.d.ts}, tests/incident-fixtures.ts.
 
+## Kubernetes incidents end to end (2026-10-19)
+
+Before this, a Kubernetes app was discovered but never watched, diagnosed with "no reader",
+offered no emergency fix, and could never pass verify. Now a Deployment goes through the same
+loop as an ECS service:
+- Detect (`app/incidents/k8s_rules.py`, watcher `K8S_WATCH_TYPES`): failed rollouts, crashing
+  pods (CrashLoopBackOff, image pull errors, OOMKilled / non-zero exits), pods failing readiness,
+  and error spikes in pod logs (the same `log_signal`). `down` when no pod is ready.
+- Evidence (`app/telemetry/k8s.py`, `collect.plan_readers` `k8s:deployment`): conditions, each
+  ReplicaSet revision as a `deploy` change marker ("<ns>/<name> revision <n>"), pod states,
+  Warning events, and pod log lines.
+- Fix (`app/actions/k8s.py`, `fixes.emergency`): `k8s_rollout_undo` to the previous revision
+  (and `k8s_rollout_restart`), only on clusters an owner turned operate on, after access reviews;
+  the degraded-service rules apply (a revert is "the cluster still runs the revision that
+  deploy made").
+- Verify (`verify.k8s_checks`): rollout complete and every desired pod ready, no pod crashing or
+  unready now, error rate back to normal; waits while pods are being replaced.
+- Not covered yet: StatefulSets, DaemonSets, Kubernetes Secrets/ConfigMaps as change markers,
+  and deploys to real clusters (targets/ still pushes to the kind registry).
+- Tests: tests/test_k8s_incidents.py (9: rules, watcher, evidence, actions and rights, Medic
+  detect -> approve -> patch -> resolve, verify waiting, the operate endpoint); web
+  k8s-operate-dialog.test.tsx (2).
+- Files (Ahmed's code marked *): app/agents/medic/{agent,diagnose,events,fixes,schemas,verify}.py*,
+  app/incidents/{watcher,store}.py*, app/incidents/k8s_rules.py (new), app/telemetry/collect.py*,
+  app/telemetry/k8s.py (new), app/actions/{base,fake,__init__}.py, app/actions/k8s.py (new),
+  app/connectors/{kubernetes,credentials}.py, app/policy/actions.py,
+  app/routes/{connections,discovery_schemas}.py, infra/k8s-{readonly,operate}-rbac.yaml; web
+  lib/{incidents,discovery}.ts, components/connections/{connection-row,k8s-operate-dialog}.tsx.
+
 ## How to resume
 
 ```bash

@@ -216,14 +216,28 @@ async def test_live_reader_keeps_only_pod_metadata(fake_api: tuple[FakeApi, str]
             "ownerReferences": [{"kind": "ReplicaSet", "name": "api-7d9f", "uid": "u"}],
         },
         "spec": {"containers": [{"env": [{"name": "API_TOKEN", "value": "pod-secret-value"}]}]},
-        "status": {"phase": "Running"},
+        "status": {
+            "phase": "Running",
+            "containerStatuses": [
+                {
+                    "name": "api",
+                    "restartCount": 3,
+                    "imageID": "sha256:abc",
+                    "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "x" * 900}},
+                }
+            ],
+        },
     }
     api.pages["/api/v1/pods"] = [[pod]]
     reader = LiveKubeReader(_kubeconfig(server))
     (item,) = await reader.list("pods")
     assert "pod-secret-value" not in json.dumps(item) and "spec" not in item
     assert item["metadata"]["ownerReferences"] == [{"kind": "ReplicaSet", "name": "api-7d9f"}]
-    assert item["status"] == {"phase": "Running"}
+    # Status keeps what incidents read (container states, restarts), messages cut short.
+    (container,) = item["status"]["containerStatuses"]
+    assert item["status"]["phase"] == "Running" and container["restartCount"] == 3
+    assert container["state"]["waiting"]["reason"] == "CrashLoopBackOff"
+    assert len(container["state"]["waiting"]["message"]) == 300 and "imageID" not in container
 
 
 async def test_live_reader_maps_every_kind_and_feeds_discovery(

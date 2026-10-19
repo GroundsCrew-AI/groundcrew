@@ -19,7 +19,9 @@
             "enum": [
               "ecs_rollback_service",
               "secret_rollback_version",
-              "force_redeploy"
+              "force_redeploy",
+              "k8s_rollout_undo",
+              "k8s_rollout_restart"
             ],
             "title": "Action",
             "type": "string"
@@ -92,7 +94,9 @@
             "enum": [
               "ecs_rollback_service",
               "secret_rollback_version",
-              "force_redeploy"
+              "force_redeploy",
+              "k8s_rollout_undo",
+              "k8s_rollout_restart"
             ],
             "title": "Action",
             "type": "string"
@@ -2658,6 +2662,8 @@
               "ecs_rollback_service",
               "secret_rollback_version",
               "force_redeploy",
+              "k8s_rollout_undo",
+              "k8s_rollout_restart",
               "other"
             ],
             "title": "Kind",
@@ -3413,6 +3419,8 @@
               "ecs_tasks_stopped",
               "log_error_spike",
               "rds_cpu_latency",
+              "k8s_rollout_failed",
+              "k8s_pods_crashing",
               "user_report",
               "other"
             ],
@@ -3824,6 +3832,8 @@
               "ecs_tasks_stopped",
               "log_error_spike",
               "rds_cpu_latency",
+              "k8s_rollout_failed",
+              "k8s_pods_crashing",
               "user_report",
               "other"
             ],
@@ -4079,6 +4089,8 @@
               "ecs_tasks_stopped",
               "log_error_spike",
               "rds_cpu_latency",
+              "k8s_rollout_failed",
+              "k8s_pods_crashing",
               "user_report",
               "other"
             ],
@@ -4467,6 +4479,20 @@
           "created_at"
         ],
         "title": "InviteOut",
+        "type": "object"
+      },
+      "K8sOperateIn": {
+        "description": "Turn approved emergency fixes (rollout undo, restart) on or off for a cluster.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "K8sOperateIn",
         "type": "object"
       },
       "KubernetesConnectIn": {
@@ -5293,7 +5319,9 @@
                 "enum": [
                   "ecs_rollback_service",
                   "secret_rollback_version",
-                  "force_redeploy"
+                  "force_redeploy",
+                  "k8s_rollout_undo",
+                  "k8s_rollout_restart"
                 ],
                 "type": "string"
               },
@@ -6887,6 +6915,8 @@
               "ecs_tasks_stopped",
               "log_error_spike",
               "rds_cpu_latency",
+              "k8s_rollout_failed",
+              "k8s_pods_crashing",
               "user_report",
               "other"
             ],
@@ -9587,6 +9617,76 @@
           }
         },
         "summary": "Discover Connection",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/k8s/operate": {
+      "post": {
+        "description": "Turn approved emergency fixes on or off for a connected cluster. On: checks (with\nSelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list\nReplicaSets, cluster-wide or in a namespace of a discovered Deployment\n(infra/k8s-operate-rbac.yaml grants that); nothing changes if it may not. Every fix still\nneeds a person's approval.",
+        "operationId": "k8s_set_operate_connections__connection_id__k8s_operate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/K8sOperateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "K8S Set Operate",
         "tags": [
           "connections"
         ]
