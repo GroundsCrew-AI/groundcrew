@@ -3525,6 +3525,17 @@
             ],
             "title": "Merged Into"
           },
+          "merged_into_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into Title"
+          },
           "opened_at": {
             "format": "date-time",
             "title": "Opened At",
@@ -4137,6 +4148,17 @@
               }
             ],
             "title": "Merged Into"
+          },
+          "merged_into_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into Title"
           },
           "opened_at": {
             "format": "date-time",
@@ -5294,6 +5316,18 @@
             ],
             "default": null,
             "title": "Approval Id"
+          },
+          "degraded": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Degraded"
           },
           "depends_on": {
             "items": {

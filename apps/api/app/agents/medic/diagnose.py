@@ -146,9 +146,10 @@ def messages(
 
 
 def _same_change(ref: str, marker: str) -> bool:
-    """A model's ref names a collected change: the same ref, a commit SHA prefix (7+ hex), or
-    a long prefix of the marker (an ARN without its version suffix). Short or generic refs
-    ("main", "1") never match."""
+    """A model's ref names a collected change: the same ref, a commit SHA prefix (7+ hex), a
+    long prefix of the marker (an ARN without its version suffix), or a long id that ends the
+    marker after ":" or "/" (a secret's bare version id, a task definition's family:revision).
+    Short or generic refs ("main", "1") never match."""
     ref, marker = ref.strip(), marker.strip()
     if not ref or not marker:
         return False
@@ -156,6 +157,8 @@ def _same_change(ref: str, marker: str) -> bool:
         return True
     if _SHA.match(ref):
         return marker.startswith(ref)
+    if len(ref) >= 8 and (marker.endswith(f":{ref}") or marker.endswith(f"/{ref}")):
+        return True
     return len(ref) >= 20 and marker.startswith(ref)
 
 

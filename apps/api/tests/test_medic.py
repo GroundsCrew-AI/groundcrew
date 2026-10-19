@@ -1081,3 +1081,27 @@ async def test_ranking_keeps_every_source_and_puts_strong_signals_first() -> Non
         "secrets:checkout/database-url",
     }
     assert [i.timestamp for i in top] == sorted(i.timestamp for i in top)
+
+
+@pytest.mark.parametrize(
+    ("ref", "marker", "same"),
+    [
+        ("9f8e7d6", "9f8e7d6a1b2c3d4e5f60718293a4b5c6d7e8f901", True),  # commit SHA prefix
+        (
+            "cd5bcca5-2e1b-4c0f-90c6-05df3e893b85",
+            "arn:aws:secretsmanager:us-east-2:1:secret:db-AbC:cd5bcca5-2e1b-4c0f-90c6-05df3e893b85",
+            True,
+        ),  # a secret's bare version id
+        ("checkout-api:30", "arn:aws:ecs:us-east-2:1:task-definition/checkout-api:30", True),
+        (
+            "arn:aws:secretsmanager:us-east-2:1:secret:db",
+            "arn:aws:secretsmanager:us-east-2:1:secret:db-AbC:v1",
+            True,
+        ),
+        ("main", "refs/heads/main", False),  # short and generic
+        ("30", "arn:aws:ecs:us-east-2:1:task-definition/checkout-api:30", False),
+        ("api:30", "arn:aws:ecs:us-east-2:1:task-definition/checkout-api:30", False),
+    ],
+)
+def test_a_triggering_change_matches_a_collected_marker(ref: str, marker: str, same: bool) -> None:
+    assert dx._same_change(ref, marker) is same

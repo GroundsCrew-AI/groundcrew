@@ -33,6 +33,18 @@ describe("FixApprovalCard", () => {
     expect(screen.getByRole("button", { name: /approve and open pr/i })).toBeInTheDocument();
   });
 
+  it("marks a fix for a degraded service and says why it is offered", () => {
+    const fix = { ...ROLLBACK, degraded: "It reverts the change that started the errors." };
+    render(<FixApprovalCard fix={fix} approval={approval({ policy: "emergency" })} onDecide={vi.fn()} deciding={null} />);
+    expect(screen.getByText("Service degraded, not down")).toBeInTheDocument();
+    expect(screen.getByText("It reverts the change that started the errors.")).toBeInTheDocument();
+  });
+
+  it("shows no degraded mark when the service is down", () => {
+    render(<FixApprovalCard fix={ROLLBACK} approval={approval({ policy: "emergency" })} onDecide={vi.fn()} deciding={null} />);
+    expect(screen.queryByText("Service degraded, not down")).not.toBeInTheDocument();
+  });
+
   it("shows who decided instead of buttons", () => {
     const decided = approval({ status: "rejected", decided_by_name: "Ahmed", decided_at: new Date().toISOString() });
     render(<FixApprovalCard fix={ROLLBACK} approval={decided} onDecide={vi.fn()} deciding={null} />);
@@ -157,6 +169,22 @@ describe("IncidentList", () => {
     expect(screen.getByText("Tasks crashing")).toBeInTheDocument();
     expect(screen.getByText("A person")).toBeInTheDocument();
     expect(screen.getAllByRole("link")[0]).toHaveAttribute("href", "/incidents/inc-1");
+  });
+
+  it("shows a merged incident as Merged, linked to the incident that took it over", () => {
+    const merged = incidentSummary({
+      id: "inc-0",
+      status: "merged",
+      merged_into: "inc-1",
+      merged_into_title: "checkout-api: deployment failed",
+    });
+    render(<IncidentList incidents={[merged]} />);
+    expect(screen.getByText("Merged")).toBeInTheDocument();
+    const [row, into] = screen.getAllByRole("link");
+    expect(row).toHaveAttribute("href", "/incidents/inc-0");
+    expect(into).toHaveAttribute("href", "/incidents/inc-1");
+    expect(into).toHaveTextContent("checkout-api: deployment failed");
+    expect(within(row).queryByRole("link")).not.toBeInTheDocument();
   });
 });
 

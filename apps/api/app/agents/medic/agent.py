@@ -557,7 +557,9 @@ class MedicRunner:
             await session.commit()
 
         # 5. Propose
-        emergency = await fx.emergency(root_cause, signals, graph, evidence.changes, deps.actions)
+        emergency = await fx.emergency(
+            root_cause, signals, graph, evidence.changes, deps.actions, memory=reused
+        )
         pr = await fx.pull_request(
             incident.id,
             root_cause,

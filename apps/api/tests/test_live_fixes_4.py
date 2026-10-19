@@ -105,7 +105,7 @@ def test_an_error_spike_where_every_poll_fails_is_down() -> None:
     assert rules.error_share(_logs(5), T0 - timedelta(seconds=90), T0) is None
 
 
-def _rc(ev: Any) -> str:
+def _rc(ev: Any, confidence: str = "high") -> str:
     secret_line = eid(ev, "secrets:checkout/database-url", "last changed")
     return json.dumps(
         {
@@ -118,7 +118,7 @@ def _rc(ev: Any) -> str:
                 "evidence_ids": [secret_line],
             },
             "affected_resources": ["checkout-worker"],
-            "confidence": "high",
+            "confidence": confidence,
             "fix_options": [],
         }
     )
@@ -183,9 +183,10 @@ async def test_no_fix_waits_for_the_api_signal_then_rediagnoses_with_it(
     sf = session_factory
     ids = await demo_graph(sf, workspace.id)
     ev = env_evidence(ids, _now())
-    llm = FakeLLM(reply(_rc(ev)), reply(_rc(ev)), settings=settings())
+    llm = FakeLLM(reply(_rc(ev, "medium")), reply(_rc(ev, "medium")), settings=settings())
     use_deps(Harness(sf, ev, llm, actions=_actions(sf)))
-    # The worker's spike alone: not down (some polls still log info), no emergency fix.
+    # The worker's spike alone: not down (some polls still log info) and not high confidence
+    # (test_live_fixes_6), so no emergency fix.
     worker_id, run_id, _ = await _open(
         sf, workspace.id, ids["worker"], "log_error_spike", "5 lines"
     )
@@ -223,7 +224,8 @@ async def test_no_fix_fails_once_the_grace_is_over_without_new_signals(
     sf = session_factory
     ids = await demo_graph(sf, workspace.id)
     ev = env_evidence(ids, _now())
-    use_deps(Harness(sf, ev, FakeLLM(reply(_rc(ev)), settings=settings()), actions=_actions(sf)))
+    llm = FakeLLM(reply(_rc(ev, "medium")), settings=settings())
+    use_deps(Harness(sf, ev, llm, actions=_actions(sf)))
     worker_id, run_id, _ = await _open(
         sf, workspace.id, ids["worker"], "log_error_spike", "5 lines"
     )
@@ -247,7 +249,7 @@ async def test_no_fix_fails_once_the_grace_is_over_without_new_signals(
 # --- 1. merged incidents ----------------------------------------------------------------------
 
 
-async def test_a_taken_over_incident_is_merged_linked_both_ways_and_hidden_by_default(
+async def test_a_taken_over_incident_is_merged_and_linked_both_ways(
     session_factory: SessionFactory, client: httpx.AsyncClient, frank: Member
 ) -> None:
     sf = session_factory
@@ -267,7 +269,7 @@ async def test_a_taken_over_incident_is_merged_linked_both_ways_and_hidden_by_de
 
     base: dict[str, Any] = {"workspace_id": str(ws)}
     listed = await client.get("/incidents", params=base, headers=frank.headers)
-    assert [i["id"] for i in listed.json()["items"]] == [str(api_id)]
+    assert [i["id"] for i in listed.json()["items"]] == [str(api_id), str(worker_id)]
     merged = await client.get(
         "/incidents", params={**base, "status": "merged"}, headers=frank.headers
     )

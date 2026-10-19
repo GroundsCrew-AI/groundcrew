@@ -16,6 +16,7 @@ watcher (60 s) or "Report incident" ──▶ POST /incidents ──▶ incident
   research Tavily on the most distinctive error (max 3 results)       research_done
   diagnose root_cause route -> RootCause, uncited claims dropped      diagnosis
   propose  fix PR always; emergency action when prod is down now      fix_proposed
+           (or degraded: high confidence + a revert or remembered fix)
   approve  one approval per fix (POST /approvals/{id}/decide)         approval_requested / approval_decided
   apply    open_fix_pr / EmergencyActions.execute with the token      fix_applied
   verify   re-check the signals that opened it, until healthy/timeout verify_result
@@ -227,8 +228,8 @@ group of related resources: reporting resources an open incident covers returns 
 | Field | Meaning |
 |---|---|
 | `id`, `workspace_id`, `run_id` | `run_id`: the latest Medic run for it |
-| `title`, `status`, `severity` | status `open`, `investigating`, `waiting_approval`, `applying`, `verifying`, `resolved`, `failed`, `merged` (a newer incident on a related resource took it over; hidden from `GET /incidents` unless `?status=merged`); severity `critical`, `high`, `medium`, `low` |
-| `merged_into`, `merged_from` | the incident that took this one over (status `merged`), and the incidents this one took over |
+| `title`, `status`, `severity` | status `open`, `investigating`, `waiting_approval`, `applying`, `verifying`, `resolved`, `failed`, `merged` (a newer incident on a related resource took it over; listed by default, `?status=merged` for only these); severity `critical`, `high`, `medium`, `low` |
+| `merged_into`, `merged_into_title`, `merged_from` | the incident that took this one over (status `merged`) and its title, and the incidents this one took over |
 | `detected_by`, `detector_rule` | `watcher` or `user`; the rule that fired first: `health_check`, `ecs_deployment_failed`, `ecs_tasks_stopped`, `log_error_spike`, `rds_cpu_latency`, `user_report`, `other` |
 | `opened_at`, `resolved_at`, `window` | `window` = `{start, end}`; `end` is null while open |
 | `affected_resource_ids`, `affected_resources` | ids for Map deep links; `{id, name, type, provider}` for labels |

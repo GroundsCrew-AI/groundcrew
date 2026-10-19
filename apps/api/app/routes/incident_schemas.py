@@ -111,6 +111,7 @@ class IncidentSummary(BaseModel):
     # status merged: the newer incident that took this one over. merged_from: the incidents
     # this one took over (same outage on related resources).
     merged_into: uuid.UUID | None = None
+    merged_into_title: str | None = None
     merged_from: list[uuid.UUID] = Field(default_factory=list)
 
 
