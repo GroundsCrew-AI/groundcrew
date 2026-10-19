@@ -58,6 +58,8 @@ class Settings(BaseSettings):
 
     # LLM calls
     llm_timeout_seconds: float = 120.0
+    # Ultra with full reasoning and a 10k-token answer can take longer than the default.
+    llm_timeout_seconds_ultra: float = 300.0
     # Tries per model for 429, 5xx, and connection errors (a timeout is retried once at most,
     # because a timed-out request may still be billed). Backoff: base * 2**n plus jitter.
     llm_max_attempts: int = 3
@@ -247,6 +249,9 @@ class Settings(BaseSettings):
     llm_run_usd_cap: float = 0.40
     llm_daily_usd_cap: float = 2.00
     llm_total_usd_cap: float = 25.0
+    # One workspace's spend per UTC day (a workspace owner can set a lower or higher cap in
+    # its settings). Unset: LLM_DAILY_USD_CAP, so one workspace cannot use another's budget.
+    llm_workspace_daily_usd_cap: float | None = None
 
     # Token and call limits. Unset daily token budget or per-incident Ultra limit = no limit.
     daily_token_budget: int | None = None
@@ -254,6 +259,10 @@ class Settings(BaseSettings):
     max_ultra_calls_per_run: int = 3
     max_steps_per_run: int = 12
     max_tokens_per_run: int = 400_000
+
+    # Kubernetes API servers on private or loopback addresses (unset: allowed only in
+    # APP_ENV=dev, for the local kind cluster). Kubeconfigs never run exec plugins either way.
+    k8s_allow_private_servers: bool | None = None
 
     # Incident detection (Phase 5). The watcher job checks linked resources every interval;
     # off by default so tests and fresh installs make no AWS calls on their own.
@@ -284,11 +293,71 @@ class Settings(BaseSettings):
     # Auth. The web app signs a short-lived HS256 JWT with this secret for every API call
     # (and the API signs 60-second SSE stream tokens with it). At least 32 characters.
     internal_jwt_secret: SecretStr | None = None
-    # The web app's origin. CORS is allowed for it only, for the direct SSE connection.
+    # The web app's origin. CORS is allowed for it only, for the direct SSE connection. Links in
+    # emails (verify, reset password, invites) point here too.
     web_origin: str = "http://localhost:3000"
+
+    # Accounts. Email and password sign-up next to GitHub and Google (the web app enables those
+    # when their OAuth credentials are set). New passwords need PASSWORD_MIN_LENGTH characters.
+    password_auth_enabled: bool = True
+    password_min_length: int = 10
+    # Password accounts sign in only after opening the link sent to their address.
+    auth_require_verified_email: bool = True
+    # After this many wrong passwords in a row the account waits AUTH_LOCKOUT_MINUTES.
+    auth_lockout_attempts: int = 10
+    auth_lockout_minutes: int = 15
+    email_verification_hours: int = 48
+    password_reset_minutes: int = 60
+
+    # Outgoing email (verification links, password resets, invites). Without SMTP_HOST, dev and
+    # test write the message to the log instead; staging and production refuse to start while
+    # email sign-up is on.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    # "starttls" (port 587), "ssl" (port 465), or "none" (a local relay only).
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
+    email_from: str = "Groundcrew <no-reply@localhost>"
 
     # Logging
     log_level: str = "INFO"
+
+    # Worker housekeeping: finished jobs are deleted after this many days, failed ones after
+    # FAILED_JOB_RETENTION_DAYS (kept longer for debugging).
+    job_retention_days: int = 7
+    failed_job_retention_days: int = 30
+
+    def production_problems(self) -> list[str]:
+        """What a staging or production instance is missing. Dev and test may run without
+        these; a hosted instance must not (secrets would be unset or derived)."""
+        if self.app_env not in ("staging", "production"):
+            return []
+        problems = []
+        for name in ("database_url", "secrets_key", "internal_jwt_secret", "approval_token_key"):
+            value = getattr(self, name)
+            if value is None or not value.get_secret_value():
+                problems.append(f"{name.upper()} is not set")
+        secret = self.internal_jwt_secret
+        if secret is not None and 0 < len(secret.get_secret_value()) < 32:
+            problems.append("INTERNAL_JWT_SECRET is shorter than 32 characters")
+        if "localhost" in self.web_origin or "127.0.0.1" in self.web_origin:
+            problems.append("WEB_ORIGIN still points at localhost")
+        if self.password_auth_enabled and not self.smtp_host:
+            problems.append(
+                "SMTP_HOST is not set, so email sign-up cannot send verification links "
+                "(set it, or PASSWORD_AUTH_ENABLED=false)"
+            )
+        return problems
+
+    def require_production_ready(self) -> None:
+        problems = self.production_problems()
+        if problems:
+            raise RuntimeError(
+                f"APP_ENV={self.app_env} cannot start: "
+                + "; ".join(problems)
+                + ". See docs/self-hosting.md."
+            )
 
 
 @lru_cache

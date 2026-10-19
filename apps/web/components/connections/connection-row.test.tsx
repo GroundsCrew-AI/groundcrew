@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { connection } from "@/tests/discovery-fixtures";
 
-import { ConnectionRow, lastDiscoveryText } from "./connection-row";
+import { ConnectionRow, lastDiscoveryText, OWNER_ONLY_REASON } from "./connection-row";
 
 vi.mock("@/lib/discovery", async (original) => ({
   ...(await original<typeof import("@/lib/discovery")>()),
@@ -60,6 +60,36 @@ describe("ConnectionRow", () => {
     render(<ConnectionRow connection={connection({ kind: "azure", preview: true, status: "pending" })} onRefresh={vi.fn()} refreshing={false} />);
     expect(screen.getByText("Preview")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /refresh/i })).toBeDisabled();
+  });
+
+  it("disables owner-only actions for members, but not refresh", () => {
+    render(
+      <>
+        <p id="why">{OWNER_ONLY_REASON}</p>
+        <ul>
+          <ConnectionRow connection={connection()} onRefresh={vi.fn()} refreshing={false} canManage={false} reasonId="why" />
+        </ul>
+      </>,
+    );
+    for (const name of ["Enable deploys", "Enable emergency fixes", `Remove ${connection().name}`]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAccessibleDescription(OWNER_ONLY_REASON);
+    }
+    expect(screen.getByRole("button", { name: /refresh/i })).toBeEnabled();
+  });
+
+  it("does not let members finish a pending AWS connection", () => {
+    render(
+      <ConnectionRow
+        connection={connection({ status: "pending" })}
+        onRefresh={vi.fn()}
+        refreshing={false}
+        onResume={vi.fn()}
+        canManage={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Finish connecting" })).toBeDisabled();
   });
 
   it("explains failed discoveries", () => {

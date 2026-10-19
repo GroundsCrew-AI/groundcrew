@@ -14,18 +14,22 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plug,
+  Plus,
   Rocket,
   Settings,
   Siren,
   Sun,
+  UserCog,
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
+import { useState } from "react";
 
 import { signOutAction } from "@/app/actions";
 import { LogoMark } from "@/components/logo";
+import { CreateWorkspaceDialog } from "@/components/settings/create-workspace-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -45,14 +49,21 @@ import { useWorkspace } from "@/lib/workspace";
 
 import { useShell } from "./shell-context";
 
-type NavItem = { href: string; label: string; icon: LucideIcon; badge?: "approvals" };
+type Badge = "approvals" | "incidents";
+type NavItem = { href: string; label: string; icon: LucideIcon; badge?: Badge };
+
+/** How a count reads to a screen reader, and its color: approvals wait on a person, incidents are outages. */
+const BADGES: Record<Badge, { noun: string; color: string }> = {
+  approvals: { noun: "pending", color: "var(--status-waiting)" },
+  incidents: { noun: "open", color: "var(--status-failed)" },
+};
 
 const PRIMARY: NavItem[] = [
   { href: "/", label: "Overview", icon: LayoutGrid },
   { href: "/map", label: "Map", icon: Network },
   { href: "/deploy", label: "Deploy", icon: Rocket },
   { href: "/runs", label: "Runs", icon: Workflow },
-  { href: "/incidents", label: "Incidents", icon: Siren },
+  { href: "/incidents", label: "Incidents", icon: Siren, badge: "incidents" },
   { href: "/approvals", label: "Approvals", icon: Inbox, badge: "approvals" },
 ];
 const SECONDARY: NavItem[] = [
@@ -78,12 +89,14 @@ function NavLink({
   const pathname = usePathname();
   const active = isActive(pathname, item.href);
   const Icon = item.icon;
+  const badge = item.badge ? BADGES[item.badge] : undefined;
+  const label = count && badge ? `${item.label}, ${count} ${badge.noun}` : item.label;
   const link = (
     <Link
       href={item.href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
-      aria-label={collapsed ? (count ? `${item.label}, ${count} pending` : item.label) : undefined}
+      aria-label={collapsed || count ? label : undefined}
       className={cn(
         "group relative flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors",
         "hover:bg-sidebar-accent hover:text-foreground",
@@ -98,8 +111,10 @@ function NavLink({
       {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
       {count ? (
         <span
+          aria-hidden="true"
+          style={{ backgroundColor: badge?.color }}
           className={cn(
-            "tabular rounded-full bg-[var(--status-waiting)] px-1.5 text-[10.5px] leading-[18px] font-semibold text-background",
+            "tabular rounded-full px-1.5 text-[10.5px] leading-[18px] font-semibold text-background",
             collapsed && "absolute -top-0.5 -right-0.5 min-w-4 px-1 text-center leading-4",
           )}
         >
@@ -119,9 +134,12 @@ function NavLink({
 
 function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
   const { workspace, workspaces, setWorkspaceId, isLoading } = useWorkspace();
+  const [creating, setCreating] = useState(false);
   if (isLoading) return <Skeleton className="h-8 w-full" />;
   const name = workspace?.name ?? "No workspace";
   return (
+    <>
+    {creating && <CreateWorkspaceDialog open onOpenChange={setCreating} />}
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -150,8 +168,13 @@ function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
             {w.id === workspace?.id && <Check aria-label="Current" className="size-3.5" />}
           </DropdownMenuItem>
         ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => setCreating(true)}>
+          <Plus aria-hidden="true" /> New workspace
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    </>
   );
 }
 
@@ -159,7 +182,8 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
   const { me } = useWorkspace();
   const { theme, setTheme } = useTheme();
   const user = me?.user;
-  const display = user?.name || user?.github_login || "Signed in";
+  const display = user?.name || user?.github_login || user?.email || "Signed in";
+  const secondary = user?.github_login ? `@${user.github_login}` : user?.email && user.email !== display ? user.email : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -175,14 +199,18 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
           {!collapsed && (
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px]">{display}</span>
-              {user?.github_login && (
-                <span className="block truncate text-[11.5px] text-muted-foreground">@{user.github_login}</span>
-              )}
+              {secondary && <span className="block truncate text-[11.5px] text-muted-foreground">{secondary}</span>}
             </span>
           )}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-56">
+        <DropdownMenuItem asChild>
+          <Link href="/settings">
+            <UserCog aria-hidden="true" /> Account settings
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel className="text-muted-foreground">Theme</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={theme ?? "dark"} onValueChange={setTheme}>
           <DropdownMenuRadioItem value="dark">
@@ -216,8 +244,12 @@ export function SidebarContent({
   onNavigate?: () => void;
 }) {
   const { workspace } = useWorkspace();
+  // The workspace summary already polls (and pauses in hidden tabs), so the counts cost nothing extra.
   const summary = useSummary(workspace?.id);
-  const pending = summary.data?.pending_approvals ?? 0;
+  const counts: Record<Badge, number> = {
+    approvals: summary.data?.pending_approvals ?? 0,
+    incidents: summary.data?.open_incidents ?? 0,
+  };
   return (
     <div className="flex h-full flex-col gap-1 p-2">
       <WorkspaceSwitcher collapsed={collapsed} />
@@ -227,7 +259,7 @@ export function SidebarContent({
             key={item.href}
             item={item}
             collapsed={collapsed}
-            count={item.badge === "approvals" ? pending : undefined}
+            count={item.badge ? counts[item.badge] : undefined}
             onNavigate={onNavigate}
           />
         ))}

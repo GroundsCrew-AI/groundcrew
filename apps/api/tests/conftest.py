@@ -38,8 +38,11 @@ os.environ["MODEL_SUPER"] = "test/super"
 os.environ["MODEL_ULTRA"] = "test/ultra"
 os.environ["INTERNAL_JWT_SECRET"] = "test-internal-jwt-secret-0123456789abcdef"  # noqa: S105
 os.environ["APPROVAL_TOKEN_KEY"] = "test-approval-token-key-0123456789abcdef"  # noqa: S105
+# Fake Kubernetes API servers run on 127.0.0.1; tests of the private-address rule pass
+# allow_private=False explicitly.
+os.environ["K8S_ALLOW_PRIVATE_SERVERS"] = "true"
 
-from app.db.models import Base, User, Workspace  # noqa: E402
+from app.db.models import Base, User, Workspace, WorkspaceMember, WorkspaceRole  # noqa: E402
 from app.db.session import SessionFactory  # noqa: E402
 
 
@@ -130,5 +133,8 @@ async def workspace(session_factory: SessionFactory) -> Workspace:
         await session.flush()
         ws = Workspace(name="Test", owner_id=user.id)
         session.add(ws)
+        await session.flush()
+        # Like every real workspace: its creator is an owner member.
+        session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role=WorkspaceRole.owner))
         await session.commit()
         return ws

@@ -18,23 +18,22 @@ type Context = { params: Promise<{ path: string[] }> };
 
 async function proxy(request: NextRequest, context: Context): Promise<Response> {
   const session = await auth();
-  if (!session?.user?.githubId) {
+  if (!session?.user?.id) {
     return NextResponse.json({ detail: "Sign in required." }, { status: 401 });
   }
   if (!API_BASE) {
     return NextResponse.json({ detail: "API_INTERNAL_URL is not set." }, { status: 500 });
   }
+  const { path } = await context.params;
+  // Sign-in endpoints take the web server's own token, never a user's: not proxied.
+  if (path[0] === "auth") {
+    return NextResponse.json({ detail: "Not found." }, { status: 404 });
+  }
 
   let token: string;
   try {
     token = await signInternalToken(
-      {
-        githubId: session.user.githubId,
-        login: session.user.login,
-        email: session.user.email,
-        name: session.user.name,
-        avatarUrl: session.user.avatarUrl,
-      },
+      { userId: session.user.id, authTime: session.authAt },
       process.env.INTERNAL_JWT_SECRET,
     );
   } catch (error) {
@@ -42,7 +41,6 @@ async function proxy(request: NextRequest, context: Context): Promise<Response> 
     return NextResponse.json({ detail }, { status: 500 });
   }
 
-  const { path } = await context.params;
   const target = `${API_BASE}/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
   const hasBody = !["GET", "HEAD"].includes(request.method);
   const headers: Record<string, string> = { authorization: `Bearer ${token}` };

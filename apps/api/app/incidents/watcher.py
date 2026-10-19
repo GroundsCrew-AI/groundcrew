@@ -32,10 +32,11 @@ from app.agents.medic.events import Signal
 from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader
 from app.connectors.credentials import ConnectionCredentialsProvider
-from app.db.models import Connection, Edge, Incident, Job, JobStatus, Resource
+from app.db.models import Connection, Edge, Incident, Job, JobStatus, Resource, Workspace
 from app.db.session import SessionFactory
 from app.incidents import rules
 from app.incidents.store import OPEN_STATUSES, Opened, open_incident, resource_group
+from app.workspace_settings import get_config
 
 logger = logging.getLogger("groundcrew.incidents")
 
@@ -63,19 +64,32 @@ def default_reader_for(settings: Settings) -> ReaderFor:
 
 async def _targets(session_factory: SessionFactory) -> list[Target]:
     async with session_factory() as session:
-        rows = (
-            await session.execute(
-                select(Resource, Connection)
-                .join(Connection, Connection.id == Resource.connection_id)
-                .where(
-                    Resource.type.in_(WATCH_TYPES),
-                    Resource.stale.is_(False),
-                    Connection.kind == "aws",
-                    Connection.status == "connected",
+        rows: list[Any] = list(
+            (
+                await session.execute(
+                    select(Resource, Connection)
+                    .join(Connection, Connection.id == Resource.connection_id)
+                    .where(
+                        Resource.type.in_(WATCH_TYPES),
+                        Resource.stale.is_(False),
+                        Connection.kind == "aws",
+                        Connection.status == "connected",
+                    )
+                    .order_by(Resource.workspace_id, Resource.type, Resource.name)
                 )
-                .order_by(Resource.workspace_id, Resource.type, Resource.name)
-            )
-        ).all()
+            ).all()
+        )
+        # Workspaces that turned the watcher off (settings) are skipped.
+        workspace_ids = {r.workspace_id for r, _ in rows}
+        if workspace_ids:
+            off = {
+                w.id
+                for w in await session.scalars(
+                    select(Workspace).where(Workspace.id.in_(workspace_ids))
+                )
+                if not get_config(w).incident_watch
+            }
+            rows = [(r, c) for r, c in rows if r.workspace_id not in off]
         services = [r.id for r, _ in rows if r.type == "ecs:service"]
         databases = [r.id for r, _ in rows if r.type == "rds:db"]
         logs: dict[uuid.UUID, list[str]] = {}

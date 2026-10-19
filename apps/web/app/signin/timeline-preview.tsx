@@ -6,11 +6,13 @@ import { StatusPill } from "@/components/runs/badges";
 import { Timeline } from "@/components/runs/timeline";
 import type { Approval, Step } from "@/lib/api/client";
 
-/** A finished Echo Ops run, drawn with the real timeline components. Decorative only. */
+const GOAL = "The api service is failing its health checks. Find the cause and fix it.";
+
+/** A finished incident fix, drawn with the real timeline components. Decorative only. */
 function fixture(now: number): { steps: Step[]; approval: Approval } {
   const at = (secondsAgo: number) => new Date(now - secondsAgo * 1000).toISOString();
   const base = {
-    agent: "echo_ops",
+    agent: "medic",
     model_tier: null,
     model_id: null,
     tool_name: null,
@@ -27,11 +29,11 @@ function fixture(now: number): { steps: Step[]; approval: Approval } {
     id: "preview-approval",
     run_id: "preview",
     workspace_id: "preview",
-    run_agent: "echo_ops",
-    run_goal: "List the services and restart the one named api.",
-    tool_name: "restart_fake_service",
-    policy: "write",
-    arguments: { name: "api" },
+    run_agent: "medic",
+    run_goal: GOAL,
+    tool_name: "ecs_rollback_service",
+    policy: "emergency",
+    arguments: { service: "api", task_definition: "api:41" },
     status: "approved",
     decided_by: "preview-user",
     decided_by_login: "you",
@@ -48,12 +50,12 @@ function fixture(now: number): { steps: Step[]; approval: Approval } {
       id: "1",
       seq: 1,
       kind: "llm",
-      model_tier: "nano",
-      model_id: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
-      output_summary: "tool calls: list_fake_services({})",
-      prompt_tokens: 498,
-      completion_tokens: 17,
-      latency_ms: 777,
+      model_tier: "super",
+      model_id: "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
+      output_summary: 'tool calls: read_service_events({"service": "api"})',
+      prompt_tokens: 2140,
+      completion_tokens: 36,
+      latency_ms: 1240,
       created_at: at(55),
     },
     {
@@ -61,10 +63,10 @@ function fixture(now: number): { steps: Step[]; approval: Approval } {
       id: "2",
       seq: 2,
       kind: "tool",
-      tool_name: "list_fake_services",
+      tool_name: "read_service_events",
       tool_policy: "read",
-      output_summary: "api, worker, web",
-      latency_ms: 2,
+      output_summary: "3 tasks stopped with exit code 137 (out of memory) since deploy api:42",
+      latency_ms: 310,
       created_at: at(54),
     },
     {
@@ -72,7 +74,7 @@ function fixture(now: number): { steps: Step[]; approval: Approval } {
       id: "3",
       seq: 3,
       kind: "approval_requested",
-      tool_name: "restart_fake_service",
+      tool_name: "ecs_rollback_service",
       approval_id: approval.id,
       created_at: at(52),
     },
@@ -81,10 +83,10 @@ function fixture(now: number): { steps: Step[]; approval: Approval } {
       id: "4",
       seq: 4,
       kind: "tool",
-      tool_name: "restart_fake_service",
-      tool_policy: "write",
-      output_summary: "restarted api",
-      latency_ms: 8,
+      tool_name: "ecs_rollback_service",
+      tool_policy: "emergency",
+      output_summary: "api rolled back to api:41; 2 of 2 tasks healthy",
+      latency_ms: 840,
       created_at: at(39),
     },
   ];
@@ -99,7 +101,7 @@ export function TimelinePreview() {
   return (
     <div className="w-full max-w-[480px] px-10">
       <div className="mb-5 flex items-center justify-between gap-3">
-        <p className="text-[13px] font-medium">List the services and restart the one named api.</p>
+        <p className="text-[13px] font-medium">{GOAL}</p>
         <StatusPill status="succeeded" />
       </div>
       <div className="pointer-events-none select-none">
@@ -107,7 +109,7 @@ export function TimelinePreview() {
           steps={steps}
           approvals={{ [approval.id]: approval }}
           status="succeeded"
-          result="Services listed: api, worker, web. The api service has been restarted."
+          result="Deploy api:42 lowered the memory limit, so its tasks ran out of memory. Rolled back to api:41 and opened a pull request that restores the limit."
           onDecide={() => undefined}
           deciding={null}
           animateAfter={Number.MAX_SAFE_INTEGER}

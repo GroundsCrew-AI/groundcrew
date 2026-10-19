@@ -93,6 +93,47 @@ Groundcrew reads repositories through its GitHub App with short-lived installati
 `secrets/groundcrew-app.pem` works on the host and in the containers. Sign-in uses the same app's OAuth
 client; see "Sign-in setup" in the README.
 
+## Accounts and sign-in
+
+Anyone can create an account: with an email address and a password, or with Google or GitHub. The
+web app shows a button for each provider whose OAuth credentials are set (`AUTH_GOOGLE_ID` /
+`AUTH_GOOGLE_SECRET`, `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` or the GitHub App's client). The
+callback URLs are `<web origin>/api/auth/callback/google` and `.../github`.
+
+- Password accounts confirm their address from an emailed link before they can sign in; the link
+  asks for the password too, so a link someone else's sign-up sent you does nothing. Forgotten
+  passwords are reset from an emailed link, which also lets Google and GitHub accounts add one.
+- Changing or resetting a password signs that account out everywhere.
+- A Google or GitHub sign-in whose email the provider verified joins the account with that
+  confirmed address. If the address was never confirmed, the provider's proof wins: the unconfirmed
+  password is removed.
+- Ten wrong passwords in a row lock an account for 15 minutes (`AUTH_LOCKOUT_ATTEMPTS`,
+  `AUTH_LOCKOUT_MINUTES`); the sign-in endpoints are also rate limited per client address.
+- Owners invite people by email (they get an email; they join once the address is confirmed) or
+  by GitHub login.
+
+Email needs SMTP: set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`, `ssl`, or `none`),
+`SMTP_USERNAME`, `SMTP_PASSWORD`, and `EMAIL_FROM`. Any provider with SMTP works (SES, Postmark,
+SendGrid, Mailgun, your own relay). In dev without `SMTP_HOST`, the API prints each email with its
+link to stderr. To run with provider sign-in only, set `PASSWORD_AUTH_ENABLED=false`.
+
+## Required in production
+
+With `APP_ENV=staging` or `production`, the API and worker refuse to start until these are set:
+
+| Setting | Why |
+| --- | --- |
+| `DATABASE_URL` | Postgres with pgvector |
+| `SECRETS_KEY` | Fernet key for stored secrets (`make keygen`) |
+| `INTERNAL_JWT_SECRET` | 32+ characters, shared with the web app |
+| `APPROVAL_TOKEN_KEY` | Signs single-use approved-action tokens |
+| `WEB_ORIGIN` | The public web URL (not localhost): CORS and links in emails |
+| `SMTP_HOST` (and the other `SMTP_*`) | Confirmation and reset emails, unless `PASSWORD_AUTH_ENABLED=false` |
+
+The web app needs `AUTH_SECRET`, `INTERNAL_JWT_SECRET`, and `API_INTERNAL_URL`, plus the OAuth
+credentials of the providers you offer. `GET /ready` answers 200 once the database is reachable
+and migrated to the latest revision.
+
 ## Other settings
 
 - `SECRETS_KEY` (`make keygen`): Fernet key for stored secrets (Vercel tokens, kubeconfigs, Azure client

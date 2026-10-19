@@ -559,7 +559,10 @@ class DiscoveryEngine:
         if resources:
             try:
                 budget = await RunBudget.load(
-                    session, run, PgUsageStore(self.session_factory), self.settings
+                    session,
+                    run,
+                    PgUsageStore(self.session_factory, run.workspace_id),
+                    self.settings,
                 )
                 await session.commit()
                 text = await summarize_system(

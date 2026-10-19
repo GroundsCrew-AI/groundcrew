@@ -308,7 +308,7 @@ class MedicRunner:
             _save(incident, state)
             await session.commit()
             budget = await RunBudget.load(
-                session, run, PgUsageStore(self.session_factory), self.settings
+                session, run, PgUsageStore(self.session_factory, run.workspace_id), self.settings
             )
             recorder = StepRecorder(session, run, AGENT)
             try:
@@ -476,7 +476,8 @@ class MedicRunner:
                         "content": dx.not_false_alarm(failing),
                     },
                 ]
-                raw = await dx.diagnose(llm, budget, retry, confirm=False, on_call=recorder)
+                # Only the false-alarm call is in question: confirm on Super, not a new Ultra run.
+                raw = await dx.diagnose(llm, budget, retry, confirm=True, on_call=recorder)
                 root_cause, more = dx.check(raw, items, evidence.changes)
                 dropped += more
                 if root_cause.false_alarm:
@@ -485,7 +486,7 @@ class MedicRunner:
                     )
         state.root_cause, state.dropped = root_cause, dropped
         incident.root_cause = root_cause.root_cause
-        onset = dx.change_at(root_cause)
+        onset = dx.change_at(root_cause, evidence.changes)
         if (
             onset is not None
             and incident.first_signal_at is not None

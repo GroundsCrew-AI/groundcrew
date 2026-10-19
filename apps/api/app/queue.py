@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import TERMINAL_RUN_STATUSES, Job, JobStatus, Run, RunStatus, StopReason
@@ -178,3 +178,27 @@ async def fail_job_run(session: AsyncSession, job: Job, error: str | None) -> No
     run.stop_reason = StopReason.error
     run.error = message
     run.finished_at = _now()
+
+
+async def prune(
+    session: AsyncSession, *, done_older_than_days: int, failed_older_than_days: int
+) -> int:
+    """Delete finished jobs older than the retention (by last update). Commits. Returns how
+    many rows went. Queued and running jobs are never touched."""
+    now = _now()
+    result = await session.execute(
+        delete(Job).where(
+            or_(
+                and_(
+                    Job.status == JobStatus.done,
+                    Job.updated_at < now - timedelta(days=done_older_than_days),
+                ),
+                and_(
+                    Job.status == JobStatus.failed,
+                    Job.updated_at < now - timedelta(days=failed_older_than_days),
+                ),
+            )
+        )
+    )
+    await session.commit()
+    return int(getattr(result, "rowcount", 0) or 0)

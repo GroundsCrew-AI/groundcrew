@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
 from app.actions.base import ActionPlan, EmergencyActionError, EmergencyActions
+from app.agents.medic.diagnose import matched_change
 from app.agents.medic.events import (
     ChangeMarker,
     FileChange,
@@ -362,14 +363,22 @@ async def emergency(
                     "action is offered."
                 )
             return out
+    # Which emergency action fits is decided from the evidence: the change the post-check
+    # matched to a collected marker, else the kinds of change actually collected. The model's
+    # fix_options only break a tie; model text alone never picks an action.
+    marker = matched_change(root_cause, changes)
     kinds = {o.kind for o in root_cause.fix_options}
-    secret_case = (change is not None and change.kind == "secret_change") or (
-        "secret_rollback_version" in kinds
-        and (change is None or change.kind in ("config", "other"))
-    )
-    rollback_case = (change is not None and change.kind in ("commit", "deploy")) or (
-        "ecs_rollback_service" in kinds and not secret_case
-    )
+    seen = {c.kind for c in changes}
+    if marker is not None:
+        secret_case = marker.kind == "secret_change"
+        rollback_case = marker.kind in ("commit", "deploy")
+    else:
+        secret_case = "secret_change" in seen and "secret_rollback_version" in kinds
+        rollback_case = (
+            not secret_case
+            and bool(seen & {"commit", "deploy"})
+            and "ecs_rollback_service" in kinds
+        )
     if not (secret_case or rollback_case):
         return out
     if actions is None:

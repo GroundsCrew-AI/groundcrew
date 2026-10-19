@@ -15,6 +15,7 @@ import logging
 import random
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Protocol, cast
 
@@ -55,6 +56,8 @@ PRIVATE_KEY_PREFIX = "x_"
 _REASONING_KEYS = frozenset({"reasoning", "reasoning_content"})
 # A timed-out request may still be billed, so a timeout is retried once at most.
 _MAX_TIMEOUT_RETRIES = 1
+# Caps that stop Ultra only; the route's fallback tier still answers.
+_ULTRA_CAPS = frozenset({"ultra_call_cap", "incident_ultra_cap"})
 
 
 class LLMError(RuntimeError):
@@ -305,6 +308,16 @@ class TokenFactory:
                 result = await self._checked_call(
                     r, tier, sent, budget, tools, tool_choice, schema, max_tokens
                 )
+            except BudgetExceededError as exc:
+                # The Ultra call caps stop Ultra, not the work: the fallback tier answers.
+                if exc.cap not in _ULTRA_CAPS or index + 1 >= len(tiers):
+                    raise
+                last_error = exc
+                logger.info(
+                    "llm Ultra cap reached, using the fallback tier",
+                    extra={"task": task, "cap": exc.cap, "to_tier": tiers[index + 1]},
+                )
+                continue
             except _FallbackEligibleError as exc:
                 last_error = exc.__cause__ or exc
                 if index + 1 < len(tiers):
@@ -339,6 +352,26 @@ class TokenFactory:
         if parsed is not None:
             result.parsed = parsed
             return result
+        if result.truncated:
+            # Cut off at max_tokens: a "repair" with the same room would be cut off again.
+            # Retry once with half again as much room (reasoning included).
+            roomier = replace(r, max_tokens=int((result.max_tokens or r.max_tokens or 0) * 1.5))
+            try:
+                retried = await self._checked_call(
+                    roomier, tier, sent, budget, None, None, schema, None
+                )
+            except _FallbackEligibleError as exc:
+                cause = exc.__cause__ or exc
+                raise LLMError(
+                    f"Retry after a cut-off reply failed: {_redacted_error(cause)}"
+                ) from None
+            retried.fell_back = result.fell_back
+            await self._account(retried, budget, hook)
+            parsed, error = parse_structured(retried.content, schema)
+            if parsed is not None:
+                retried.parsed = parsed
+                return retried
+            result = retried
         # One repair on the same tier. Budgets are checked again before it.
         repair_messages = [
             *sent,
@@ -380,13 +413,16 @@ class TokenFactory:
         budget.check(tier)
         today = await budget.check_usage()
         prompt_tokens = estimate_prompt_tokens(messages, tools or ())
-        if prompt_tokens >= spec.max_context:
+        # The answer needs room too: a prompt that leaves less than LLM_MIN_COMPLETION_TOKENS
+        # of the tier's usable context goes to the fallback tier.
+        room = spec.max_context - prompt_tokens
+        if room < self.settings.llm_min_completion_tokens:
             raise _FallbackEligibleError(
                 f"prompt is about {prompt_tokens} tokens; {tier} context is {spec.max_context}"
             )
         route_cap = r.max_tokens or self.settings.llm_max_tokens
         wanted = min(max_tokens, route_cap) if max_tokens else route_cap
-        cap = budget.completion_cap(wanted, prompt_tokens, today)
+        cap = min(budget.completion_cap(wanted, prompt_tokens, today), room)
         return await self._call(r, spec, messages, tools, tool_choice, schema, cap)
 
     async def _call(
@@ -412,6 +448,12 @@ class TokenFactory:
             kwargs["tool_choice"] = tool_choice or "auto"
         if schema is not None:
             kwargs["response_format"] = response_format(schema)
+        if spec.tier == Tier.ultra:
+            # Ultra with full reasoning can run longer than the default timeout; a timeout is
+            # retried, and both attempts would be billed.
+            kwargs["timeout"] = max(
+                self.settings.llm_timeout_seconds, self.settings.llm_timeout_seconds_ultra
+            )
 
         start = time.perf_counter()
         completion, attempts = await self._create_with_retries(kwargs, spec.model_id)

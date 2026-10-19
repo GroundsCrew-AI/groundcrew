@@ -208,6 +208,35 @@ class Worker:
         logger.info("worker stopped", extra={"worker_id": self.worker_id})
 
 
+MAINTENANCE_INTERVAL_SECONDS = 60.0
+
+
+async def maintenance_pass(session_factory: SessionFactory) -> None:
+    """Re-arm the incident watcher (its chain ends if a worker dies mid-pass) and prune old
+    jobs. Safe to run from every worker at once."""
+    settings = get_settings()
+    if settings.incident_watch_enabled:
+        from app.incidents.watcher import ensure_watch_job
+
+        await ensure_watch_job(session_factory)
+    async with session_factory() as session:
+        await queue.prune(
+            session,
+            done_older_than_days=settings.job_retention_days,
+            failed_older_than_days=settings.failed_job_retention_days,
+        )
+
+
+async def maintain(session_factory: SessionFactory, stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        try:
+            await maintenance_pass(session_factory)
+        except Exception:
+            logger.exception("worker maintenance failed")
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=MAINTENANCE_INTERVAL_SECONDS)
+
+
 async def main() -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
@@ -223,13 +252,14 @@ async def main() -> None:
         lock_timeout_seconds=settings.job_lock_timeout_seconds,
         shutdown_grace_seconds=settings.worker_shutdown_grace_seconds,
     )
-    if settings.incident_watch_enabled:
-        from app.incidents.watcher import ensure_watch_job
-
-        await ensure_watch_job(worker.session_factory)
+    settings.require_production_ready()
+    housekeeping = asyncio.create_task(maintain(worker.session_factory, stop))
     try:
         await worker.run(stop)
     finally:
+        housekeeping.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await housekeeping
         await get_engine().dispose()
 
 

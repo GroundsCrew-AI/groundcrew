@@ -12,6 +12,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -108,15 +109,68 @@ class TimestampMixin:
 
 
 class User(TimestampMixin, Base):
+    """A person. They sign in with any of their identities (user_identities: GitHub, Google)
+    or with their email and a password."""
+
     __tablename__ = "users"
 
-    # GitHub's numeric user id: stable across login renames. Users are upserted by it.
+    # GitHub's numeric user id and login, kept in sync with the GitHub identity (if any) for
+    # display ("@octocat") and invites by login.
     github_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
-    # GitHub may not share an email, so it is optional.
+    # Lowercase. Optional: a GitHub account may not share one.
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
     name: Mapped[str | None] = mapped_column(String(200))
     github_login: Mapped[str | None] = mapped_column(String(100), unique=True)
     avatar_url: Mapped[str | None] = mapped_column(String(500))
+    # When the user proved they own `email` (a link we sent, or a provider that verified it).
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # app.security.passwords format; None for accounts that only use GitHub or Google.
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    # Web sessions that started before this are refused (password changed or reset).
+    sessions_valid_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_sign_ins: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserIdentity(TimestampMixin, Base):
+    """A sign-in provider account linked to a user: ("github", "<numeric id>") or ("google",
+    "<sub>"). A user has at most one per provider."""
+
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_account_id", name="uq_user_identities_account"),
+        UniqueConstraint("user_id", "provider", name="uq_user_identities_user_provider"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_account_id: Mapped[str] = mapped_column(String(255))
+    # What the provider said at the last sign-in (shown in account settings).
+    email: Mapped[str | None] = mapped_column(String(320))
+    login: Mapped[str | None] = mapped_column(String(100))
+
+
+class AuthTokenPurpose(enum.StrEnum):
+    verify_email = "verify_email"
+    reset_password = "reset_password"  # noqa: S105 - a purpose name, not a password
+
+
+class AuthToken(TimestampMixin, Base):
+    """A single-use link token. Only its SHA-256 is stored; the link holds the token."""
+
+    __tablename__ = "auth_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    purpose: Mapped[str] = mapped_column(String(20))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # The address the token was sent to: a link proves that address, not a later one.
+    email: Mapped[str] = mapped_column(String(320))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Workspace(TimestampMixin, Base):
@@ -145,6 +199,32 @@ class WorkspaceMember(TimestampMixin, Base):
     )
     role: Mapped[WorkspaceRole] = mapped_column(
         _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.member
+    )
+
+
+class WorkspaceInvite(TimestampMixin, Base):
+    """An email address or a GitHub login invited to a workspace. It becomes a membership when
+    that person signs in with a verified address or that GitHub account (or at once, when
+    they already have an account)."""
+
+    __tablename__ = "workspace_invites"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "github_login", name="uq_workspace_invites_login"),
+        UniqueConstraint("workspace_id", "email", name="uq_workspace_invites_email"),
+        CheckConstraint("github_login IS NOT NULL OR email IS NOT NULL", name="target"),
+    )
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    # Lowercase; GitHub logins and email addresses are matched case-insensitively.
+    github_login: Mapped[str | None] = mapped_column(String(100), index=True)
+    email: Mapped[str | None] = mapped_column(String(320), index=True)
+    role: Mapped[WorkspaceRole] = mapped_column(
+        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.member
+    )
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
     )
 
 
@@ -460,6 +540,24 @@ class Job(TimestampMixin, Base):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     locked_by: Mapped[str | None] = mapped_column(String(200))
     last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class LlmWorkspaceUsage(Base):
+    """Token Factory spend per workspace and UTC day: one workspace's daily cap, and what its
+    overview shows. llm_usage keeps the platform-wide totals (the hard stop)."""
+
+    __tablename__ = "llm_workspace_usage"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0, server_default="0")
+    tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class LlmUsage(Base):

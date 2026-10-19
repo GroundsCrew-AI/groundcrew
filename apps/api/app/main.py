@@ -16,17 +16,20 @@ from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.accounts import ForbiddenError
 from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
 from app.routes import (
     approvals,
+    auth,
     connections,
     deploys,
     evidence,
     graph,
     incidents,
     runs,
+    workspace_admin,
     workspaces,
 )
 from app.routes.schemas import ApprovalStepEvent, RunStatusEvent, StepOut
@@ -84,7 +87,9 @@ class RequestIdMiddleware:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    setup_logging(get_settings().log_level)
+    settings = get_settings()
+    setup_logging(settings.log_level)
+    settings.require_production_ready()
     yield
     if get_settings().database_url is not None:
         await get_engine().dispose()
@@ -102,8 +107,24 @@ app.add_middleware(
 )
 app.add_middleware(RequestIdMiddleware)
 
-# Request fields whose raw input must never come back in a 422 (POST /deploys env values).
-_SECRET_INPUT_FIELDS = frozenset({"env"})
+# Request fields whose raw input must never come back in a 422 (POST /deploys env values,
+# passwords, email link tokens).
+_SECRET_INPUT_FIELDS = frozenset({"env", "password", "current_password", "new_password", "token"})
+
+
+@app.exception_handler(ForbiddenError)
+async def forbidden(_request: Request, exc: ForbiddenError) -> JSONResponse:
+    """Owner-only actions by a member: 403 with the reason (they can see the workspace)."""
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(auth.AuthFlowError)
+async def auth_failure(_request: Request, exc: auth.AuthFlowError) -> JSONResponse:
+    """Sign-in failures carry a code the web app maps to the next step (confirm your email,
+    reset your password, wait)."""
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.detail, "code": exc.code}
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -119,8 +140,11 @@ async def validation_error(_request: Request, exc: RequestValidationError) -> JS
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
-# Every route except /health and the SSE stream requires the signed-in user (CurrentUser).
+# Every route except /health, /ready, and the SSE stream requires the signed-in user
+# (CurrentUser); /auth requires the web server's service token instead.
+app.include_router(auth.router)
 app.include_router(workspaces.router)
+app.include_router(workspace_admin.router)
 app.include_router(runs.router)
 app.include_router(approvals.router)
 app.include_router(connections.router)
@@ -155,4 +179,28 @@ class Health(BaseModel):
 
 @app.get("/health")
 def health() -> Health:
+    """Liveness: the process answers. Use /ready for traffic and deploy checks."""
     return Health(status="ok", version=VERSION)
+
+
+class Ready(BaseModel):
+    status: str
+    version: str
+    database: str
+    migrations: str
+
+
+@app.get("/ready", responses={503: {"model": Ready}})
+async def ready() -> JSONResponse:
+    """Readiness: the database answers and its schema is at this build's migration head."""
+    from app.db.readiness import check
+
+    database, migrations = await check()
+    ok = database == "ok" and migrations == "ok"
+    body = Ready(
+        status="ok" if ok else "unavailable",
+        version=VERSION,
+        database=database,
+        migrations=migrations,
+    )
+    return JSONResponse(status_code=200 if ok else 503, content=body.model_dump())

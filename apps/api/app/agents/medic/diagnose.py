@@ -15,9 +15,11 @@ from app.agents.medic.events import ChangeMarker, MemoryHit, ResearchResult, Sig
 from app.agents.medic.schemas import EvidenceItem, RootCause
 from app.llm.budget import RunBudget
 from app.llm.client import OnCall, TokenFactory
+from app.llm.prompting import UNTRUSTED_RULE, fence
 from app.llm.router import Task
 
-SYSTEM = """You are Medic, an SRE investigating a production incident in a customer's cloud.
+SYSTEM = (
+    """You are Medic, an SRE investigating a production incident in a customer's cloud.
 Work only from the evidence lines given. Each line has an id like ev-1a2b3c4d5e.
 
 Rules:
@@ -40,14 +42,18 @@ Rules:
 - A metric spike that starts before the triggering change was not caused by it (a load test,
   a batch job): do not cite it for this incident.
 - `false_alarm` is true only when nothing is wrong for users: the "errors" are not errors
-  (INFO lines from a logger named like uvicorn.error, a normal restart) AND the evidence shows
+  (INFO or DEBUG lines from a logger whose name contains "error", a normal restart) AND the
+  evidence shows
   normal error rates, no HTTP 5xx, no timeouts, and normal latency and database CPU. HTTP 5xx,
   statement timeouts, slow requests, or high database CPU are a real outage, even if some of
   the alert's lines were noise: find its cause. A false alarm has no fix_options.
-- `search_query` is a short web search for the root cause's mechanism, with no names, ids, or
-  numbers, e.g. "postgres missing index full table scan".
+- `search_query` is a short web search for the root cause's mechanism in this stack's terms,
+  with no names, ids, or numbers (for example the database engine and the failure mode).
 - Research results and past incidents are background, not evidence: never cite them.
-- Use "other" or null when nothing fits. Never ask for or reveal secret values."""
+- Use "other" or null when nothing fits. Never ask for or reveal secret values.
+- """
+    + UNTRUSTED_RULE
+)
 
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
 # Metric points are per minute and stamped at the minute's start.
@@ -64,9 +70,19 @@ def _time(at: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def change_at(root_cause: RootCause) -> datetime | None:
+def matched_change(root_cause: RootCause, changes: list[ChangeMarker]) -> ChangeMarker | None:
+    """The collected change marker the triggering change refers to, if any."""
     change = root_cause.triggering_change
-    return _time(change.at) if change is not None else None
+    if change is None or not change.ref:
+        return None
+    return next((c for c in changes if _same_change(change.ref, c.ref)), None)
+
+
+def change_at(root_cause: RootCause, changes: list[ChangeMarker]) -> datetime | None:
+    """When the triggering change happened: the matched marker's time, never the model's own
+    `at` (a wrong time would drop evidence and move the incident's start)."""
+    marker = matched_change(root_cause, changes)
+    return marker.at if marker is not None else None
 
 
 def _before_change(item: EvidenceItem, at: datetime | None) -> bool:
@@ -101,35 +117,53 @@ def messages(
         ),
         f"Affected resources: {', '.join(affected)}",
         "Changes seen in the window:\n"
-        + (
+        + fence(
+            "changes",
             "\n".join(f"- {c.at.isoformat()} {c.kind} {c.ref}: {c.label}" for c in changes)
-            or "- none"
+            or "- none",
         ),
-        "Evidence:\n" + _evidence_block(items),
+        "Evidence:\n" + fence("evidence", _evidence_block(items)),
     ]
     if research:
         parts.append(
             "Background from web research (not evidence):\n"
-            + "\n".join(f"- {r.title} ({r.url}): {r.snippet[:300]}" for r in research)
+            + fence(
+                "research",
+                "\n".join(f"- {r.title} ({r.url}): {r.snippet[:300]}" for r in research),
+            )
         )
     if memory is not None:
         parts.append(
             "A similar past incident (not evidence; confirm or reject it from this incident's "
-            f"evidence): {memory.title}. Root cause then: {memory.root_cause}. "
-            f"Fix then: {memory.fix_summary}."
+            "evidence):\n"
+            + fence(
+                "past_incident",
+                f"{memory.title}. Root cause then: {memory.root_cause}. "
+                f"Fix then: {memory.fix_summary}.",
+            )
         )
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": "\n\n".join(parts)}]
 
 
-def _matches_change(ref: str | None, changes: list[ChangeMarker]) -> bool:
-    if not ref:
+def _same_change(ref: str, marker: str) -> bool:
+    """A model's ref names a collected change: the same ref, a commit SHA prefix (7+ hex), a
+    long prefix of the marker (an ARN without its version suffix), or a long id that ends the
+    marker after ":" or "/" (a secret's bare version id, a task definition's family:revision).
+    Short or generic refs ("main", "1") never match."""
+    ref, marker = ref.strip(), marker.strip()
+    if not ref or not marker:
         return False
-    for c in changes:
-        if ref == c.ref or (c.ref and (ref in c.ref or c.ref in ref)):
-            return True
-        if _SHA.match(ref) and c.ref.startswith(ref):
-            return True
-    return False
+    if ref == marker:
+        return True
+    if _SHA.match(ref):
+        return marker.startswith(ref)
+    if len(ref) >= 8 and (marker.endswith(f":{ref}") or marker.endswith(f"/{ref}")):
+        return True
+    return len(ref) >= 20 and marker.startswith(ref)
+
+
+def _matches_change(ref: str | None, changes: list[ChangeMarker]) -> bool:
+    return bool(ref) and any(_same_change(ref or "", c.ref) for c in changes)
 
 
 def check(
@@ -138,7 +172,7 @@ def check(
     valid = {i.id for i in items}
     dropped: list[str] = []
     claims = []
-    at = change_at(root_cause)
+    at = change_at(root_cause, changes)
     earlier = {i.id for i in items if _before_change(i, at)}
     for claim in root_cause.claims:
         ids = [i for i in claim.evidence_ids if i in valid and i not in earlier]

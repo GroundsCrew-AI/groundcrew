@@ -8,7 +8,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { type Connection, downloadAwsTemplate, useAwsSetOperate, useAwsTemplateUrl } from "@/lib/discovery";
 import { useWorkspace } from "@/lib/workspace";
 
+import { cloudFormationStacksUrl, REGION_PLACEHOLDER } from "./aws-console";
 import { CopyField } from "./copy-field";
+
+/** The role name pattern in the PassRole ARN, for the customer to replace with their own. */
+export const PASS_ROLE_PLACEHOLDER = "YOUR-APP-*";
 
 export const OPERATE_ALLOWS = [
   "Roll an ECS service back to an earlier task definition revision, or restart it",
@@ -16,6 +20,12 @@ export const OPERATE_ALLOWS = [
   "Move a secret's AWSCURRENT stage back to its previous version (by version id; values are never read)",
   "Only on the services and secrets you list, and only after a person approves each fix",
 ];
+
+/** "CLUSTER and PREFIX", "CLUSTER, PREFIX, and REGION" */
+function placeholderList(names: string[]): string {
+  if (names.length <= 2) return names.join(" and ");
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
 
 export function isOperate(connection: Connection): boolean {
   return (connection.capabilities ?? []).includes("operate");
@@ -40,13 +50,15 @@ export function AwsOperateDialog({
   const enabling = !isOperate(connection);
   const template = useAwsTemplateUrl(open && enabling);
   const templateUrl = template.data?.url;
-  const region = "us-east-2";
+  const region = connection.region ?? REGION_PLACEHOLDER;
   const account = connection.account ?? "ACCOUNT";
-  const stacks = `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks`;
+  const stacks = cloudFormationStacksUrl(connection.region);
   const services = `arn:aws:ecs:${region}:${account}:service/CLUSTER/*`;
   const secrets = `arn:aws:secretsmanager:${region}:${account}:secret:PREFIX/*`;
-  // The demo's task roles; ECS needs iam:PassRole on a revision's roles to roll back to it.
-  const passRoles = `arn:aws:iam::${account}:role/checkout-*`;
+  // ECS needs iam:PassRole on a revision's task and execution roles to roll back to it. Those
+  // are the customer's own roles, so this is a pattern for them to edit, not a guess.
+  const passRoles = `arn:aws:iam::${account}:role/${PASS_ROLE_PLACEHOLDER}`;
+  const placeholders = ["CLUSTER", "PREFIX", ...(connection.region ? [] : [REGION_PLACEHOLDER])];
 
   function close(next: boolean) {
     onOpenChange(next);
@@ -86,7 +98,16 @@ export function AwsOperateDialog({
                 <a href={stacks} target="_blank" rel="noreferrer" className="underline underline-offset-2">
                   CloudFormation stacks
                 </a>{" "}
-                in account <span className="font-mono">{account}</span>, select{" "}
+                in account <span className="font-mono">{account}</span>
+                {connection.region ? (
+                  <>
+                    {" "}
+                    (<span className="font-mono">{connection.region}</span>)
+                  </>
+                ) : (
+                  " in the region where you created the stack"
+                )}
+                , select{" "}
                 <span className="font-mono">groundcrew-read-only</span>, and click{" "}
                 <span className="font-medium">Update</span>.
               </li>
@@ -121,13 +142,15 @@ export function AwsOperateDialog({
                 <p>
                   On the next page set <span className="font-mono">EnableOperate</span> to{" "}
                   <span className="font-mono">true</span> and list what Groundcrew may act on (comma separated;
-                  replace CLUSTER and PREFIX). Leave the other parameters as they are.
+                  replace {placeholderList(placeholders)}). Leave the other parameters as they are.
                 </p>
                 <CopyField label="OperateServiceArns" value={services} />
                 <CopyField label="OperateSecretArns" value={secrets} />
                 <p>
                   A rollback hands the earlier revision&apos;s execution and task roles back to ECS, so list those
-                  roles too (they are passed only to ECS tasks, never a groundcrew-* role):
+                  roles too: replace <span className="font-mono">{PASS_ROLE_PLACEHOLDER}</span> with your
+                  services&apos; role names, or a prefix they share. They are passed only to ECS tasks, never to a
+                  groundcrew-* role.
                 </p>
                 <CopyField label="OperatePassRoleArns" value={passRoles} />
               </li>

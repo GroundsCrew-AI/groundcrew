@@ -18,8 +18,8 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.accounts import NotFoundError, member_workspace
-from app.config import Settings
+from app.accounts import NotFoundError, member_workspace, require_owner
+from app.config import Settings, get_settings
 from app.connectors import kubernetes as kube
 from app.connectors.aws import AwsError, get_sessions, new_external_id, parse_role_arn
 from app.connectors.deploy_infra import deploy_role_arn, operate_role_arn
@@ -72,14 +72,30 @@ async def _check_member(session: AsyncSession, user: User, workspace_id: uuid.UU
         raise _not_found("Workspace") from None
 
 
+async def _check_owner(session: AsyncSession, user: User, workspace_id: uuid.UUID) -> None:
+    """Connections are workspace infrastructure: only owners add, change, or remove them."""
+    try:
+        await require_owner(session, user, workspace_id)
+    except NotFoundError:
+        raise _not_found("Workspace") from None
+
+
 async def member_connection(
-    session: AsyncSession, user: User, connection_id: uuid.UUID, *, for_update: bool = False
+    session: AsyncSession,
+    user: User,
+    connection_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+    owner: bool = False,
 ) -> Connection:
     conn = await session.get(Connection, connection_id, with_for_update=for_update)
     if conn is None:
         raise _not_found()
     try:
-        await member_workspace(session, user, conn.workspace_id)
+        if owner:
+            await require_owner(session, user, conn.workspace_id)
+        else:
+            await member_workspace(session, user, conn.workspace_id)
     except NotFoundError:
         raise _not_found() from None
     return conn
@@ -168,7 +184,7 @@ async def aws_start(
 ) -> AwsStartOut:
     """Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link for
     the chosen tier (stored on the connection; complete verifies the deploy role for deploy)."""
-    await _check_member(session, user, body.workspace_id)
+    await _check_owner(session, user, body.workspace_id)
     try:
         principal = await asyncio.to_thread(get_sessions().principal_arn)
     except AwsError as exc:
@@ -233,7 +249,7 @@ async def aws_complete(
     """Verify the role (refused without the ExternalId, works with it, right account) and
     store its ARN; for Tier=deploy, verify the groundcrew-deploy role the same way. No
     credentials are stored."""
-    conn = await member_connection(session, user, body.connection_id, for_update=True)
+    conn = await member_connection(session, user, body.connection_id, for_update=True, owner=True)
     if conn.kind != "aws":
         raise _unprocessable("This is not an AWS connection.")
     role_arn = body.role_arn.strip()
@@ -264,11 +280,13 @@ async def aws_complete(
             else None
         )
     except AwsError as exc:
-        conn = await member_connection(session, user, body.connection_id, for_update=True)
+        conn = await member_connection(
+            session, user, body.connection_id, for_update=True, owner=True
+        )
         conn.config = {**conn.config, "last_error": str(exc)}
         await session.commit()
         raise _unprocessable(str(exc)) from None
-    conn = await member_connection(session, user, body.connection_id, for_update=True)
+    conn = await member_connection(session, user, body.connection_id, for_update=True, owner=True)
     conn.config = {
         **conn.config,
         "role_arn": role_arn,
@@ -306,7 +324,7 @@ async def aws_set_tier(
     deploy: verifies the groundcrew-deploy role first (nothing changes if it cannot be used).
     observe: Groundcrew stops using the deploy role at once; update the stack to Tier=observe
     to delete it."""
-    conn = await member_connection(session, user, connection_id, for_update=True)
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     if conn.kind != "aws" or conn.status != "connected":
         raise _unprocessable("Only a connected AWS account has a tier.")
     account, external_id = str(conn.config["account_id"]), str(conn.config["external_id"])
@@ -319,7 +337,7 @@ async def aws_set_tier(
             raise _unprocessable(str(exc)) from None
     else:
         get_sessions().forget(deploy_role_arn(account), external_id)
-    conn = await member_connection(session, user, connection_id, for_update=True)
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     conn.config = {**conn.config, "tier": body.tier, "deploy_role_arn": deploy_role}
     await session.commit()
     return await _out(session, conn)
@@ -347,7 +365,7 @@ async def aws_set_operate(
     groundcrew-operate role first (nothing changes if it cannot be used). Off: Groundcrew stops
     using the role at once; update the stack to EnableOperate=false to delete it. Every fix
     still needs a person's approval."""
-    conn = await member_connection(session, user, connection_id, for_update=True)
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     if conn.kind != "aws" or conn.status != "connected":
         raise _unprocessable("Only a connected AWS account can run emergency fixes.")
     account, external_id = str(conn.config["account_id"]), str(conn.config["external_id"])
@@ -360,7 +378,7 @@ async def aws_set_operate(
             raise _unprocessable(str(exc)) from None
     else:
         get_sessions().forget(operate_role_arn(account), external_id)
-    conn = await member_connection(session, user, connection_id, for_update=True)
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     conn.config = {**conn.config, "operate_role_arn": role}
     await session.commit()
     return await _out(session, conn)
@@ -423,7 +441,7 @@ async def github_installations(
 async def github_link(body: GitHubLinkIn, user: CurrentUser, session: SessionDep) -> ConnectionOut:
     """Link repositories of one installation to the workspace (replaces that connection's
     repo list). Only repositories the installation can see are accepted."""
-    await _check_member(session, user, body.workspace_id)
+    await _check_owner(session, user, body.workspace_id)
     try:
         wanted = sorted({check_repo_name(r) for r in body.repos})
     except GitHubError as exc:
@@ -465,7 +483,7 @@ async def vercel_connect(
     body: VercelConnectIn, user: CurrentUser, session: SessionDep, settings: SettingsDep
 ) -> ConnectionOut:
     """Check the token (team and projects are readable), then store it encrypted."""
-    await _check_member(session, user, body.workspace_id)
+    await _check_owner(session, user, body.workspace_id)
     token = body.token.strip()
     team_id = (body.team_id or "").strip() or None
     await session.commit()
@@ -522,7 +540,7 @@ async def azure_connect(
 ) -> ConnectionOut:
     """Preview: stores the service principal (secret encrypted). Live discovery is not built
     yet (TODO(azure-live)); the connection shows as Preview."""
-    await _check_member(session, user, body.workspace_id)
+    await _check_owner(session, user, body.workspace_id)
     conn = Connection(
         workspace_id=body.workspace_id,
         kind="azure",
@@ -548,8 +566,9 @@ async def k8s_connect(
     """Verifies the kubeconfig by listing namespaces with it, then stores it encrypted and
     keeps the cluster name, server, and namespace count as config. Nothing is stored when the
     cluster cannot be read."""
-    await _check_member(session, user, body.workspace_id)
+    await _check_owner(session, user, body.workspace_id)
     try:
+        kube.check_kubeconfig(body.kubeconfig)
         summary = kubeconfig_summary(body.kubeconfig)
         reader = kube.live_reader(body.kubeconfig)
         try:
@@ -592,7 +611,7 @@ async def discover_connection(
 
 def _cleanup_steps(conn: Connection) -> list[str]:
     c = conn.config or {}
-    region = c.get("region") or "us-east-2"
+    region = c.get("region") or get_settings().discovery_regions[0]
     if conn.kind == "aws":
         return [
             f"Delete the CloudFormation stack {STACK_NAME} in {region} (account "
@@ -626,7 +645,7 @@ async def delete_connection(
 ) -> ConnectionDeleted:
     """Remove the connection, its stored secret, and every resource it discovered (with their
     edges). Access on the customer's side is removed by them: see `cleanup`."""
-    conn = await member_connection(session, user, connection_id, for_update=True)
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     result = await session.execute(delete(Resource).where(Resource.connection_id == conn.id))
     removed = int(getattr(result, "rowcount", 0) or 0)
     steps = _cleanup_steps(conn)

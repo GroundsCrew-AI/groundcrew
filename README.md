@@ -23,18 +23,24 @@ make dev                # postgres (host port 5433), api :8000, worker, web :300
 make migrate            # in another terminal: create or upgrade the tables
 ```
 
-Open http://localhost:3000 and sign in with GitHub. Your first sign-in creates your workspace.
+Open http://localhost:3000 and create an account (email and password, or Google or GitHub when
+configured). Your account gets a workspace of its own; invite your team from Settings.
 Local dev always uses the compose Postgres, even if `.env` has a Neon `DATABASE_URL`.
 `make models` sends one tiny test call to each configured Nemotron model.
 
 ### Sign-in setup
 
-Groundcrew signs in with the OAuth client of our GitHub App.
+Email and password sign-up works with no extra setup: in dev, the API prints the confirmation email
+(with its link) to its terminal. For real email set the `SMTP_*` settings; to offer Google sign-in set
+`AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` (callback `http://localhost:3000/api/auth/callback/google`). See
+"Accounts and sign-in" in [docs/self-hosting.md](docs/self-hosting.md).
+
+GitHub sign-in uses the OAuth client of our GitHub App:
 
 1. In the GitHub App settings (Settings > Developer settings > GitHub Apps > your app):
    - Add the callback URL `http://localhost:3000/api/auth/callback/github`.
-   - Under Permissions > Account permissions, set Email addresses to Read-only (optional; without it the
-     email is left empty).
+   - Under Permissions > Account permissions, set Email addresses to Read-only (recommended: Groundcrew
+     then knows which addresses GitHub verified, so email invites and account linking work).
    - Copy the Client ID, and generate a client secret.
 2. In `.env`:
    - `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` (or `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET`
@@ -43,7 +49,7 @@ Groundcrew signs in with the OAuth client of our GitHub App.
    - `INTERNAL_JWT_SECRET`: `openssl rand -base64 48`. The web server signs a 5-minute token with it for
      every API call; the API verifies it. It never reaches the browser.
    - `WEB_ORIGIN=http://localhost:3000` and `NEXT_PUBLIC_API_URL=http://localhost:8000`.
-3. `make dev`, open http://localhost:3000, and continue with GitHub.
+3. `make dev`, open http://localhost:3000, and create an account or continue with GitHub.
 
 ### Try the toy agent
 

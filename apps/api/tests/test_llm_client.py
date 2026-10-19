@@ -204,10 +204,18 @@ async def test_budget_is_checked_before_the_call() -> None:
 
 
 async def test_ultra_cap_blocks_ultra_but_not_its_fallback() -> None:
+    llm = FakeLLM(reply("answered on Super"), settings=_settings())
+    budget = RunBudget(usage=MemoryUsageStore(), settings=_settings(), ultra_calls=3)
+    result = await llm.chat(Task.root_cause, MESSAGES, budget=budget)
+    # The Ultra cap stops Ultra, not the work: root_cause's fallback tier answers.
+    assert llm.models == ["m/super"] and result.content == "answered on Super"
+
+
+async def test_ultra_cap_without_a_fallback_stops_the_call() -> None:
     llm = FakeLLM(reply("never sent"), settings=_settings())
     budget = RunBudget(usage=MemoryUsageStore(), settings=_settings(), ultra_calls=3)
     with pytest.raises(BudgetExceededError, match="ultra_call_cap"):
-        await llm.chat(Task.root_cause, MESSAGES, budget=budget)
+        await llm.chat(Task.root_cause, MESSAGES, budget=budget, escalate=True)
     assert llm.calls == []
 
 
@@ -350,3 +358,21 @@ async def test_schema_prompt_allows_other_and_null() -> None:
     await llm.chat(Task.detect_app_spec, MESSAGES, budget=_budget(), schema=Spec)
     system = llm.calls[0]["messages"][0]["content"]
     assert 'use "other"' in system and "use null" in system
+
+
+async def test_a_cut_off_json_reply_is_retried_with_more_room() -> None:
+    cut = reply('{"language": "py', finish_reason="length")
+    llm = FakeLLM(cut, reply('{"language": "python", "port": 8000}'), settings=_settings())
+    result = await llm.chat(Task.fix_build, MESSAGES, budget=_budget(), schema=Spec)
+    assert result.parsed == Spec(language="python", port=8000)
+    # Not a "repair" with the same room: the same prompt again with 1.5x the cap.
+    assert llm.max_tokens == [6_000, 9_000]
+    assert llm.calls[1]["messages"] == llm.calls[0]["messages"]
+
+
+async def test_the_answer_needs_room_in_the_context_too() -> None:
+    # Fits Nano's usable context as a prompt, but leaves no room for an answer: Super answers.
+    almost = [{"role": "user", "content": "x" * (7_900 * 4)}]
+    llm = FakeLLM(reply('{"language": "go", "port": 8080}'), settings=_settings())
+    await llm.chat(Task.detect_app_spec, almost, budget=_budget(), schema=Spec)
+    assert llm.models == ["m/super"]

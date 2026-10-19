@@ -39,6 +39,35 @@ class UserOut(BaseModel):
     name: str | None
     email: str | None
     avatar_url: str | None
+    email_verified: bool = False
+    has_password: bool = False
+    # How this person can sign in: "password", "github", "google".
+    sign_in_methods: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def build(cls, user: User, methods: list[str]) -> "UserOut":
+        return cls(
+            id=user.id,
+            github_login=user.github_login,
+            name=user.name,
+            email=user.email,
+            avatar_url=user.avatar_url,
+            email_verified=user.email_verified_at is not None,
+            has_password=user.password_hash is not None,
+            sign_in_methods=methods,
+        )
+
+
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=200)
+
+
+class PasswordChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Required when the account has a password; GitHub and Google accounts can add one.
+    current_password: str | None = Field(default=None, max_length=200)
+    new_password: str = Field(min_length=1, max_length=200)
 
 
 class WorkspaceOut(BaseModel):
@@ -325,13 +354,16 @@ class WorkspaceSummary(BaseModel):
     # DAILY_TOKEN_BUDGET is shared by every workspace; this is what counts against it.
     budget_tokens_today: int
     daily_token_budget: int | None
-    # Token Factory spend in USD across all workspaces (llm_usage), and its caps.
+    # This workspace's Token Factory spend in USD: today against its daily cap (workspace
+    # settings, else the platform default), and in total. No platform-wide figures.
     usd_today: float = 0.0
     daily_usd_cap: float | None = None
     usd_total: float = 0.0
     total_usd_cap: float | None = None
     # Incidents whose permanent fix PR is still open or merged but not deployed.
     pending_permanent_fixes: int = 0
+    # Incidents not resolved or failed yet (investigating, waiting for approval, ...).
+    open_incidents: int = 0
 
 
 # --- SSE payloads -----------------------------------------------------------------------
