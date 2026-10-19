@@ -20,6 +20,8 @@
               "ecs_rollback_service",
               "secret_rollback_version",
               "force_redeploy",
+              "lambda_rollback_alias",
+              "ec2_reboot_instance",
               "k8s_rollout_undo",
               "k8s_rollout_restart"
             ],
@@ -95,6 +97,8 @@
               "ecs_rollback_service",
               "secret_rollback_version",
               "force_redeploy",
+              "lambda_rollback_alias",
+              "ec2_reboot_instance",
               "k8s_rollout_undo",
               "k8s_rollout_restart"
             ],
@@ -2699,6 +2703,8 @@
               "ecs_rollback_service",
               "secret_rollback_version",
               "force_redeploy",
+              "lambda_rollback_alias",
+              "ec2_reboot_instance",
               "k8s_rollout_undo",
               "k8s_rollout_restart",
               "other"
@@ -3458,6 +3464,9 @@
               "rds_cpu_latency",
               "k8s_rollout_failed",
               "k8s_pods_crashing",
+              "lambda_errors",
+              "lambda_throttles",
+              "ec2_status_check",
               "user_report",
               "other"
             ],
@@ -3871,6 +3880,9 @@
               "rds_cpu_latency",
               "k8s_rollout_failed",
               "k8s_pods_crashing",
+              "lambda_errors",
+              "lambda_throttles",
+              "ec2_status_check",
               "user_report",
               "other"
             ],
@@ -4128,6 +4140,9 @@
               "rds_cpu_latency",
               "k8s_rollout_failed",
               "k8s_pods_crashing",
+              "lambda_errors",
+              "lambda_throttles",
+              "ec2_status_check",
               "user_report",
               "other"
             ],
@@ -5357,6 +5372,8 @@
                   "ecs_rollback_service",
                   "secret_rollback_version",
                   "force_redeploy",
+                  "lambda_rollback_alias",
+                  "ec2_reboot_instance",
                   "k8s_rollout_undo",
                   "k8s_rollout_restart"
                 ],
@@ -6954,6 +6971,9 @@
               "rds_cpu_latency",
               "k8s_rollout_failed",
               "k8s_pods_crashing",
+              "lambda_errors",
+              "lambda_throttles",
+              "ec2_status_check",
               "user_report",
               "other"
             ],

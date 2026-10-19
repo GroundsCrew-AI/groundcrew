@@ -18,6 +18,8 @@ export const OPERATE_ALLOWS = [
   "Roll an ECS service back to an earlier task definition revision, or restart it",
   "Pass only the roles you list to ECS tasks, which a rollback needs (no other IAM changes)",
   "Move a secret's AWSCURRENT stage back to its previous version (by version id; values are never read)",
+  "Point a Lambda function's alias back at its previous published version",
+  "Reboot an EC2 instance whose status check fails",
   "Only on the services and secrets you list, and only after a person approves each fix",
 ];
 
@@ -55,6 +57,8 @@ export function AwsOperateDialog({
   const stacks = cloudFormationStacksUrl(connection.region);
   const services = `arn:aws:ecs:${region}:${account}:service/CLUSTER/*`;
   const secrets = `arn:aws:secretsmanager:${region}:${account}:secret:PREFIX/*`;
+  const functions = `arn:aws:lambda:${region}:${account}:function:PREFIX*`;
+  const instances = `arn:aws:ec2:${region}:${account}:instance/*`;
   // ECS needs iam:PassRole on a revision's task and execution roles to roll back to it. Those
   // are the customer's own roles, so this is a pattern for them to edit, not a guess.
   const passRoles = `arn:aws:iam::${account}:role/${PASS_ROLE_PLACEHOLDER}`;
@@ -146,6 +150,12 @@ export function AwsOperateDialog({
                 </p>
                 <CopyField label="OperateServiceArns" value={services} />
                 <CopyField label="OperateSecretArns" value={secrets} />
+                <p className="text-muted-foreground">
+                  Lambda functions and EC2 instances too, if your app has them (leave a list at its default if not;
+                  at least one list needs real ARNs):
+                </p>
+                <CopyField label="OperateFunctionArns" value={functions} />
+                <CopyField label="OperateInstanceArns" value={instances} />
                 <p>
                   A rollback hands the earlier revision&apos;s execution and task roles back to ECS, so list those
                   roles too: replace <span className="font-mono">{PASS_ROLE_PLACEHOLDER}</span> with your

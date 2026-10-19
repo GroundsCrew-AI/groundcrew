@@ -43,7 +43,7 @@ from app.workspace_settings import get_config
 logger = logging.getLogger("groundcrew.incidents")
 
 WATCH_JOB: Final = "watch_incidents"
-WATCH_TYPES = ("ecs:service", "rds:db")
+WATCH_TYPES = ("ecs:service", "rds:db", "lambda:function", "ec2:instance")
 K8S_WATCH_TYPES = ("k8s:deployment",)
 CHECK_TIMEOUT_SECONDS = 30.0
 
@@ -151,6 +151,14 @@ def check(target: Target, reader: AwsReader, now: datetime) -> list[Signal]:
                 out.append(signal)
     elif r.type == "rds:db":
         signal = rules.rds_check(reader, r.region, r.id, r.name, target.log_groups, now)
+        if signal is not None:
+            out.append(signal)
+    elif r.type == "lambda:function":
+        log_group = str(r.config.get("log_group") or f"/aws/lambda/{r.name}")
+        out.extend(rules.lambda_check(reader, r.region, r.id, r.name, log_group, now))
+    elif r.type == "ec2:instance":
+        status = rules.fetch_ec2_status(reader, r.region, rules.instance_id(r.external_id))
+        signal = rules.ec2_signal(r.id, r.name, status, now)
         if signal is not None:
             out.append(signal)
     return out

@@ -15,6 +15,11 @@ the state first: if it no longer matches the plan, nothing is written (ok=False)
 - secret_rollback_version: UpdateSecretVersionStage moves AWSCURRENT to the version holding
   AWSPREVIOUS, by version id. GetSecretValue is never called (and denied by the role).
 - force_redeploy: UpdateService(forceNewDeployment=True), so new tasks read secrets again.
+- lambda_rollback_alias: UpdateAlias points the alias callers use (the one on the newest
+  published version; live / prod / production first) back at the previous published version,
+  and clears weighted routing. Functions called as $LATEST have no alias to move: no plan.
+- ec2_reboot_instance: RebootInstances on a running instance whose status check is impaired.
+  Not run if the instance recovered or stopped since the plan.
 """
 
 import asyncio
@@ -31,8 +36,10 @@ from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import select
 
 from app.actions.base import (
+    EC2_REBOOT_INSTANCE,
     ECS_ROLLBACK_SERVICE,
     FORCE_REDEPLOY,
+    LAMBDA_ROLLBACK_ALIAS,
     SECRET_ROLLBACK_VERSION,
     ActionPlan,
     ActionResult,
@@ -44,6 +51,7 @@ from app.connectors.credentials import ConnectionCredentialsProvider, Credential
 from app.db.models import Connection
 from app.db.session import SessionFactory
 from app.policy.actions import ApprovedAction, consume_approved_action
+from app.telemetry import aws_compute
 
 Client = Any
 
@@ -96,6 +104,25 @@ def roles_outside(roles: list[str], patterns: list[str]) -> list[str]:
         for role in roles
         if fnmatchcase(role, NEVER_PASSED) or not any(fnmatchcase(role, p) for p in patterns)
     ]
+
+
+# The alias names callers most likely use, first.
+PREFERRED_ALIASES = ("live", "prod", "production", "current", "stable")
+
+
+def pick_alias(aliases: list[dict[str, Any]], versions: list[str]) -> dict[str, Any] | None:
+    """The alias to roll back: one on the newest published version, a conventional name first;
+    else any alias on a published version. None when every caller uses $LATEST."""
+    on_version = [a for a in aliases if str(a.get("FunctionVersion")) in versions]
+    if not on_version:
+        return None
+    newest = max(int(str(a["FunctionVersion"])) for a in on_version)
+    top = [a for a in on_version if int(str(a["FunctionVersion"])) == newest]
+    for name in PREFERRED_ALIASES:
+        found = next((a for a in top if str(a.get("Name")).lower() == name), None)
+        if found is not None:
+            return found
+    return top[0]
 
 
 def _revision(arn: str) -> tuple[str, int]:
@@ -281,6 +308,82 @@ class AwsEmergencyActions:
             planned_at=datetime.now(UTC),
         )
 
+    async def _read(self, connection_id: uuid.UUID, service: str, arn: str) -> Client:
+        conn = await self._connection(connection_id)
+        region = self._region(conn, arn)
+        try:
+            return await asyncio.to_thread(self._read_client_for, conn, service, region)
+        except CredentialsError as exc:
+            raise EmergencyActionError(str(exc)) from None
+
+    async def plan_lambda_rollback_alias(
+        self, connection_id: uuid.UUID, function_arn: str
+    ) -> ActionPlan:
+        name = aws_compute.function_name(function_arn)
+        reader = await self._read(connection_id, "lambda", function_arn)
+        aliases = (await self._call(reader, "list_aliases", FunctionName=name)).get("Aliases", [])
+        lam = await self._client(connection_id, "lambda", function_arn)
+        versions = aws_compute.published(
+            (await self._call(lam, "list_versions_by_function", FunctionName=name)).get(
+                "Versions", []
+            )
+        )
+        alias = pick_alias(aliases, [str(v["Version"]) for v in versions])
+        if alias is None:
+            raise EmergencyActionError(
+                f"{name} has no alias on a published version (it runs as $LATEST), so there is "
+                "nothing to roll back in place. Fix it through the pull request."
+            )
+        current = str(alias["FunctionVersion"])
+        older = [v for v in versions if int(v["Version"]) < int(current)]
+        if not older:
+            raise EmergencyActionError(f"{name} has no version before {current}.")
+        previous = str(older[-1]["Version"])
+        return ActionPlan(
+            action=LAMBDA_ROLLBACK_ALIAS,
+            connection_id=connection_id,
+            target=f"{name}:{alias['Name']}",
+            params={"function_arn": function_arn, "alias": str(alias["Name"])},
+            current=aws_compute.version_ref(function_arn, current),
+            desired=aws_compute.version_ref(function_arn, previous),
+            summary=f"Point {name}:{alias['Name']} back at version {previous} (now {current})",
+            planned_at=datetime.now(UTC),
+        )
+
+    async def _instance_state(self, ec2: Client, instance: str) -> str:
+        found = await self._call(
+            ec2, "describe_instance_status", InstanceIds=[instance], IncludeAllInstances=True
+        )
+        status = (found.get("InstanceStatuses") or [{}])[0]
+        state = (status.get("InstanceState") or {}).get("Name") or "unknown"
+        checks = [
+            f"{label} {(status.get(key) or {}).get('Status') or '?'}"
+            for key, label in (("SystemStatus", "system"), ("InstanceStatus", "instance"))
+        ]
+        return f"{instance} {state}, {', '.join(checks)}"
+
+    async def plan_ec2_reboot_instance(
+        self, connection_id: uuid.UUID, instance_arn: str
+    ) -> ActionPlan:
+        instance = instance_arn.rsplit("/", 1)[-1]
+        ec2 = await self._client(connection_id, "ec2", instance_arn)
+        state = await self._instance_state(ec2, instance)
+        if " running," not in state or "impaired" not in state:
+            raise EmergencyActionError(
+                f"No reboot: {state}. Only a running instance with a failed status check is "
+                "rebooted."
+            )
+        return ActionPlan(
+            action=EC2_REBOOT_INSTANCE,
+            connection_id=connection_id,
+            target=instance,
+            params={"instance_arn": instance_arn},
+            current=state,
+            desired=None,
+            summary=f"Reboot {instance} ({state.split(', ', 1)[-1]})",
+            planned_at=datetime.now(UTC),
+        )
+
     # ------------------------------------------------------------------ execute (write)
 
     async def execute(
@@ -307,6 +410,41 @@ class AwsEmergencyActions:
             )
 
         try:
+            if plan.action == LAMBDA_ROLLBACK_ALIAS:
+                arn, alias = plan.params["function_arn"], plan.params["alias"]
+                name = aws_compute.function_name(arn)
+                lam = await self._client(plan.connection_id, "lambda", arn)
+                found = await self._call(lam, "get_alias", FunctionName=name, Name=alias)
+                points_at = aws_compute.version_ref(arn, str(found.get("FunctionVersion")))
+                if points_at != plan.current or plan.desired is None:
+                    return result(
+                        False,
+                        "Not run: the alias moved since the plan was approved.",
+                        error=f"{alias} is at {points_at}, the plan expected {plan.current}",
+                    )
+                version = plan.desired.rsplit(":", 1)[-1]
+                await self._call(
+                    lam,
+                    "update_alias",
+                    FunctionName=name,
+                    Name=alias,
+                    FunctionVersion=version,
+                    RoutingConfig={"AdditionalVersionWeights": {}},
+                )
+                return result(True, plan.summary, details={"alias": alias, "version": version})
+            if plan.action == EC2_REBOOT_INSTANCE:
+                arn = plan.params["instance_arn"]
+                instance = arn.rsplit("/", 1)[-1]
+                ec2 = await self._client(plan.connection_id, "ec2", arn)
+                state = await self._instance_state(ec2, instance)
+                if state != plan.current:
+                    return result(
+                        False,
+                        "Not run: the instance changed since the plan was approved.",
+                        error=f"now {state}, the plan expected {plan.current}",
+                    )
+                await self._call(ec2, "reboot_instances", InstanceIds=[instance])
+                return result(True, plan.summary, details={"instance": instance})
             if plan.action == SECRET_ROLLBACK_VERSION:
                 sm = await self._client(
                     plan.connection_id, "secretsmanager", plan.params["secret_arn"]

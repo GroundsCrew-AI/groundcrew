@@ -99,7 +99,7 @@ NO_FIX_JOB: Final = "medic_no_fix"
 HEALTHY_ROUNDS = 2
 MAX_REDIAGNOSES = 2
 # Evidence sources that carry the application's own log lines.
-APP_LOGS = ("cloudwatch_logs:", "vercel:", "k8s:")
+APP_LOGS = ("cloudwatch_logs:", "vercel:", "k8s:", "lambda:")
 
 Collect = Callable[[uuid.UUID, list[uuid.UUID], datetime, datetime], Awaitable[Evidence]]
 
@@ -1128,9 +1128,10 @@ class MedicRunner:
     ) -> VerifyResult | None:
         """The recovery checks, now. None when no affected resource can be read."""
         services, databases, logs = self._verify_targets(graph, state)
+        functions, instances = self._compute_targets(graph, state)
         deployments = self._k8s_targets(graph, state)
         readers: dict[str, AwsReader] = {}
-        for res in [*services, *databases]:
+        for res in [*services, *databases, *functions, *instances]:
             conn = graph.connections.get(res.connection_id) if res.connection_id else None
             if conn is not None and str(conn.id) not in readers:
                 try:
@@ -1180,6 +1181,8 @@ class MedicRunner:
                 check_logs=check_logs,
                 deploy_after=deploy_after,
                 waiting=waiting,
+                functions=functions,
+                instances=instances,
             )
             if readers
             else None
@@ -1273,6 +1276,30 @@ class MedicRunner:
         waits = [f"{p.repo}#{p.number} to be merged" for p in prs if p.state == "open"]
         merged = [p.merged_at for p in prs if p.state == "merged" and p.merged_at is not None]
         return waits, max(merged) if merged else None
+
+    def _compute_targets(
+        self, graph: fx.Graph, state: MedicState
+    ) -> tuple[list[Resource], list[Resource]]:
+        """Lambda functions and EC2 instances that are affected or that an applied fix acted
+        on."""
+        ids = set(graph.affected)
+        acted = {
+            v
+            for r in state.fixes
+            if r.status == "applied" and r.fix.plan is not None
+            for k, v in r.fix.plan.params.items()
+            if k in ("function_arn", "instance_arn")
+        }
+        picked = [
+            r
+            for r in graph.resources.values()
+            if r.type in ("lambda:function", "ec2:instance")
+            and (r.id in ids or r.external_id in acted)
+        ]
+        return (
+            [r for r in picked if r.type == "lambda:function"],
+            [r for r in picked if r.type == "ec2:instance"],
+        )
 
     def _k8s_targets(self, graph: fx.Graph, state: MedicState) -> list[Resource]:
         """Kubernetes Deployments that are affected or that an applied fix acted on."""

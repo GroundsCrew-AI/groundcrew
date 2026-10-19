@@ -9,8 +9,10 @@ Such fixes carry `degraded` so the approval card says the service is degraded, n
 
 - a secret change started it: `secret_rollback_version` on that secret, then `force_redeploy`
   of every ECS service that `uses` it (tasks read secrets only at start);
-- a commit or deploy started it: `ecs_rollback_service` for each crashing ECS service, and
-  `k8s_rollout_undo` (the previous revision) for each crashing Kubernetes Deployment.
+- a commit or deploy started it: `ecs_rollback_service` for each crashing ECS service,
+  `k8s_rollout_undo` (the previous revision) for each crashing Kubernetes Deployment, and
+  `lambda_rollback_alias` (the previous published version) for each failing Lambda function;
+- an EC2 instance's status check failed: `ec2_reboot_instance`, whatever started it.
 
 A pull request is proposed whenever a commit started it and the repository is connected: the
 `propose_fix` route (Ultra, Super in dev) writes full file contents from the commit's patch and
@@ -59,13 +61,20 @@ DOWN_RULES = frozenset(
         "ecs_tasks_stopped",
         "k8s_rollout_failed",
         "k8s_pods_crashing",
+        "ec2_status_check",
     }
 )
 CRASH_RULES = frozenset(
-    {"ecs_deployment_failed", "ecs_tasks_stopped", "k8s_rollout_failed", "k8s_pods_crashing"}
+    {
+        "ecs_deployment_failed",
+        "ecs_tasks_stopped",
+        "k8s_rollout_failed",
+        "k8s_pods_crashing",
+        "lambda_errors",
+    }
 )
 # What a rollback acts on, per resource type.
-ROLLBACK_TYPES = frozenset({"ecs:service", "k8s:deployment"})
+ROLLBACK_TYPES = frozenset({"ecs:service", "k8s:deployment", "lambda:function"})
 
 
 def is_down(signal: Signal) -> bool:
@@ -150,6 +159,22 @@ def _k8s_revision(ref: str | None) -> str:
 
 
 def plan_lines(plan: ActionPlan) -> list[PlanLine]:
+    if plan.action == "lambda_rollback_alias":
+        return [
+            PlanLine(
+                what=f"{plan.target} alias version",
+                before=(plan.current or "-").rsplit(":", 1)[-1],
+                after=(plan.desired or "-").rsplit(":", 1)[-1],
+            )
+        ]
+    if plan.action == "ec2_reboot_instance":
+        return [
+            PlanLine(
+                what=f"{plan.target}",
+                before=(plan.current or "-").split(" ", 1)[-1],
+                after="rebooted",
+            )
+        ]
     if plan.action == "k8s_rollout_undo":
         return [
             PlanLine(
@@ -381,6 +406,63 @@ async def emergency(
     start_order: int = 1,
     memory: MemoryHit | None = None,
 ) -> Proposal:
+    """Emergency fixes for what started it (a secret, deploy, or commit), then a reboot for
+    each EC2 instance whose status check fails."""
+    out = await _change_fixes(root_cause, signals, graph, changes, actions, start_order, memory)
+    reboots = await _reboots(root_cause, signals, graph, actions, start_order + len(out.records))
+    out.records += reboots.records
+    out.notes += reboots.notes
+    return out
+
+
+async def _reboots(
+    root_cause: RootCause,
+    signals: list[Signal],
+    graph: Graph,
+    actions: EmergencyActions | None,
+    order: int,
+) -> Proposal:
+    out = Proposal()
+    impaired = list(dict.fromkeys(s.resource_id for s in signals if s.rule == "ec2_status_check"))
+    if root_cause.false_alarm or not impaired:
+        return out
+    if actions is None:
+        out.notes.append(
+            "An instance's status check fails, but this connection has no Operate role, so no "
+            "reboot is offered."
+        )
+        return out
+    for rid in impaired:
+        found = graph.resources.get(rid) if rid else None
+        if found is None or found.type != "ec2:instance" or found.connection_id is None:
+            continue
+        try:
+            plan = await actions.plan_ec2_reboot_instance(found.connection_id, found.external_id)
+        except EmergencyActionError as exc:
+            out.notes.append(f"No reboot of {found.name}: {exc}")
+            continue
+        out.records.append(
+            _emergency_record(
+                plan,
+                order,
+                f"Reboot {found.name}",
+                "Its status check fails; a reboot restarts the operating system, which clears "
+                "most instance check failures.",
+            )
+        )
+        order += 1
+    return out
+
+
+async def _change_fixes(
+    root_cause: RootCause,
+    signals: list[Signal],
+    graph: Graph,
+    changes: list[ChangeMarker],
+    actions: EmergencyActions | None,
+    start_order: int = 1,
+    memory: MemoryHit | None = None,
+) -> Proposal:
     """Emergency fixes for a down service, or for a degraded one under the rules above.
     `memory` is the remembered incident Medic reused (at or above the threshold), if any."""
     out = Proposal()
@@ -411,7 +493,7 @@ async def emergency(
         rollback_case = (
             not secret_case
             and bool(seen & {"commit", "deploy"})
-            and bool({"ecs_rollback_service", "k8s_rollout_undo"} & kinds)
+            and bool({"ecs_rollback_service", "k8s_rollout_undo", "lambda_rollback_alias"} & kinds)
         )
     if not (secret_case or rollback_case):
         return out
@@ -512,6 +594,9 @@ async def emergency(
                     namespace = str(svc.config.get("namespace") or svc.region or "default")
                     plan = await actions.plan_k8s_rollout_undo(conn_id, namespace, svc.name)
                     to = _k8s_revision(plan.desired)
+                elif svc.type == "lambda:function":
+                    plan = await actions.plan_lambda_rollback_alias(conn_id, svc.external_id)
+                    to = f"version {(plan.desired or '-').rsplit(':', 1)[-1]}"
                 else:
                     cluster = str(svc.config.get("cluster_arn") or "")
                     plan = await actions.plan_ecs_rollback_service(conn_id, cluster, svc.name)

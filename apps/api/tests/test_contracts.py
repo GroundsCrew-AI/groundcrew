@@ -328,7 +328,7 @@ def test_operate_session_needs_the_operate_capability() -> None:
     assert capabilities(aws) == ["observe", "deploy", "operate"]
 
 
-def test_operate_allowlist_only_reads_or_makes_the_three_fixes() -> None:
+def test_operate_allowlist_only_reads_or_makes_the_listed_fixes() -> None:
     from app.connectors.aws import AWS_OPERATE_OPERATIONS, FORBIDDEN_OPERATIONS
 
     writes = {
@@ -336,5 +336,11 @@ def test_operate_allowlist_only_reads_or_makes_the_three_fixes() -> None:
         for op in AWS_OPERATE_OPERATIONS
         if not op.split(":")[1].startswith(("Describe", "List", "Get"))
     }
-    assert writes == {"ecs:UpdateService", "secretsmanager:UpdateSecretVersionStage"}
+    # ECS rollback / restart, secret rollback, Lambda alias rollback, EC2 reboot: nothing else.
+    assert writes == {
+        "ecs:UpdateService",
+        "secretsmanager:UpdateSecretVersionStage",
+        "lambda:UpdateAlias",
+        "ec2:RebootInstances",
+    }
     assert not AWS_OPERATE_OPERATIONS & FORBIDDEN_OPERATIONS

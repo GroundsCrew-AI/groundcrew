@@ -60,6 +60,12 @@ AWS_READ_OPERATIONS: frozenset[str] = frozenset(
         "ec2:DescribeNetworkInterfaces",
         "lambda:ListFunctions",
         "lambda:ListTags",
+        "lambda:GetFunctionConfiguration",
+        "lambda:ListVersionsByFunction",
+        "lambda:ListAliases",
+        "lambda:GetAlias",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus",
         "logs:DescribeLogGroups",
         "logs:FilterLogEvents",
         "cloudwatch:GetMetricData",
@@ -149,6 +155,11 @@ AWS_OPERATE_OPERATIONS: frozenset[str] = frozenset(
         "ecs:DescribeTaskDefinition",
         "secretsmanager:DescribeSecret",
         "secretsmanager:UpdateSecretVersionStage",
+        "lambda:GetAlias",
+        "lambda:ListVersionsByFunction",
+        "lambda:UpdateAlias",
+        "ec2:DescribeInstanceStatus",
+        "ec2:RebootInstances",
     }
 )
 

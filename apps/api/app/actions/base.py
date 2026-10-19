@@ -35,6 +35,8 @@ from app.policy.actions import ApprovedAction
 ECS_ROLLBACK_SERVICE: Final = "ecs_rollback_service"
 SECRET_ROLLBACK_VERSION: Final = "secret_rollback_version"  # noqa: S105 (an action name)
 FORCE_REDEPLOY: Final = "force_redeploy"
+LAMBDA_ROLLBACK_ALIAS: Final = "lambda_rollback_alias"
+EC2_REBOOT_INSTANCE: Final = "ec2_reboot_instance"
 K8S_ROLLOUT_UNDO: Final = "k8s_rollout_undo"
 K8S_ROLLOUT_RESTART: Final = "k8s_rollout_restart"
 
@@ -42,6 +44,8 @@ EmergencyActionName = Literal[
     "ecs_rollback_service",
     "secret_rollback_version",
     "force_redeploy",
+    "lambda_rollback_alias",
+    "ec2_reboot_instance",
     "k8s_rollout_undo",
     "k8s_rollout_restart",
 ]
@@ -49,6 +53,8 @@ EMERGENCY_ACTION_NAMES: tuple[EmergencyActionName, ...] = (
     ECS_ROLLBACK_SERVICE,
     SECRET_ROLLBACK_VERSION,
     FORCE_REDEPLOY,
+    LAMBDA_ROLLBACK_ALIAS,
+    EC2_REBOOT_INSTANCE,
     K8S_ROLLOUT_UNDO,
     K8S_ROLLOUT_RESTART,
 )
@@ -71,6 +77,8 @@ class ActionPlan(BaseModel):
     #   ecs_rollback_service: task definition ARN now -> the previous revision's ARN
     #   secret_rollback_version: version id holding AWSCURRENT -> the one holding AWSPREVIOUS
     #   force_redeploy: the primary deployment id -> null (a new deployment of the same revision)
+    #   lambda_rollback_alias: "<function ARN>:<version>" the alias is on -> the previous version
+    #   ec2_reboot_instance: "<id> running, system ..., instance ..." -> null (a reboot)
     #   k8s_rollout_undo: "<ns>/<name> revision <n>" now -> the previous revision
     #   k8s_rollout_restart: "<ns>/<name> revision <n>" -> null (new pods, same template)
     current: str | None
@@ -136,6 +144,18 @@ class EmergencyActions(Protocol):
         """Start new tasks of the same revision (they re-read secrets at start)."""
         ...
 
+    async def plan_lambda_rollback_alias(
+        self, connection_id: uuid.UUID, function_arn: str
+    ) -> ActionPlan:
+        """Point the function's alias back at its previous published version."""
+        ...
+
+    async def plan_ec2_reboot_instance(
+        self, connection_id: uuid.UUID, instance_arn: str
+    ) -> ActionPlan:
+        """Reboot a running instance whose status check is impaired."""
+        ...
+
     async def plan_k8s_rollout_undo(
         self, connection_id: uuid.UUID, namespace: str, deployment: str
     ) -> ActionPlan:
@@ -169,6 +189,14 @@ class AwsActions(Protocol):
 
     async def plan_force_redeploy(
         self, connection_id: uuid.UUID, cluster: str, service: str
+    ) -> ActionPlan: ...
+
+    async def plan_lambda_rollback_alias(
+        self, connection_id: uuid.UUID, function_arn: str
+    ) -> ActionPlan: ...
+
+    async def plan_ec2_reboot_instance(
+        self, connection_id: uuid.UUID, instance_arn: str
     ) -> ActionPlan: ...
 
     async def execute(
@@ -224,6 +252,16 @@ class EmergencyActionRouter:
     ) -> ActionPlan:
         return await self._aws().plan_force_redeploy(connection_id, cluster, service)
 
+    async def plan_lambda_rollback_alias(
+        self, connection_id: uuid.UUID, function_arn: str
+    ) -> ActionPlan:
+        return await self._aws().plan_lambda_rollback_alias(connection_id, function_arn)
+
+    async def plan_ec2_reboot_instance(
+        self, connection_id: uuid.UUID, instance_arn: str
+    ) -> ActionPlan:
+        return await self._aws().plan_ec2_reboot_instance(connection_id, instance_arn)
+
     async def plan_k8s_rollout_undo(
         self, connection_id: uuid.UUID, namespace: str, deployment: str
     ) -> ActionPlan:
@@ -253,6 +291,10 @@ async def plan_again(actions: EmergencyActions, plan: ActionPlan) -> ActionPlan:
         return await actions.plan_k8s_rollout_restart(
             plan.connection_id, p["namespace"], p["deployment"]
         )
+    if plan.action == LAMBDA_ROLLBACK_ALIAS:
+        return await actions.plan_lambda_rollback_alias(plan.connection_id, p["function_arn"])
+    if plan.action == EC2_REBOOT_INSTANCE:
+        return await actions.plan_ec2_reboot_instance(plan.connection_id, p["instance_arn"])
     if plan.action == ECS_ROLLBACK_SERVICE:
         return await actions.plan_ecs_rollback_service(
             plan.connection_id, p["cluster"], p["service"]
