@@ -471,6 +471,21 @@ same fixes. The model proposed the secret rollback. But every signal was an erro
   components/incidents/{fix-approval-card,incident-list}.tsx, app/(app)/incidents/
   incidents-home.tsx, lib/api/{openapi.json,schema.d.ts}, tests/incident-fixtures.ts.
 
+## Apps beyond the demo: deploy workflows and Node logs (2026-10-19)
+
+- Deploy workflows (`telemetry.github.is_deploy_workflow`): a run is a deploy when a whole word
+  of its path or name is deploy, release, cd, publish, ship, prod(uction), rollout, promote, or
+  delivery (release.yml, cd.yml, ci-cd.yml, "Ship to production"). Before, only paths containing
+  "deploy" counted, so a release.yml app never had a triggering deploy, and its fix-PR
+  follow-ups never reached "deployed". Used by the GitHub reader and follow-up tracking.
+- Log levels (`telemetry.log_levels`): pino / bunyan numeric levels (50 error, 60 fatal), HTTP
+  status under `res.statusCode` / `response.status` (pino-http, Fastify), and Node stack
+  frames ("at f (/app/x.js:1:2)", "at async ...", a bare "Error: ...") count as errors.
+- Not done: per-connection AWS regions (discovery and reads still use DISCOVERY_REGIONS for
+  every account); needs an owner-chosen region list per connection and multi-region discovery.
+- Tests: tests/test_general_apps.py (17).
+- Files (Ahmed's code marked *): app/telemetry/{github,log_levels}.py*, app/incidents/followups.py*.
+
 ## How to resume
 
 ```bash

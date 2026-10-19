@@ -5,7 +5,8 @@ process", "Waiting for application shutdown."), so every deploy looked like an e
 lines were matched on the word "error". Now:
 
 1. A JSON line with a level field (`level`, `levelname`, `severity`, ...) is an error when the
-   level is error/critical/fatal, or it carries a traceback, or its HTTP status is 5xx.
+   level is error/critical/fatal (or a pino / bunyan number of 50 or more), or it carries a
+   traceback, or its HTTP status is 5xx.
 2. A text line that starts with a level (`INFO:     ...`, `2026-10-13 10:39:50 WARNING ...`)
    is classified the same way.
 3. Only a line with no level falls back to error words, and a word inside a dotted name
@@ -21,10 +22,12 @@ ERROR_LEVELS = frozenset(
 )
 _LEVEL_KEYS = ("level", "levelname", "severity", "log.level", "loglevel", "lvl")
 _TRACE_KEYS = ("exc", "exc_info", "exception", "stack", "stack_trace", "traceback", "error")
-_STATUS_KEYS = ("status", "status_code", "http_status")
+_STATUS_KEYS = ("status", "status_code", "statusCode", "http_status")
 TRACEBACK = re.compile(
-    r"Traceback \(most recent call last\)|^\s+File \"|^\s+at \S+\(|"
-    r"^\w+(\.\w+)*(Error|Exception):|^panic: |^goroutine \d+ \[",
+    # Python, Java ("at a.B.c(B.java:1)"), Node ("at f (/app/x.js:1:2)", "at async f (...)"),
+    # "Error: ...", "TypeError: ...", "java.lang.IllegalStateException: ...", Go panics.
+    r"Traceback \(most recent call last\)|^\s+File \"|^\s+at (?:async )?\S+ ?\(|"
+    r"^(\w+\.)*\w*(Error|Exception):|^panic: |^goroutine \d+ \[",
     re.MULTILINE,
 )
 # A level near the start, upper case ("INFO:     Started", "2026-10-13 10:39:50 [ERROR] x"),
@@ -54,6 +57,15 @@ def _json(message: str) -> dict[str, Any] | None:
 
 
 def _status_5xx(data: dict[str, Any]) -> bool:
+    # pino-http / Fastify put it at res.statusCode; some loggers at response.status.
+    nested = [
+        data,
+        *(data[k] for k in ("res", "response", "http") if isinstance(data.get(k), dict)),
+    ]
+    return any(_status_in(d) for d in nested)
+
+
+def _status_in(data: dict[str, Any]) -> bool:
     for key in _STATUS_KEYS:
         value = data.get(key)
         if isinstance(value, int) and 500 <= value <= 599:
@@ -63,6 +75,10 @@ def _status_5xx(data: dict[str, Any]) -> bool:
     return False
 
 
+# The lowest numeric level that is an error, on the pino / bunyan scale.
+PINO_ERROR = 50
+
+
 def _has_trace(data: dict[str, Any]) -> bool:
     return any(isinstance(data.get(k), str) and TRACEBACK.search(str(data[k])) for k in _TRACE_KEYS)
 
@@ -70,6 +86,22 @@ def _has_trace(data: dict[str, Any]) -> bool:
 def is_error_line(message: str, words: re.Pattern[str] = DEFAULT_WORDS) -> bool:
     data = _json(message)
     if data is not None:
+        numeric = next(
+            (
+                data[k]
+                for k in _LEVEL_KEYS
+                if isinstance(data.get(k), int) and not isinstance(data.get(k), bool)
+            ),
+            None,
+        )
+        if numeric is not None:
+            # pino / bunyan: 10 trace, 20 debug, 30 info, 40 warn, 50 error, 60 fatal.
+            return (
+                numeric >= PINO_ERROR
+                or _has_trace(data)
+                or _status_5xx(data)
+                or bool(_HTTP_5XX.search(str(data.get("msg") or data.get("message") or "")))
+            )
         level = next((data[k] for k in _LEVEL_KEYS if isinstance(data.get(k), str)), None)
         if level is not None:
             return (

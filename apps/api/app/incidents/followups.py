@@ -6,7 +6,8 @@ when Medic resolves an incident with a fix PR that is not deployed yet, it recor
 (`incident_followups`), and this module tracks it through the GitHub App, read-only:
 
 - open -> merged when the PR is merged (incident memory may now reuse the fix), then
-  merged -> deployed when a successful deploy workflow run (path containing "deploy") on the base
+  merged -> deployed when a successful deploy workflow run (telemetry.github.is_deploy_workflow:
+  deploy, release, cd, publish, ... in its path or name) on the base
   branch, started after the merge, contains the merge commit. Done.
 - open -> closed_unmerged when the PR is closed without merging (memory notes "rollback only").
 
@@ -44,6 +45,7 @@ from app.db.models import Connection, Incident, IncidentFollowUp, Resource, Run,
 from app.db.session import SessionFactory
 from app.steps import record_step
 from app.telemetry.evidence import parse_time
+from app.telemetry.github import is_deploy_workflow
 
 logger = logging.getLogger("groundcrew.incidents")
 
@@ -273,9 +275,8 @@ async def _deploy_of(app: GitHubApp, inst: int, row: IncidentFollowUp) -> dict[s
         },
     )
     for run in runs.get("workflow_runs", []):
-        path = str(run.get("path") or run.get("name") or "").lower()
         head = str(run.get("head_sha") or "")
-        if "deploy" not in path or run.get("conclusion") != "success" or not head:
+        if not is_deploy_workflow(run) or run.get("conclusion") != "success" or not head:
             continue
         if head == row.merge_commit:
             return dict(run)
@@ -342,9 +343,7 @@ async def _check_change(app: GitHubApp, row: IncidentFollowUp, now: datetime) ->
     deploys = [
         r
         for r in runs.get("workflow_runs", [])
-        if "deploy" in str(r.get("path") or r.get("name") or "").lower()
-        and r.get("conclusion") == "success"
-        and r.get("head_sha")
+        if is_deploy_workflow(r) and r.get("conclusion") == "success" and r.get("head_sha")
     ]
     if not deploys:
         return None
