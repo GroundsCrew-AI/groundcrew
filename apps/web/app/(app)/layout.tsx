@@ -9,7 +9,7 @@ import { WorkspaceProvider } from "@/lib/workspace";
 export default async function AppLayout({ children }: { children: ReactNode }) {
   // The middleware already redirects; this also covers a session that expired mid-request.
   const session = await auth();
-  if (!session?.user?.githubId) redirect("/signin");
+  if (!session?.user?.id) redirect("/signin");
 
   return (
     <ShellProvider>

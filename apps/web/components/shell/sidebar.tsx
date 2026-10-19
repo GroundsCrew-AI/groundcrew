@@ -14,18 +14,22 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plug,
+  Plus,
   Rocket,
   Settings,
   Siren,
   Sun,
+  UserCog,
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
+import { useState } from "react";
 
 import { signOutAction } from "@/app/actions";
 import { LogoMark } from "@/components/logo";
+import { CreateWorkspaceDialog } from "@/components/settings/create-workspace-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -119,9 +123,12 @@ function NavLink({
 
 function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
   const { workspace, workspaces, setWorkspaceId, isLoading } = useWorkspace();
+  const [creating, setCreating] = useState(false);
   if (isLoading) return <Skeleton className="h-8 w-full" />;
   const name = workspace?.name ?? "No workspace";
   return (
+    <>
+    <CreateWorkspaceDialog open={creating} onOpenChange={setCreating} />
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -150,8 +157,13 @@ function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
             {w.id === workspace?.id && <Check aria-label="Current" className="size-3.5" />}
           </DropdownMenuItem>
         ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => setCreating(true)}>
+          <Plus aria-hidden="true" /> New workspace
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    </>
   );
 }
 
@@ -159,7 +171,8 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
   const { me } = useWorkspace();
   const { theme, setTheme } = useTheme();
   const user = me?.user;
-  const display = user?.name || user?.github_login || "Signed in";
+  const display = user?.name || user?.github_login || user?.email || "Signed in";
+  const secondary = user?.github_login ? `@${user.github_login}` : user?.email && user.email !== display ? user.email : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -175,14 +188,18 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
           {!collapsed && (
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px]">{display}</span>
-              {user?.github_login && (
-                <span className="block truncate text-[11.5px] text-muted-foreground">@{user.github_login}</span>
-              )}
+              {secondary && <span className="block truncate text-[11.5px] text-muted-foreground">{secondary}</span>}
             </span>
           )}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-56">
+        <DropdownMenuItem asChild>
+          <Link href="/settings">
+            <UserCog aria-hidden="true" /> Account settings
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel className="text-muted-foreground">Theme</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={theme ?? "dark"} onValueChange={setTheme}>
           <DropdownMenuRadioItem value="dark">

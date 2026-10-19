@@ -5,6 +5,19 @@ import type { components, paths } from "./schema";
 /** Typed client for the API, through the server-side proxy at /api/gc. */
 export const api = createClient<paths>({ baseUrl: "/api/gc" });
 
+// The API refuses a session that started before a password change or reset: sign out once,
+// through /signout (which checks with the API first), instead of failing every request.
+let signingOut = false;
+api.use({
+  onResponse({ response }) {
+    if (response.status === 401 && typeof window !== "undefined" && !signingOut) {
+      signingOut = true;
+      window.location.assign("/signout");
+    }
+    return response;
+  },
+});
+
 export type Schemas = components["schemas"];
 export type Me = Schemas["MeOut"];
 export type Workspace = Schemas["WorkspaceOut"];

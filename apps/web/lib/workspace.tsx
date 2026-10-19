@@ -7,6 +7,9 @@ import { api, type Me, unwrap, type Workspace } from "@/lib/api/client";
 
 const STORAGE_KEY = "groundcrew.workspace";
 
+/** The /me query: the signed-in user and their workspaces with a role in each. */
+export const meKey = ["me"] as const;
+
 type WorkspaceContextValue = {
   me: Me | undefined;
   workspace: Workspace | undefined;
@@ -29,7 +32,7 @@ function readStored(): string | null {
 
 export function useMe() {
   return useQuery({
-    queryKey: ["me"],
+    queryKey: meKey,
     queryFn: async () => unwrap(await api.GET("/me")),
     staleTime: 60_000,
   });

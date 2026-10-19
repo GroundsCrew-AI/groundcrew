@@ -1,6 +1,17 @@
 {
   "components": {
     "schemas": {
+      "Accepted": {
+        "properties": {
+          "status": {
+            "default": "check_email",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "Accepted",
+        "type": "object"
+      },
       "ActionPlan": {
         "description": "One emergency action, ready to approve. Shown on the approval card as is.",
         "properties": {
@@ -378,6 +389,62 @@
           "step_seq"
         ],
         "title": "AttemptModelCall",
+        "type": "object"
+      },
+      "AuthUser": {
+        "description": "Who signed in. The web server keeps `id` in its session and sends it with each call.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "email_verified": {
+            "title": "Email Verified",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "email_verified",
+          "name",
+          "image"
+        ],
+        "title": "AuthUser",
         "type": "object"
       },
       "AwsCompleteIn": {
@@ -2252,6 +2319,23 @@
           "rule"
         ],
         "title": "EdgeOut",
+        "type": "object"
+      },
+      "Email": {
+        "properties": {
+          "email": {
+            "examples": [
+              "ada@example.com"
+            ],
+            "maxLength": 320,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "Email",
         "type": "object"
       },
       "EnvVarIn": {
@@ -4323,9 +4407,27 @@
             "title": "Created At",
             "type": "string"
           },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
           "github_login": {
-            "title": "Github Login",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Github Login"
           },
           "id": {
             "format": "uuid",
@@ -4469,6 +4571,28 @@
         "title": "LastDiscovery",
         "type": "object"
       },
+      "LinkWithPassword": {
+        "properties": {
+          "password": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 200,
+            "minLength": 10,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "LinkWithPassword",
+        "type": "object"
+      },
       "LiveUrl": {
         "properties": {
           "app": {
@@ -4537,24 +4661,41 @@
       },
       "MemberAdd": {
         "additionalProperties": false,
+        "description": "Add by `email` or by `github_login` (exactly one).",
         "properties": {
-          "github_login": {
-            "examples": [
-              "octocat"
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "maxLength": 39,
-            "minLength": 1,
-            "title": "Github Login",
-            "type": "string"
+            "examples": [
+              "ada@example.com"
+            ],
+            "title": "Email"
+          },
+          "github_login": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Github Login"
           },
           "role": {
             "$ref": "#/components/schemas/WorkspaceRole",
             "default": "member"
           }
         },
-        "required": [
-          "github_login"
-        ],
         "title": "MemberAdd",
         "type": "object"
       },
@@ -4570,6 +4711,17 @@
               }
             ],
             "title": "Avatar Url"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           },
           "github_login": {
             "anyOf": [
@@ -4829,6 +4981,135 @@
         "title": "Neighbor",
         "type": "object"
       },
+      "OAuthProfile": {
+        "description": "What the web server learned from the provider at sign-in.",
+        "properties": {
+          "account_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "email_verified": {
+            "default": false,
+            "title": "Email Verified",
+            "type": "boolean"
+          },
+          "login": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "provider": {
+            "enum": [
+              "github",
+              "google"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "account_id"
+        ],
+        "title": "OAuthProfile",
+        "type": "object"
+      },
+      "Options": {
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "boolean"
+          },
+          "password_min_length": {
+            "title": "Password Min Length",
+            "type": "integer"
+          },
+          "require_verified_email": {
+            "title": "Require Verified Email",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "password",
+          "require_verified_email",
+          "password_min_length"
+        ],
+        "title": "Options",
+        "type": "object"
+      },
+      "PasswordChange": {
+        "additionalProperties": false,
+        "properties": {
+          "current_password": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Password"
+          },
+          "new_password": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "New Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_password"
+        ],
+        "title": "PasswordChange",
+        "type": "object"
+      },
       "PlanLine": {
         "description": "One human-readable line of an ActionPlan: what changes, from what, to what.",
         "properties": {
@@ -4964,6 +5245,22 @@
           "detail"
         ],
         "title": "PreflightCheck",
+        "type": "object"
+      },
+      "ProfileUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProfileUpdate",
         "type": "object"
       },
       "ProposedFix": {
@@ -6444,6 +6741,66 @@
         "title": "RunStatusEvent",
         "type": "object"
       },
+      "SignIn": {
+        "properties": {
+          "email": {
+            "examples": [
+              "ada@example.com"
+            ],
+            "maxLength": 320,
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "SignIn",
+        "type": "object"
+      },
+      "SignUp": {
+        "properties": {
+          "email": {
+            "examples": [
+              "ada@example.com"
+            ],
+            "maxLength": 320,
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "password": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "SignUp",
+        "type": "object"
+      },
       "Signal": {
         "description": "A detector rule that fired, or what verify re-checks.",
         "properties": {
@@ -7231,6 +7588,11 @@
             ],
             "title": "Email"
           },
+          "email_verified": {
+            "default": false,
+            "title": "Email Verified",
+            "type": "boolean"
+          },
           "github_login": {
             "anyOf": [
               {
@@ -7241,6 +7603,11 @@
               }
             ],
             "title": "Github Login"
+          },
+          "has_password": {
+            "default": false,
+            "title": "Has Password",
+            "type": "boolean"
           },
           "id": {
             "format": "uuid",
@@ -7257,6 +7624,13 @@
               }
             ],
             "title": "Name"
+          },
+          "sign_in_methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sign In Methods",
+            "type": "array"
           }
         },
         "required": [
@@ -7775,6 +8149,570 @@
         "summary": "Decide",
         "tags": [
           "approvals"
+        ]
+      }
+    },
+    "/auth/forgot-password": {
+      "post": {
+        "description": "Send a reset link if the address has an account (GitHub and Google accounts too: the\nlink adds a password).",
+        "operationId": "forgot_password_auth_forgot_password_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Email"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forgot Password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/oauth": {
+      "post": {
+        "description": "A GitHub or Google sign-in: the user, linked or created.",
+        "operationId": "oauth_auth_oauth_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthProfile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oauth",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/options": {
+      "get": {
+        "description": "What the sign-in page offers.",
+        "operationId": "options_auth_options_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Options"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Options",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/resend-verification": {
+      "post": {
+        "operationId": "resend_verification_auth_resend_verification_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Email"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resend Verification",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "description": "Choose a new password from a reset link. Every existing session ends.",
+        "operationId": "reset_password_auth_reset_password_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkWithPassword"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/sign-in": {
+      "post": {
+        "operationId": "sign_in_auth_sign_in_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sign In",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/sign-up": {
+      "post": {
+        "description": "Create a password account and send the confirmation link. For an address that already\nhas an account, its owner gets an email saying so (or a new link, if they never\nconfirmed); the answer here is the same.",
+        "operationId": "sign_up_auth_sign_up_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignUp"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sign Up",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/verify-email": {
+      "post": {
+        "description": "Confirm the address from the link; the account's password proves it is theirs.",
+        "operationId": "verify_email_auth_verify_email_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkWithPassword"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Email",
+        "tags": [
+          "auth"
         ]
       }
     },
@@ -9425,6 +10363,117 @@
         "tags": [
           "workspaces"
         ]
+      },
+      "patch": {
+        "description": "Change your display name.",
+        "operationId": "update_me_me_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Me",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/me/password": {
+      "post": {
+        "description": "Change your password, or add one to a GitHub or Google account (it then signs in with\nits email too). Every session ends, this one included: sign in again with the new one.",
+        "operationId": "change_my_password_me_password_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change My Password",
+        "tags": [
+          "workspaces"
+        ]
       }
     },
     "/ready": {
@@ -10429,7 +11478,7 @@
         ]
       },
       "post": {
-        "description": "Add someone by GitHub login (owners). They join at once if they have signed in to\nGroundcrew before; otherwise the invite applies when they first sign in.",
+        "description": "Add someone by email address or GitHub login (owners). They join at once if they have\nan account (with that confirmed address, or that GitHub account); otherwise they are\ninvited, by email for an address, and join when they sign up or sign in.",
         "operationId": "add_member_workspaces__workspace_id__members_post",
         "parameters": [
           {

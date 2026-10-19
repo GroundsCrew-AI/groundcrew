@@ -6,21 +6,17 @@ import {
   INTERNAL_JWT_AUDIENCE,
   INTERNAL_JWT_ISSUER,
   INTERNAL_JWT_TTL_SECONDS,
+  SERVICE_JWT_AUDIENCE,
   signInternalToken,
+  signServiceToken,
 } from "./internal-jwt";
 
 const SECRET = "test-internal-jwt-secret-0123456789abcdef";
 const key = new TextEncoder().encode(SECRET);
-const identity = {
-  githubId: 1001,
-  login: "alice",
-  email: "alice@example.com",
-  name: "Alice",
-  avatarUrl: "https://avatars.example.com/1001",
-};
+const identity = { userId: "6f1c2b9e-1d2a-4c3b-9e8f-0a1b2c3d4e5f", authTime: 1_790_000_000 };
 
 describe("signInternalToken", () => {
-  it("signs an HS256 token the API can verify, with the GitHub identity", async () => {
+  it("signs an HS256 token the API can verify, with the user's id and sign-in time", async () => {
     const token = await signInternalToken(identity, SECRET);
     expect(decodeProtectedHeader(token).alg).toBe("HS256");
     const { payload } = await jwtVerify(token, key, {
@@ -28,13 +24,7 @@ describe("signInternalToken", () => {
       audience: INTERNAL_JWT_AUDIENCE,
       algorithms: ["HS256"],
     });
-    expect(payload).toMatchObject({
-      sub: "1001",
-      login: "alice",
-      email: "alice@example.com",
-      name: "Alice",
-      avatar_url: "https://avatars.example.com/1001",
-    });
+    expect(payload).toMatchObject({ sub: identity.userId, auth_time: identity.authTime });
   });
 
   it("expires after five minutes", async () => {
@@ -59,8 +49,19 @@ describe("signInternalToken", () => {
     await expect(signInternalToken(identity, "short")).rejects.toThrow(/INTERNAL_JWT_SECRET/);
   });
 
-  it("refuses an incomplete identity", async () => {
-    await expect(signInternalToken({ githubId: 0, login: "x" }, SECRET)).rejects.toThrow();
-    await expect(signInternalToken({ githubId: 5, login: "" }, SECRET)).rejects.toThrow();
+  it("refuses a session without a Groundcrew user (one from before accounts)", async () => {
+    await expect(signInternalToken({ userId: "", authTime: 1 }, SECRET)).rejects.toThrow();
+    await expect(signInternalToken({ userId: "990001", authTime: 1 }, SECRET)).rejects.toThrow();
+    await expect(signInternalToken({ userId: identity.userId, authTime: Number.NaN }, SECRET)).rejects.toThrow();
+  });
+});
+
+describe("signServiceToken", () => {
+  it("is for the sign-in endpoints only, never a user's audience", async () => {
+    const token = await signServiceToken(SECRET);
+    const { payload } = await jwtVerify(token, key, { issuer: INTERNAL_JWT_ISSUER, audience: SERVICE_JWT_AUDIENCE });
+    expect(payload.sub).toBe("web");
+    expect(payload.exp! - payload.iat!).toBe(60);
+    await expect(jwtVerify(token, key, { audience: INTERNAL_JWT_AUDIENCE })).rejects.toThrow();
   });
 });
