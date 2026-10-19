@@ -5,8 +5,10 @@
 #   kubectl apply -f infra/k8s-readonly-rbac.yaml
 #   kubectl -n groundcrew create token groundcrew-reader --duration=24h
 #
-# The ClusterRole can get/list/watch namespaces, Deployments, StatefulSets, Services, Ingresses,
-# and Pods. It has no access to Secrets, ConfigMaps, pod logs or exec, or any write verb.
+# The ClusterRole can get/list/watch namespaces, Deployments, ReplicaSets, StatefulSets,
+# Services, Ingresses, Pods, and events, and read pod logs (incident detection and evidence:
+# crash loops, rollouts, error spikes). It has no access to Secrets, ConfigMaps, or exec, and no
+# write verb. Emergency fixes need infra/k8s-operate-rbac.yaml on top.
 # Remove access with: kubectl delete -f infra/k8s-readonly-rbac.yaml
 apiVersion: v1
 kind: Namespace
@@ -25,10 +27,13 @@ metadata:
   name: groundcrew-reader
 rules:
   - apiGroups: [""]
-    resources: ["namespaces", "services", "pods"]
+    resources: ["namespaces", "services", "pods", "events"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets"]
+    resources: ["deployments", "replicasets", "statefulsets"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]

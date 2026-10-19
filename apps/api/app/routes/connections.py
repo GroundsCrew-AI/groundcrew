@@ -44,6 +44,7 @@ from app.routes.discovery_schemas import (
     GitHubInstallationsOut,
     GitHubLinkIn,
     GitHubRepoOut,
+    K8sOperateIn,
     KubernetesConnectIn,
     VercelConnectIn,
 )
@@ -380,6 +381,77 @@ async def aws_set_operate(
         get_sessions().forget(operate_role_arn(account), external_id)
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     conn.config = {**conn.config, "operate_role_arn": role}
+    await session.commit()
+    return await _out(session, conn)
+
+
+async def _k8s_operate_namespaces(conn: Connection, namespaces: list[str]) -> list[str]:
+    """The namespaces (of the cluster's discovered Deployments) where the kubeconfig's identity
+    may patch Deployments and list ReplicaSets, or [""] when it may everywhere."""
+    from app.security.crypto import decrypt
+
+    operator = kube.live_operator(decrypt(conn.secret_encrypted or ""))
+    try:
+
+        async def allowed(ns: str | None) -> bool:
+            return await operator.can_i(
+                "patch", "apps", "deployments", ns
+            ) and await operator.can_i("list", "apps", "replicasets", ns)
+
+        if await allowed(None):
+            return [""]
+        return [ns for ns in namespaces if await allowed(ns)]
+    finally:
+        close = getattr(operator, "close", None)
+        if close is not None:
+            close()
+
+
+@router.post("/{connection_id}/k8s/operate")
+async def k8s_set_operate(
+    connection_id: uuid.UUID, body: K8sOperateIn, user: CurrentUser, session: SessionDep
+) -> ConnectionOut:
+    """Turn approved emergency fixes on or off for a connected cluster. On: checks (with
+    SelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list
+    ReplicaSets, cluster-wide or in a namespace of a discovered Deployment
+    (infra/k8s-operate-rbac.yaml grants that); nothing changes if it may not. Every fix still
+    needs a person's approval."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "k8s" or conn.status != "connected":
+        raise _unprocessable("Only a connected Kubernetes cluster can run emergency fixes.")
+    namespaces = sorted(
+        {
+            str(r.config.get("namespace") or r.region)
+            for r in await session.scalars(
+                select(Resource).where(
+                    Resource.connection_id == conn.id,
+                    Resource.type == "k8s:deployment",
+                    Resource.stale.is_(False),
+                )
+            )
+            if r.config.get("namespace") or r.region
+        }
+    )
+    await session.commit()  # no transaction open during the cluster calls
+    allowed: list[str] = []
+    if body.enabled:
+        try:
+            allowed = await _k8s_operate_namespaces(conn, namespaces)
+        except ConnectorError as exc:
+            raise _unprocessable(str(exc)) from None
+        if not allowed:
+            raise _unprocessable(
+                "This kubeconfig's identity may not patch Deployments"
+                + (f" in {', '.join(namespaces)}" if namespaces else "")
+                + ". Apply infra/k8s-operate-rbac.yaml (or a Role with patch on deployments and "
+                "list on replicasets in your app's namespace), then try again."
+            )
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    conn.config = {
+        **conn.config,
+        "operate": bool(body.enabled),
+        "operate_namespaces": allowed if body.enabled else [],
+    }
     await session.commit()
     return await _out(session, conn)
 

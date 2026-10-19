@@ -66,7 +66,8 @@ class ConnectionOut(BaseModel):
     tier: AwsTier | None = None
     deploy_role_arn: str | None = None
     # AWS (Phase 5): observe, deploy (verified deploy role), operate (verified operate role:
-    # approved emergency fixes). Null for other kinds.
+    # approved emergency fixes). Kubernetes: observe, operate (rights checked, turned on).
+    # Null for other kinds.
     capabilities: list[AwsCapability] | None = None
     operate_role_arn: str | None = None
     # AWS: the region the connect stack was created in (CloudFormation console links).
@@ -102,7 +103,7 @@ class ConnectionOut(BaseModel):
             server=c.get("server"),
             tier=(c.get("tier") or "observe") if conn.kind == "aws" else None,
             deploy_role_arn=c.get("deploy_role_arn"),
-            capabilities=capabilities(conn) if conn.kind == "aws" else None,
+            capabilities=capabilities(conn) if conn.kind in ("aws", "k8s") else None,
             operate_role_arn=c.get("operate_role_arn"),
             region=c.get("region") if conn.kind == "aws" else None,
             namespaces=c.get("namespaces"),
@@ -153,6 +154,12 @@ class AwsTierIn(BaseModel):
 
 class AwsOperateIn(BaseModel):
     """Turn approved emergency fixes on (after the stack has EnableOperate=true) or off."""
+
+    enabled: bool
+
+
+class K8sOperateIn(BaseModel):
+    """Turn approved emergency fixes (rollout undo, restart) on or off for a cluster."""
 
     enabled: bool
 

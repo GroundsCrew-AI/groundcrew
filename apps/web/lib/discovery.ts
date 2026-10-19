@@ -81,6 +81,22 @@ export function useAwsSetOperate(workspaceId: string | undefined) {
   });
 }
 
+/** Turn approved emergency fixes on for a cluster (checks the kubeconfig may patch Deployments)
+ * or off. */
+export function useK8sSetOperate(workspaceId: string | undefined) {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async ({ connectionId, enabled }: { connectionId: string; enabled: boolean }) =>
+      unwrap(
+        await api.POST("/connections/{connection_id}/k8s/operate", {
+          params: { path: { connection_id: connectionId } },
+          body: { enabled },
+        }),
+      ),
+    onSettled: () => workspaceId && invalidate(workspaceId),
+  });
+}
+
 export function useAwsComplete(workspaceId: string | undefined) {
   const invalidate = useInvalidateWorkspace();
   return useMutation({

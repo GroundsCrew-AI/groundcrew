@@ -2,16 +2,22 @@
 
 `LiveKubeReader` reads a cluster with the official client, loaded from the kubeconfig text in
 memory (nothing written to disk). Tests use `FixtureKubeReader`. The service account is either
-the read-only one in infra/k8s-readonly-rbac.yaml (get/list/watch the kinds below, no Secrets)
-or the kind deployer in infra/kind/rbac.yaml (`view` everywhere, no Secrets); discovery only
-ever lists the kinds below with either.
+the read-only one in infra/k8s-readonly-rbac.yaml (get/list/watch the kinds below and pod logs,
+no Secrets) or the kind deployer in infra/kind/rbac.yaml (`view` everywhere, no Secrets);
+discovery only ever lists the kinds below with either.
 
 Discovery reads namespaces, Deployments, Services, Ingresses, StatefulSets, and Pods. Secret
 objects are never listed. Pod and template env values are dropped except endpoint-like names
 (same rule as AWS task definitions); secretKeyRef / envFrom keep only the Secret's name.
+
+Incidents (app/incidents/k8s_rules.py, app/telemetry/k8s.py) also read ReplicaSets (a
+Deployment's revisions), Warning events, pod status (container states, restarts, readiness;
+never the pod spec's env), and pod logs. `LiveKubeOperator` adds the one write Medic's
+approved emergency fixes make: patching a Deployment's pod template (rollout undo, restart).
 """
 
 import asyncio
+import builtins
 import ipaddress
 import json
 import socket
@@ -26,7 +32,16 @@ from app.discovery.types import ConnectorError
 
 # Kinds discovery may list. Anything else (Secrets above all) is refused.
 K8S_READ_KINDS: frozenset[str] = frozenset(
-    {"namespaces", "deployments", "services", "ingresses", "statefulsets", "pods"}
+    {
+        "namespaces",
+        "deployments",
+        "services",
+        "ingresses",
+        "statefulsets",
+        "pods",
+        "replicasets",
+        "events",
+    }
 )
 
 
@@ -151,27 +166,121 @@ def kubeconfig_summary(text: str) -> dict[str, Any]:
 
 
 class KubeReader(Protocol):
-    async def list(self, kind: str, namespace: str | None = None) -> list[dict[str, Any]]: ...
+    async def list(
+        self,
+        kind: str,
+        namespace: str | None = None,
+        *,
+        label_selector: str | None = None,
+        field_selector: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    async def pod_logs(
+        self, namespace: str, pod: str, *, since_seconds: int, tail_lines: int
+    ) -> str:
+        """Every container's log lines, each prefixed with its RFC 3339 timestamp."""
+        ...
+
+
+class KubeOperator(KubeReader, Protocol):
+    async def patch_deployment(
+        self, namespace: str, name: str, patch: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """A JSON patch on a Deployment; returns the Deployment after it."""
+        ...
+
+    async def can_i(self, verb: str, group: str, resource: str, namespace: str | None) -> bool:
+        """SelfSubjectAccessReview: may this kubeconfig's identity do it?"""
+        ...
+
+
+def selected(labels: dict[str, Any], selector: str | None) -> bool:
+    """Equality label selectors only ("app=web,tier=api"), as the fixtures need."""
+    if not selector:
+        return True
+    for term in selector.split(","):
+        key, _, value = term.partition("=")
+        if str(labels.get(key.strip())) != value.strip():
+            return False
+    return True
+
+
+def _field(item: dict[str, Any], path: str) -> Any:
+    value: Any = item
+    for part in path.split("."):
+        value = (value or {}).get(part) if isinstance(value, dict) else None
+    return value
 
 
 class FixtureKubeReader:
     """`kubectl get <kind> -A -o json` outputs keyed by kind."""
 
-    def __init__(self, items: dict[str, list[dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        items: dict[str, list[dict[str, Any]]],
+        logs: dict[str, str] | None = None,
+    ) -> None:
         self.items = items
+        # "namespace/pod" -> log text, timestamp-prefixed like `kubectl logs --timestamps`.
+        self.logs = logs or {}
         self.calls: list[str] = []
+        self.patches: list[tuple[str, str, list[dict[str, Any]]]] = []
+        self.allowed: set[tuple[str, str]] = set()
 
     @classmethod
     def from_file(cls, path: Path) -> "FixtureKubeReader":
         return cls(json.loads(path.read_text()))
 
-    async def list(self, kind: str, namespace: str | None = None) -> list[dict[str, Any]]:
+    async def list(
+        self,
+        kind: str,
+        namespace: str | None = None,
+        *,
+        label_selector: str | None = None,
+        field_selector: str | None = None,
+    ) -> list[dict[str, Any]]:
         check_kind(kind)
         self.calls.append(kind)
         items = self.items.get(kind, [])
-        if namespace is None:
-            return items
-        return [i for i in items if (i.get("metadata") or {}).get("namespace") == namespace]
+        if namespace is not None:
+            items = [i for i in items if (i.get("metadata") or {}).get("namespace") == namespace]
+        items = [
+            i
+            for i in items
+            if selected((i.get("metadata") or {}).get("labels") or {}, label_selector)
+        ]
+        for term in (field_selector or "").split(","):
+            if term:
+                path, _, value = term.partition("=")
+                items = [i for i in items if str(_field(i, path)) == value]
+        return items
+
+    async def pod_logs(
+        self, namespace: str, pod: str, *, since_seconds: int, tail_lines: int
+    ) -> str:
+        self.calls.append(f"logs {namespace}/{pod}")
+        lines = self.logs.get(f"{namespace}/{pod}", "").splitlines()
+        return "\n".join(lines[-tail_lines:])
+
+    async def patch_deployment(
+        self, namespace: str, name: str, patch: "builtins.list[dict[str, Any]]"
+    ) -> dict[str, Any]:
+        """Applies `replace` ops to the fixture Deployment (all the actions use)."""
+        self.patches.append((namespace, name, patch))
+        for item in self.items.get("deployments", []):
+            meta = item.get("metadata") or {}
+            if meta.get("namespace") == namespace and meta.get("name") == name:
+                for op in patch:
+                    parts = [p.replace("~1", "/") for p in op["path"].strip("/").split("/")]
+                    target = item
+                    for part in parts[:-1]:
+                        target = target.setdefault(part, {})
+                    target[parts[-1]] = op["value"]
+                return item
+        raise ConnectorError(f"Deployment {namespace}/{name} not found.")
+
+    async def can_i(self, verb: str, group: str, resource: str, namespace: str | None) -> bool:
+        return (verb, resource) in self.allowed
 
 
 # One page per request, and a wall clock limit per request, so a big or slow cluster cannot
@@ -181,19 +290,54 @@ REQUEST_TIMEOUT_SECONDS = 20
 
 
 def _pod_shape(item: dict[str, Any]) -> dict[str, Any]:
-    """Pods are only counted per owner: keep metadata and phase, drop the spec (env values)."""
+    """Metadata and status only: the spec (env values) is dropped. Status keeps what incidents
+    read: phase, start time, conditions, and each container's state, last state, restarts,
+    and readiness (termination messages are cut short)."""
     meta = item.get("metadata") or {}
+    status = item.get("status") or {}
+
+    def container(c: dict[str, Any]) -> dict[str, Any]:
+        def state(s: dict[str, Any] | None) -> dict[str, Any]:
+            out: dict[str, Any] = {}
+            for key, value in (s or {}).items():
+                value = value or {}
+                out[key] = {
+                    k: (str(v)[:300] if k == "message" else v)
+                    for k, v in value.items()
+                    if k in ("reason", "message", "exitCode", "startedAt", "finishedAt")
+                }
+            return out
+
+        return {
+            "name": c.get("name"),
+            "image": c.get("image"),
+            "ready": c.get("ready"),
+            "restartCount": c.get("restartCount", 0),
+            "state": state(c.get("state")),
+            "lastState": state(c.get("lastState")),
+        }
+
     return {
         "metadata": {
             "name": meta.get("name"),
             "namespace": meta.get("namespace"),
             "labels": meta.get("labels") or {},
+            "creationTimestamp": meta.get("creationTimestamp"),
+            "deletionTimestamp": meta.get("deletionTimestamp"),
             "ownerReferences": [
                 {"kind": o.get("kind"), "name": o.get("name")}
                 for o in meta.get("ownerReferences") or []
             ],
         },
-        "status": {"phase": (item.get("status") or {}).get("phase")},
+        "status": {
+            "phase": status.get("phase"),
+            "startTime": status.get("startTime"),
+            "conditions": [
+                {k: c.get(k) for k in ("type", "status", "reason", "lastTransitionTime")}
+                for c in status.get("conditions") or []
+            ],
+            "containerStatuses": [container(c) for c in status.get("containerStatuses") or []],
+        },
     }
 
 
@@ -238,13 +382,24 @@ class LiveKubeReader:
             "services": (core.list_namespaced_service, core.list_service_for_all_namespaces),
             "ingresses": (net.list_namespaced_ingress, net.list_ingress_for_all_namespaces),
             "pods": (core.list_namespaced_pod, core.list_pod_for_all_namespaces),
+            "replicasets": (
+                apps.list_namespaced_replica_set,
+                apps.list_replica_set_for_all_namespaces,
+            ),
+            "events": (core.list_namespaced_event, core.list_event_for_all_namespaces),
         }
         namespaced, everywhere = table[kind]
         if namespace is None:
             return everywhere
         return lambda **kw: namespaced(namespace, **kw)
 
-    def _list(self, kind: str, namespace: str | None) -> list[dict[str, Any]]:
+    def _list(
+        self,
+        kind: str,
+        namespace: str | None,
+        label_selector: str | None = None,
+        field_selector: str | None = None,
+    ) -> list[dict[str, Any]]:
         method = self._method(kind, namespace)
         items: list[dict[str, Any]] = []
         token: str | None = None
@@ -257,6 +412,10 @@ class LiveKubeReader:
             }
             if token:
                 kwargs["_continue"] = token
+            if label_selector:
+                kwargs["label_selector"] = label_selector
+            if field_selector:
+                kwargs["field_selector"] = field_selector
             try:
                 page = method(**kwargs)
             except Exception as exc:
@@ -273,10 +432,38 @@ class LiveKubeReader:
             if not token or len(items) >= self.max_items:
                 return items[: self.max_items]
 
-    async def list(self, kind: str, namespace: str | None = None) -> list[dict[str, Any]]:
+    async def list(
+        self,
+        kind: str,
+        namespace: str | None = None,
+        *,
+        label_selector: str | None = None,
+        field_selector: str | None = None,
+    ) -> list[dict[str, Any]]:
         check_kind(kind)
         self.calls.append(kind)
-        return await asyncio.to_thread(self._list, kind, namespace)
+        return await asyncio.to_thread(self._list, kind, namespace, label_selector, field_selector)
+
+    def _logs(self, namespace: str, pod: str, since_seconds: int, tail_lines: int) -> str:
+        try:
+            response = self._core.read_namespaced_pod_log(
+                pod,
+                namespace,
+                since_seconds=since_seconds,
+                tail_lines=tail_lines,
+                timestamps=True,
+                _request_timeout=REQUEST_TIMEOUT_SECONDS,
+                _preload_content=False,
+            )
+        except Exception as exc:
+            raise ConnectorError(_explain(exc, "pods/log", self.server)) from None
+        return str(response.data.decode("utf-8", "replace"))
+
+    async def pod_logs(
+        self, namespace: str, pod: str, *, since_seconds: int, tail_lines: int
+    ) -> str:
+        self.calls.append(f"logs {namespace}/{pod}")
+        return await asyncio.to_thread(self._logs, namespace, pod, since_seconds, tail_lines)
 
     async def verify(self) -> Sequence[str]:
         """Lists namespaces with these credentials: proves the kubeconfig works. Returns the
@@ -285,6 +472,51 @@ class LiveKubeReader:
 
     def close(self) -> None:
         self._api.close()
+
+
+class LiveKubeOperator(LiveKubeReader):
+    """The reader plus the writes approved emergency fixes make. Only app.actions.k8s creates
+    one, after checking the connection's operate capability."""
+
+    def _patch(self, namespace: str, name: str, patch: list[dict[str, Any]]) -> dict[str, Any]:
+        try:
+            response = self._apps.patch_namespaced_deployment(
+                name,
+                namespace,
+                patch,
+                _request_timeout=REQUEST_TIMEOUT_SECONDS,
+                _preload_content=False,
+            )
+        except Exception as exc:
+            raise ConnectorError(_explain(exc, "deployments (patch)", self.server)) from None
+        result: dict[str, Any] = json.loads(response.data)
+        return result
+
+    async def patch_deployment(
+        self, namespace: str, name: str, patch: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self._patch, namespace, name, patch)
+
+    def _review(self, verb: str, group: str, resource: str, namespace: str | None) -> bool:
+        from kubernetes import client
+
+        body = client.V1SelfSubjectAccessReview(
+            spec=client.V1SelfSubjectAccessReviewSpec(
+                resource_attributes=client.V1ResourceAttributes(
+                    verb=verb, group=group, resource=resource, namespace=namespace
+                )
+            )
+        )
+        try:
+            review = client.AuthorizationV1Api(self._api).create_self_subject_access_review(
+                body, _request_timeout=REQUEST_TIMEOUT_SECONDS
+            )
+        except Exception as exc:
+            raise ConnectorError(_explain(exc, "access reviews", self.server)) from None
+        return bool(review.status and review.status.allowed)
+
+    async def can_i(self, verb: str, group: str, resource: str, namespace: str | None) -> bool:
+        return await asyncio.to_thread(self._review, verb, group, resource, namespace)
 
 
 def _short(exc: BaseException) -> str:
@@ -323,6 +555,10 @@ def _explain(exc: BaseException, kind: str, server: str) -> str:
     return f"Listing {kind} failed: {text}"
 
 
-# Tests replace this to avoid a live cluster.
+# Tests replace these to avoid a live cluster.
 def live_reader(kubeconfig: str, *, max_items: int = 2000) -> LiveKubeReader:
     return LiveKubeReader(kubeconfig, max_items=max_items)
+
+
+def live_operator(kubeconfig: str) -> LiveKubeOperator:
+    return LiveKubeOperator(kubeconfig)

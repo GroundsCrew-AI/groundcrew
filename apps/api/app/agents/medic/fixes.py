@@ -9,7 +9,8 @@ Such fixes carry `degraded` so the approval card says the service is degraded, n
 
 - a secret change started it: `secret_rollback_version` on that secret, then `force_redeploy`
   of every ECS service that `uses` it (tasks read secrets only at start);
-- a commit or deploy started it: `ecs_rollback_service` for each crashing service.
+- a commit or deploy started it: `ecs_rollback_service` for each crashing ECS service, and
+  `k8s_rollout_undo` (the previous revision) for each crashing Kubernetes Deployment.
 
 A pull request is proposed whenever a commit started it and the repository is connected: the
 `propose_fix` route (Ultra, Super in dev) writes full file contents from the commit's patch and
@@ -51,8 +52,20 @@ from app.tools.github_pr import (
     unified_diff,
 )
 
-DOWN_RULES = frozenset({"health_check", "ecs_deployment_failed", "ecs_tasks_stopped"})
-CRASH_RULES = frozenset({"ecs_deployment_failed", "ecs_tasks_stopped"})
+DOWN_RULES = frozenset(
+    {
+        "health_check",
+        "ecs_deployment_failed",
+        "ecs_tasks_stopped",
+        "k8s_rollout_failed",
+        "k8s_pods_crashing",
+    }
+)
+CRASH_RULES = frozenset(
+    {"ecs_deployment_failed", "ecs_tasks_stopped", "k8s_rollout_failed", "k8s_pods_crashing"}
+)
+# What a rollback acts on, per resource type.
+ROLLBACK_TYPES = frozenset({"ecs:service", "k8s:deployment"})
 
 
 def is_down(signal: Signal) -> bool:
@@ -131,7 +144,28 @@ def short(arn: str | None) -> str:
     return arn.rsplit("/", 1)[-1]
 
 
+def _k8s_revision(ref: str | None) -> str:
+    """ "revision 3" from "shop/web revision 3"."""
+    return " ".join(ref.rsplit(" ", 2)[-2:]) if ref and " " in ref else "-"
+
+
 def plan_lines(plan: ActionPlan) -> list[PlanLine]:
+    if plan.action == "k8s_rollout_undo":
+        return [
+            PlanLine(
+                what=f"{plan.params.get('deployment')} pod template",
+                before=_k8s_revision(plan.current),
+                after=_k8s_revision(plan.desired),
+            )
+        ]
+    if plan.action == "k8s_rollout_restart":
+        return [
+            PlanLine(
+                what=f"{plan.params.get('deployment')} pods",
+                before=_k8s_revision(plan.current),
+                after="new pods on the same template",
+            )
+        ]
     if plan.action == "ecs_rollback_service":
         what = f"{plan.params.get('service')} task definition"
         return [PlanLine(what=what, before=short(plan.current), after=short(plan.desired))]
@@ -377,7 +411,7 @@ async def emergency(
         rollback_case = (
             not secret_case
             and bool(seen & {"commit", "deploy"})
-            and "ecs_rollback_service" in kinds
+            and bool({"ecs_rollback_service", "k8s_rollout_undo"} & kinds)
         )
     if not (secret_case or rollback_case):
         return out
@@ -468,14 +502,20 @@ async def emergency(
             order_by = graph.affected if down else sorted(deployed, key=str)
             for rid in order_by:
                 found = graph.resources.get(rid)
-                if found is None or found.type != "ecs:service" or rid not in targets:
+                if found is None or found.type not in ROLLBACK_TYPES or rid not in targets:
                     continue
                 conn_id = found.connection_id
                 if conn_id is None:
                     continue
                 svc = found
-                cluster = str(svc.config.get("cluster_arn") or "")
-                plan = await actions.plan_ecs_rollback_service(conn_id, cluster, svc.name)
+                if svc.type == "k8s:deployment":
+                    namespace = str(svc.config.get("namespace") or svc.region or "default")
+                    plan = await actions.plan_k8s_rollout_undo(conn_id, namespace, svc.name)
+                    to = _k8s_revision(plan.desired)
+                else:
+                    cluster = str(svc.config.get("cluster_arn") or "")
+                    plan = await actions.plan_ecs_rollback_service(conn_id, cluster, svc.name)
+                    to = short(plan.desired)
                 revert = plan.current is not None and plan.current == deployed.get(rid)
                 if not down and not (revert or remembered):
                     out.notes.append(
@@ -487,7 +527,7 @@ async def emergency(
                     _emergency_record(
                         plan,
                         order,
-                        f"Roll back {svc.name} to {short(plan.desired)}",
+                        f"Roll back {svc.name} to {to}",
                         "Production is down now; the previous revision ran without these failures."
                         if down
                         else "The errors started with this deploy; the previous revision ran "

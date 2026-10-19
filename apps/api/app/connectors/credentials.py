@@ -91,10 +91,14 @@ class CredentialsProvider(Protocol):
 
 
 def capabilities(conn: Connection) -> list[str]:
-    """What an AWS connection may be used for: observe always, deploy with Tier=deploy and a
-    verified deploy role, operate with EnableOperate=true and a verified operate role."""
+    """What a connection may be used for: observe always. AWS: deploy with Tier=deploy and a
+    verified deploy role, operate with EnableOperate=true and a verified operate role.
+    Kubernetes: operate once an owner turned it on and the kubeconfig's identity was checked
+    (it may patch Deployments)."""
     config = conn.config or {}
     out = ["observe"]
+    if conn.kind == "k8s":
+        return [*out, "operate"] if config.get("operate") else out
     if config.get("tier") == "deploy" and config.get("deploy_role_arn"):
         out.append("deploy")
     if config.get("operate_role_arn"):

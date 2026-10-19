@@ -50,7 +50,7 @@ from app.agents.medic.events import (
     Signal,
 )
 from app.agents.medic.state import FixRecord, MedicState, MemoryUsed, Outcome
-from app.agents.medic.verify import run_checks
+from app.agents.medic.verify import k8s_checks, run_checks
 from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader
 from app.connectors.github import GitHubApp, get_github_app
@@ -71,7 +71,7 @@ from app.db.session import SessionFactory
 from app.incidents import followups as fu
 from app.incidents.store import material_signals, set_status
 from app.incidents.views import refresh_pull_requests
-from app.incidents.watcher import default_reader_for
+from app.incidents.watcher import KubeFor, default_kube_for, default_reader_for
 from app.llm.budget import BudgetExceededError, PgUsageStore, RunBudget
 from app.llm.client import TokenFactory
 from app.llm.recorder import StepRecorder
@@ -99,7 +99,7 @@ NO_FIX_JOB: Final = "medic_no_fix"
 HEALTHY_ROUNDS = 2
 MAX_REDIAGNOSES = 2
 # Evidence sources that carry the application's own log lines.
-APP_LOGS = ("cloudwatch_logs:", "vercel:")
+APP_LOGS = ("cloudwatch_logs:", "vercel:", "k8s:")
 
 Collect = Callable[[uuid.UUID, list[uuid.UUID], datetime, datetime], Awaitable[Evidence]]
 
@@ -115,6 +115,8 @@ class MedicDeps:
     tavily: TavilyClient | None
     reader_for: Callable[[Connection], AwsReader]
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    # Kubernetes Deployments' recovery checks read the cluster through this.
+    kube_for: KubeFor = default_kube_for
 
 
 def _emergency_actions(
@@ -1126,6 +1128,7 @@ class MedicRunner:
     ) -> VerifyResult | None:
         """The recovery checks, now. None when no affected resource can be read."""
         services, databases, logs = self._verify_targets(graph, state)
+        deployments = self._k8s_targets(graph, state)
         readers: dict[str, AwsReader] = {}
         for res in [*services, *databases]:
             conn = graph.connections.get(res.connection_id) if res.connection_id else None
@@ -1134,19 +1137,62 @@ class MedicRunner:
                     readers[str(conn.id)] = await asyncio.to_thread(self.deps.reader_for, conn)
                 except Exception:
                     logger.warning("medic: no AWS session", exc_info=True)
-        if not readers:
+        now = self.deps.now()
+        k8s_out: list[VerifyCheck] = []
+        k8s_waits: list[str] = []
+        for dep in deployments:
+            conn = graph.connections.get(dep.connection_id) if dep.connection_id else None
+            if conn is None:
+                continue
+            try:
+                kube = await asyncio.to_thread(self.deps.kube_for, conn)
+            except Exception:
+                logger.warning("medic: no kubeconfig", exc_info=True)
+                continue
+            try:
+                k8s_out += await k8s_checks(
+                    kube,
+                    dep,
+                    since=since,
+                    now=now,
+                    check_logs=check_logs,
+                    waits=k8s_waits,
+                    deploy_after=deploy_after,
+                )
+            except Exception as exc:  # an unreadable cluster fails the round, not the run
+                detail = f"{dep.name}: could not read the cluster ({str(exc)[:120]})"
+                k8s_out.append(VerifyCheck(name="other", ok=False, detail=detail))
+            finally:
+                close = getattr(kube, "close", None)
+                if close is not None:
+                    close()
+        if not readers and not k8s_out:
             return None
-        return await asyncio.to_thread(
-            run_checks,
-            readers,
-            services,
-            databases,
-            logs,
-            since=since,
-            now=self.deps.now(),
-            check_logs=check_logs,
-            deploy_after=deploy_after,
-            waiting=waiting,
+        aws = (
+            await asyncio.to_thread(
+                run_checks,
+                readers,
+                services,
+                databases,
+                logs,
+                since=since,
+                now=now,
+                check_logs=check_logs,
+                deploy_after=deploy_after,
+                waiting=waiting,
+            )
+            if readers
+            else None
+        )
+        if not k8s_out:
+            return aws
+        checks = [*(aws.checks if aws else []), *k8s_out]
+        waits = [w for w in [aws.waiting if aws else "; ".join(waiting or []), *k8s_waits] if w]
+        return VerifyResult(
+            ok=all(c.ok for c in checks) and not waits,
+            checks=checks,
+            duration_ms=aws.duration_ms if aws else 0,
+            waiting="; ".join(waits) or None,
         )
 
     async def _note_rediagnosis(
@@ -1227,6 +1273,20 @@ class MedicRunner:
         waits = [f"{p.repo}#{p.number} to be merged" for p in prs if p.state == "open"]
         merged = [p.merged_at for p in prs if p.state == "merged" and p.merged_at is not None]
         return waits, max(merged) if merged else None
+
+    def _k8s_targets(self, graph: fx.Graph, state: MedicState) -> list[Resource]:
+        """Kubernetes Deployments that are affected or that an applied fix acted on."""
+        ids = set(graph.affected)
+        acted = {
+            (r.fix.plan.params.get("deployment") or "")
+            for r in state.fixes
+            if r.status == "applied" and r.fix.plan is not None
+        }
+        return [
+            r
+            for r in graph.resources.values()
+            if r.type == "k8s:deployment" and (r.id in ids or r.name in acted)
+        ]
 
     def _verify_targets(
         self, graph: fx.Graph, state: MedicState

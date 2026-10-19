@@ -469,6 +469,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/k8s/operate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * K8S Set Operate
+         * @description Turn approved emergency fixes on or off for a connected cluster. On: checks (with
+         *     SelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list
+         *     ReplicaSets, cluster-wide or in a namespace of a discovered Deployment
+         *     (infra/k8s-operate-rbac.yaml grants that); nothing changes if it may not. Every fix still
+         *     needs a person's approval.
+         */
+        post: operations["k8s_set_operate_connections__connection_id__k8s_operate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deploys": {
         parameters: {
             query?: never;
@@ -1062,7 +1086,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "k8s_rollout_undo" | "k8s_rollout_restart";
             /**
              * Connection Id
              * Format: uuid
@@ -1095,7 +1119,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "k8s_rollout_undo" | "k8s_rollout_restart";
             /** Details */
             details?: {
                 [key: string]: string;
@@ -2088,7 +2112,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "other";
+            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "k8s_rollout_undo" | "k8s_rollout_restart" | "other";
             /**
              * Target
              * @default null
@@ -2383,7 +2407,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
@@ -2507,7 +2531,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "user_report" | "other";
             /**
              * Incident Id
              * Format: uuid
@@ -2602,7 +2626,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** First Signal At */
@@ -2733,6 +2757,14 @@ export interface components {
              */
             id: string;
             role: components["schemas"]["WorkspaceRole"];
+        };
+        /**
+         * K8sOperateIn
+         * @description Turn approved emergency fixes (rollout undo, restart) on or off for a cluster.
+         */
+        K8sOperateIn: {
+            /** Enabled */
+            enabled: boolean;
         };
         /** KubernetesConnectIn */
         KubernetesConnectIn: {
@@ -3043,7 +3075,7 @@ export interface components {
              * Action
              * @default null
              */
-            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy") | null;
+            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "k8s_rollout_undo" | "k8s_rollout_restart") | null;
             /**
              * Approval Id
              * @default null
@@ -3629,7 +3661,7 @@ export interface components {
              * Rule
              * @enum {string}
              */
-            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "user_report" | "other";
+            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "user_report" | "other";
         };
         /** StageFinished */
         StageFinished: {
@@ -4815,6 +4847,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    k8s_set_operate_connections__connection_id__k8s_operate_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["K8sOperateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
                 };
             };
             /** @description Validation Error */
