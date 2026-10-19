@@ -49,22 +49,32 @@ export function lastDiscoveryText(connection: Connection): string {
   return last.truncated ? `Discovered ${when}, ${count} (limit reached)` : `Discovered ${when}, ${count}`;
 }
 
+/** Why members see connection actions disabled; the API answers 403 for them too. */
+export const OWNER_ONLY_REASON = "Only workspace owners can add, change, or remove connections.";
+
 export function ConnectionRow({
   connection,
   onRefresh,
   refreshing,
   onResume,
+  canManage = true,
+  reasonId,
 }: {
   connection: Connection;
   onRefresh: (connection: Connection) => void;
   refreshing: boolean;
   onResume?: (connection: Connection) => void;
+  /** Owners finish, change, and remove connections; anyone in the workspace can refresh. */
+  canManage?: boolean;
+  /** The element that says why the owner-only actions are disabled. */
+  reasonId?: string;
 }) {
   const status = connectionStatus(connection);
   const last = connection.last_discovery;
   const [tierOpen, setTierOpen] = useState(false);
   const [operateOpen, setOperateOpen] = useState(false);
   const awsConnected = connection.kind === "aws" && connection.status === "connected";
+  const ownerOnly = { disabled: !canManage, "aria-describedby": canManage ? undefined : reasonId };
   return (
     <li className="flex flex-wrap items-center gap-3 bg-background px-4 py-3.5 sm:flex-nowrap">
       <ProviderMark provider={connection.kind} />
@@ -107,7 +117,7 @@ export function ConnectionRow({
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         {connection.status === "pending" && connection.kind === "aws" && onResume ? (
-          <Button size="sm" variant="outline" onClick={() => onResume(connection)}>
+          <Button size="sm" variant="outline" onClick={() => onResume(connection)} {...ownerOnly}>
             Finish connecting
           </Button>
         ) : (
@@ -123,16 +133,16 @@ export function ConnectionRow({
           </Button>
         )}
         {awsConnected && (
-          <Button size="sm" variant="ghost" onClick={() => setTierOpen(true)}>
+          <Button size="sm" variant="ghost" onClick={() => setTierOpen(true)} {...ownerOnly}>
             {connection.tier === "deploy" ? "Turn off deploys" : "Enable deploys"}
           </Button>
         )}
         {awsConnected && (
-          <Button size="sm" variant="ghost" onClick={() => setOperateOpen(true)}>
+          <Button size="sm" variant="ghost" onClick={() => setOperateOpen(true)} {...ownerOnly}>
             {isOperate(connection) ? "Turn off emergency fixes" : "Enable emergency fixes"}
           </Button>
         )}
-        <RemoveConnection connection={connection} />
+        <RemoveConnection connection={connection} disabled={!canManage} describedBy={ownerOnly["aria-describedby"]} />
       </div>
       {awsConnected && tierOpen && <AwsTierDialog connection={connection} open onOpenChange={setTierOpen} />}
       {awsConnected && operateOpen && (

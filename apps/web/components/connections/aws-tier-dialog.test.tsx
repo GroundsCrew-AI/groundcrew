@@ -37,6 +37,23 @@ describe("AwsTierDialog", () => {
     expect(mutate).toHaveBeenCalledWith({ connectionId: conn.id, tier: "deploy" }, expect.anything());
   });
 
+  it("opens CloudFormation in the connection's region, or the console's last one when unknown", () => {
+    const { unmount } = render(
+      <AwsTierDialog connection={connection({ tier: "observe", region: "ap-south-1" })} open onOpenChange={vi.fn()} />,
+    );
+    expect(screen.getByRole("link", { name: "CloudFormation stacks" })).toHaveAttribute(
+      "href",
+      "https://ap-south-1.console.aws.amazon.com/cloudformation/home?region=ap-south-1#/stacks",
+    );
+    unmount();
+    render(<AwsTierDialog connection={connection({ tier: "observe", region: null })} open onOpenChange={vi.fn()} />);
+    expect(screen.getByRole("link", { name: "CloudFormation stacks" })).toHaveAttribute(
+      "href",
+      "https://console.aws.amazon.com/cloudformation/home#/stacks",
+    );
+    expect(screen.getByText(/in the region where you created the stack/)).toBeInTheDocument();
+  });
+
   it("turns deploys off", async () => {
     const conn = connection({ tier: "deploy" });
     render(<AwsTierDialog connection={conn} open onOpenChange={vi.fn()} />);
