@@ -51,7 +51,7 @@ function Meta({ step }: { step: Step }) {
   const cost = formatCost(step.cost_usd);
   const hasTokens = step.prompt_tokens !== null || step.completion_tokens !== null;
   return (
-    <span className="tabular flex shrink-0 items-center gap-3 font-mono text-[11.5px] text-muted-foreground">
+    <span className="tabular flex shrink-0 items-center gap-3 font-mono text-[12px] text-muted-foreground">
       {hasTokens && (
         <span title="Prompt tokens in, completion tokens out">
           {formatTokens(step.prompt_tokens)} in <span className="text-subtle">/</span>{" "}
@@ -94,7 +94,7 @@ function Summaries({ step }: { step: Step }) {
 function Block({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <p className="mb-1 text-[11.5px] text-subtle">{label}</p>
+      <p className="mb-1 text-[12px] text-subtle">{label}</p>
       <pre className="max-h-80 overflow-auto rounded-md border bg-background px-3 py-2 font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap">
         {children}
       </pre>
@@ -110,7 +110,7 @@ function StepTitle({ step }: { step: Step }) {
           <span className="font-medium">Model call</span>
           <TierBadge tier={step.model_tier} />
           {step.model_id && (
-            <span className="hidden truncate font-mono text-[11.5px] text-subtle sm:inline">{step.model_id}</span>
+            <span className="hidden truncate font-mono text-[12px] text-subtle sm:inline">{step.model_id}</span>
           )}
         </>
       );

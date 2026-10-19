@@ -21,7 +21,7 @@ export function DeployStatePill({ state, className }: { state: DeployState; clas
   return (
     <span
       className={cn(
-        "tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11.5px] font-medium whitespace-nowrap",
+        "tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[12px] font-medium whitespace-nowrap",
         className,
       )}
       style={{ "--tint": color } as CSSProperties}
@@ -37,7 +37,7 @@ const GRID = "sm:grid-cols-[112px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_
 
 export function DeployListHeader() {
   return (
-    <div aria-hidden="true" className={cn("hidden gap-x-4 border-b px-4 py-2 text-[11.5px] text-subtle sm:grid", GRID)}>
+    <div aria-hidden="true" className={cn("hidden gap-x-4 border-b px-4 py-2 text-[12px] text-subtle sm:grid", GRID)}>
       <span>Status</span>
       <span>Source</span>
       <span>Target</span>

@@ -45,7 +45,7 @@ function ResourceNodeView({ data }: NodeProps<ResourceFlowNode>) {
           {resource.stale && " (not seen in the last discovery)"}
         </span>
         {resource.facts.length > 0 && (
-          <span className="block truncate font-mono text-[11.5px] text-subtle">{resource.facts.join("  ")}</span>
+          <span className="block truncate font-mono text-[12px] text-subtle">{resource.facts.join("  ")}</span>
         )}
       </span>
       <Handle type="source" position={Position.Right} className="!size-1.5 !border-0 !bg-transparent" />

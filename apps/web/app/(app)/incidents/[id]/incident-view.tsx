@@ -13,6 +13,7 @@ import { IncidentStatusPill, SeverityTag } from "@/components/incidents/incident
 import { RootCausePanel } from "@/components/incidents/root-cause-panel";
 import { Timeline } from "@/components/runs/timeline";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { useAnnounceChange } from "@/components/shell/shell-context";
 import { EmptyState, ErrorState } from "@/components/states/states";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +25,7 @@ import {
   type IncidentDetail,
   OPEN_STATUSES,
   ruleLabel,
+  STATUS,
   useIncident,
   useDismissFollowUp,
   useRetryFix,
@@ -35,7 +37,7 @@ import { useRunStream } from "@/lib/use-run-stream";
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[11.5px] text-subtle">{label}</dt>
+      <dt className="text-[12px] text-subtle">{label}</dt>
       <dd className="tabular mt-0.5 text-[13px] [overflow-wrap:anywhere]">{children}</dd>
     </div>
   );
@@ -93,6 +95,7 @@ export function IncidentView({ incidentId }: { incidentId: string }) {
     }
   }, [detail.data]);
   const stream = useRunStream(runId, { enabled: Boolean(state.run) && !state.done, lastSeq: state.lastSeq, dispatch });
+  useAnnounceChange(incident.data ? `Incident status: ${STATUS[incident.data.status].label}` : undefined);
 
   // Medic's results land in the incident as the run goes: refresh the summary on new steps.
   useEffect(() => {

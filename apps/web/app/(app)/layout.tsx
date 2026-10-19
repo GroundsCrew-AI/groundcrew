@@ -19,7 +19,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         <AttentionAlerts />
         <div className="flex min-h-dvh">
           <Sidebar />
-          <main id="main" className="flex min-w-0 flex-1 flex-col">
+          <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
             <WorkspaceGate>{children}</WorkspaceGate>
           </main>
         </div>
