@@ -261,3 +261,116 @@ def read_instance(
     status = rules.fetch_ec2_status(reader, region, instance)
     metrics = fetch_ec2_metrics(reader, region, instance, since, until)
     return describe_instance(found[0], status, metrics, since, until)
+
+
+ALB = "alb"
+RDS = "rds"
+
+
+def describe_balancer(
+    name: str,
+    config: dict[str, Any],
+    metrics: dict[str, rules.Points],
+    health: dict[str, list[dict[str, Any]]],
+    since: datetime,
+    until: datetime,
+) -> ReaderOutput:
+    """Per-minute 5xx and p95 where something is off, and each target group's target health
+    now with the reason a target fails (Target.ResponseCodeMismatch, Target.Timeout, ...)."""
+    out = ReaderOutput()
+    by_minute: dict[datetime, dict[str, float]] = {}
+    for key in ("requests", "target5xx", "elb5xx", "p95"):
+        for t, value in metrics.get(key, []):
+            by_minute.setdefault(t, {})[key] = value
+    for t in sorted(by_minute):
+        row = by_minute[t]
+        errors = row.get("target5xx", 0) + row.get("elb5xx", 0)
+        if _in(t, since, until) and (errors or row.get("p95", 0) >= rules.ALB_LATENCY_FLOOR_S):
+            out.lines.append(
+                line(
+                    t,
+                    ALB,
+                    name,
+                    f"{row.get('target5xx', 0):.0f} target 5xx, {row.get('elb5xx', 0):.0f} "
+                    f"balancer 5xx in {row.get('requests', 0):.0f} requests, p95 "
+                    f"{row.get('p95', 0):.2f} s this minute",
+                )
+            )
+    for group in config.get("target_groups") or []:
+        found = health.get(str(group.get("arn")), [])
+        bad = [h for h in found if (h.get("TargetHealth") or {}).get("State") != "healthy"]
+        text = f"target group {group.get('name')}: {len(found) - len(bad)}/{len(found)} healthy"
+        text += f" (health check {group.get('health_check_path') or '-'})"
+        for h in bad[:5]:
+            th = h.get("TargetHealth") or {}
+            text += (
+                f"; {(h.get('Target') or {}).get('Id')} {th.get('State')} {th.get('Reason') or ''}"
+                f" {th.get('Description') or ''}".rstrip()
+            )
+        out.lines.append(line(until, ALB, name, text))
+    out.lines.append(
+        line(until, ALB, name, f"now: {config.get('state') or '?'}, {config.get('dns_name') or ''}")
+    )
+    return out
+
+
+def read_balancer(
+    reader: AwsReader,
+    region: str | None,
+    name: str,
+    config: dict[str, Any],
+    since: datetime,
+    until: datetime,
+) -> ReaderOutput:
+    """Blocking (boto3): call with asyncio.to_thread."""
+    groups = [g for g in config.get("target_groups") or [] if g.get("dimension")]
+    metrics = rules.fetch_alb(
+        reader,
+        region,
+        str(config.get("dimension") or ""),
+        [str(g["dimension"]) for g in groups],
+        until,
+    )
+    health: dict[str, list[dict[str, Any]]] = {}
+    for group in groups:
+        health[str(group.get("arn"))] = reader.call(
+            "elbv2", region, "DescribeTargetHealth", TargetGroupArn=group.get("arn")
+        ).get("TargetHealthDescriptions", [])
+    return describe_balancer(name, config, metrics, health, since, until)
+
+
+def read_cluster(
+    reader: AwsReader, region: str | None, cluster: str, since: datetime, until: datetime
+) -> ReaderOutput:
+    """Blocking (boto3). An Aurora cluster: status, members, pending changes, and CPU and read
+    latency per minute (the DBClusterIdentifier dimension)."""
+    found = reader.call("rds", region, "DescribeDBClusters", DBClusterIdentifier=cluster).get(
+        "DBClusters", []
+    )
+    out = ReaderOutput()
+    if not found:
+        out.lines.append(line(until, RDS, cluster, "cluster not found"))
+        return out
+    c = found[0]
+    cpu, latency = rules.fetch_rds(reader, region, cluster, until, "DBClusterIdentifier")
+    lat = dict(latency)
+    for t, value in cpu:
+        if _in(t, since, until):
+            out.lines.append(
+                line(t, RDS, cluster, f"CPU {value:.0f}%, read latency {lat.get(t, 0):.1f} ms")
+            )
+    members = ", ".join(
+        f"{m.get('DBInstanceIdentifier')}{' (writer)' if m.get('IsClusterWriter') else ''}"
+        for m in c.get("DBClusterMembers", [])
+    )
+    pending = c.get("PendingModifiedValues") or {}
+    out.lines.append(
+        line(
+            until,
+            RDS,
+            cluster,
+            f"now: {c.get('Status')}, {c.get('Engine')} {c.get('EngineVersion')}, members "
+            f"{members or '-'}" + (f", pending {pending}" if pending else ""),
+        )
+    )
+    return out

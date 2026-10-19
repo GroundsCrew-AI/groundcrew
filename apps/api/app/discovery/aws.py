@@ -57,6 +57,9 @@ EXTRA_TYPES = frozenset(
 
 # Per-resource tag lookups (Lambda ListTags) per region, at most.
 MAX_TAG_CALLS = 100
+# Target groups read per load balancer, and targets kept per group.
+MAX_TARGET_GROUPS = 20
+MAX_TARGETS = 50
 
 # Inventory type -> (Cloud Control type name, how to get its identifier from the ARN).
 CLOUD_CONTROL_TYPES: dict[str, tuple[str, Callable[[str], str]]] = {
@@ -405,6 +408,82 @@ def normalize_repository(
     )
 
 
+def lb_dimension(arn: str) -> str:
+    """CloudWatch's LoadBalancer / TargetGroup dimension: the ARN after "loadbalancer/" or
+    from "targetgroup/" on (app/name/id, targetgroup/name/id)."""
+    if ":loadbalancer/" in arn:
+        return arn.split(":loadbalancer/", 1)[1]
+    return arn.split(":", 5)[-1] if ":targetgroup/" in arn else arn
+
+
+def normalize_load_balancer(
+    lb: dict[str, Any], groups: list[dict[str, Any]], region: str, account: str
+) -> DiscoveredResource:
+    """An Application Load Balancer and its target groups, each with its registered targets
+    (instance ids, IPs, or Lambda ARNs) and health check."""
+    return DiscoveredResource(
+        provider=PROVIDER,
+        type="elasticloadbalancing:loadbalancer/app",
+        external_id=lb["LoadBalancerArn"],
+        name=lb["LoadBalancerName"],
+        account=account,
+        region=region,
+        config={
+            "dns_name": lb.get("DNSName"),
+            # Cloud Control's shape, which the env URL rule reads.
+            "properties": {"DNSName": lb.get("DNSName")},
+            "scheme": lb.get("Scheme"),
+            "state": (lb.get("State") or {}).get("Code"),
+            "vpc_id": lb.get("VpcId"),
+            "security_groups": lb.get("SecurityGroups", []),
+            "dimension": lb_dimension(lb["LoadBalancerArn"]),
+            "target_groups": [
+                {
+                    "arn": g["TargetGroupArn"],
+                    "name": g.get("TargetGroupName"),
+                    "dimension": lb_dimension(g["TargetGroupArn"]),
+                    "target_type": g.get("TargetType"),
+                    "port": g.get("Port"),
+                    "health_check_path": g.get("HealthCheckPath"),
+                    "targets": g.get("targets", []),
+                }
+                for g in groups
+            ],
+        },
+    )
+
+
+def normalize_db_cluster(cluster: dict[str, Any], region: str, account: str) -> DiscoveredResource:
+    """An Aurora (or Multi-AZ) DB cluster; its instances are rds:db resources of their own."""
+    return DiscoveredResource(
+        provider=PROVIDER,
+        type="rds:cluster",
+        external_id=cluster["DBClusterArn"],
+        name=cluster["DBClusterIdentifier"],
+        account=account,
+        region=region,
+        tags=_tags(cluster.get("TagList")),
+        config={
+            "engine": cluster.get("Engine"),
+            "engine_version": cluster.get("EngineVersion"),
+            "status": cluster.get("Status"),
+            "endpoint": {"address": cluster.get("Endpoint"), "port": cluster.get("Port")},
+            "reader_endpoint": cluster.get("ReaderEndpoint"),
+            "members": [
+                {"instance": m.get("DBInstanceIdentifier"), "writer": m.get("IsClusterWriter")}
+                for m in cluster.get("DBClusterMembers", [])
+            ],
+            "multi_az": cluster.get("MultiAZ"),
+            "storage_encrypted": cluster.get("StorageEncrypted"),
+            "deletion_protection": cluster.get("DeletionProtection"),
+            "security_groups": [
+                g.get("VpcSecurityGroupId") for g in cluster.get("VpcSecurityGroups", [])
+            ],
+            "db_name": cluster.get("DatabaseName"),
+        },
+    )
+
+
 def normalize_db(db: dict[str, Any], region: str, account: str) -> DiscoveredResource:
     endpoint = db.get("Endpoint") or {}
     return DiscoveredResource(
@@ -725,6 +804,12 @@ class AwsDiscovery:
                 self._step(f"ECR {region}", functools.partial(self.ecr, region)),
                 self._step(f"RDS {region}", functools.partial(self.rds, region)),
                 self._step(
+                    f"Aurora clusters {region}", functools.partial(self.db_clusters, region)
+                ),
+                self._step(
+                    f"Load balancers {region}", functools.partial(self.load_balancers, region)
+                ),
+                self._step(
                     f"VPC and security groups {region}", functools.partial(self.network, region)
                 ),
                 self._step(f"Lambda {region}", functools.partial(self.functions, region)),
@@ -913,6 +998,42 @@ class AwsDiscovery:
     def rds(self, region: str) -> list[DiscoveredResource]:
         dbs = self.reader.paginate("rds", region, "DescribeDBInstances", "DBInstances")
         return [normalize_db(db, region, self.account) for db in dbs]
+
+    def db_clusters(self, region: str) -> list[DiscoveredResource]:
+        clusters = self.reader.paginate("rds", region, "DescribeDBClusters", "DBClusters")
+        return [normalize_db_cluster(c, region, self.account) for c in clusters]
+
+    def load_balancers(self, region: str) -> list[DiscoveredResource]:
+        """Application Load Balancers with their target groups and registered targets (at
+        most MAX_TARGET_GROUPS per balancer and MAX_TARGETS per group)."""
+        out = []
+        lbs = self.reader.paginate("elbv2", region, "DescribeLoadBalancers", "LoadBalancers")
+        for lb in lbs:
+            if lb.get("Type") != "application":
+                continue
+            groups = self.reader.paginate(
+                "elbv2",
+                region,
+                "DescribeTargetGroups",
+                "TargetGroups",
+                LoadBalancerArn=lb["LoadBalancerArn"],
+            )[:MAX_TARGET_GROUPS]
+            for group in groups:
+                try:
+                    health = self.reader.call(
+                        "elbv2",
+                        region,
+                        "DescribeTargetHealth",
+                        TargetGroupArn=group["TargetGroupArn"],
+                    ).get("TargetHealthDescriptions", [])
+                except Exception as exc:
+                    logger.info("target health failed", extra={"error": error_text(exc)})
+                    health = []
+                group["targets"] = [
+                    str((h.get("Target") or {}).get("Id")) for h in health[:MAX_TARGETS]
+                ]
+            out.append(normalize_load_balancer(lb, groups, region, self.account))
+        return out
 
     def network(self, region: str) -> list[DiscoveredResource]:
         vpcs = self.reader.paginate("ec2", region, "DescribeVpcs", "Vpcs")

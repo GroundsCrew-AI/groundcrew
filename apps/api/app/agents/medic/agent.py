@@ -1129,9 +1129,14 @@ class MedicRunner:
         """The recovery checks, now. None when no affected resource can be read."""
         services, databases, logs = self._verify_targets(graph, state)
         functions, instances = self._compute_targets(graph, state)
+        balancers = [
+            r
+            for r in graph.resources.values()
+            if r.type == "elasticloadbalancing:loadbalancer/app" and r.id in set(graph.affected)
+        ]
         deployments = self._k8s_targets(graph, state)
         readers: dict[str, AwsReader] = {}
-        for res in [*services, *databases, *functions, *instances]:
+        for res in [*services, *databases, *functions, *instances, *balancers]:
             conn = graph.connections.get(res.connection_id) if res.connection_id else None
             if conn is not None and str(conn.id) not in readers:
                 try:
@@ -1183,6 +1188,7 @@ class MedicRunner:
                 waiting=waiting,
                 functions=functions,
                 instances=instances,
+                balancers=balancers,
             )
             if readers
             else None
@@ -1334,7 +1340,7 @@ class MedicRunner:
         databases = [
             r
             for r in graph.resources.values()
-            if r.type == "rds:db" and (r.id in ids or r.id in reads)
+            if r.type in ("rds:db", "rds:cluster") and (r.id in ids or r.id in reads)
         ]
         logs: dict[str, list[str]] = {}
         for e in graph.edges:

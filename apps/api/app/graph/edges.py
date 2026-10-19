@@ -193,9 +193,10 @@ def _name_hint(expr: str) -> str | None:
 
 
 def rule_sg_db(g: _Graph) -> None:
-    """1. A security group on the database allows the db port from a group the service uses."""
+    """1. A security group on the database (an instance or an Aurora cluster) allows the db
+    port from a group the service uses."""
     sgs = {r.config.get("group_id"): r for r in g.of("ec2:security-group")}
-    for db in g.of("rds:db"):
+    for db in g.of("rds:db", "rds:cluster"):
         port = (db.config.get("endpoint") or {}).get("port") or 5432
         for db_sg_id in db.config.get("security_groups") or []:
             db_sg = sgs.get(db_sg_id)
@@ -375,6 +376,41 @@ def rule_images(g: _Graph) -> None:
                 text,
                 **details,
             )
+
+
+def rule_load_balancers(g: _Graph) -> None:
+    """An Application Load Balancer calls what its target groups send traffic to: ECS services
+    registered with the group (the service's loadBalancers), EC2 instances by id, and Lambda
+    functions by ARN (the groups' registered targets)."""
+    services = g.of("ecs:service")
+    instances = {r.external_id.rsplit("/", 1)[-1]: r for r in g.of("ec2:instance")}
+    functions = {r.external_id: r for r in g.of("lambda:function")}
+    for lb in g.of("elasticloadbalancing:loadbalancer/app"):
+        for group in lb.config.get("target_groups") or []:
+            arn, name = group.get("arn"), group.get("name")
+            for svc in services:
+                if any(
+                    x.get("target_group") == arn for x in svc.config.get("load_balancers") or []
+                ):
+                    g.add(
+                        lb,
+                        svc,
+                        EdgeKind.calls,
+                        Confidence.high,
+                        "target_group",
+                        f"{lb.name} sends traffic to {svc.name} through target group {name}.",
+                    )
+            for target in group.get("targets") or []:
+                found = instances.get(target) or functions.get(target)
+                if found is not None:
+                    g.add(
+                        lb,
+                        found,
+                        EdgeKind.calls,
+                        Confidence.high,
+                        "target_group",
+                        f"{found.name} is registered in {lb.name}'s target group {name}.",
+                    )
 
 
 def rule_logs(g: _Graph) -> None:
@@ -628,6 +664,13 @@ def _endpoints(g: _Graph) -> list[tuple[str, DiscoveredResource, str]]:
         address = (db.config.get("endpoint") or {}).get("address")
         if address:
             out.append((address, db, f"the endpoint of {db.name}"))
+    for cluster in g.of("rds:cluster"):
+        for address, what in (
+            ((cluster.config.get("endpoint") or {}).get("address"), "writer endpoint"),
+            (cluster.config.get("reader_endpoint"), "reader endpoint"),
+        ):
+            if address:
+                out.append((address, cluster, f"the {what} of {cluster.name}"))
     for site in g.of("microsoft.web/sites"):
         host = site.config.get("defaultHostName")
         if host:
@@ -871,6 +914,7 @@ def infer_edges(resources: Sequence[DiscoveredResource], repos: Sequence[RepoFac
     rule_images(g)
     rule_deploy_commits(g)
     rule_logs(g)
+    rule_load_balancers(g)
     rule_deploys(g)
     rule_env_urls(g)
     _reads_via_secret(g)
