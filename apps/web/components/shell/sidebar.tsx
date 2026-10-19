@@ -98,7 +98,7 @@ function NavLink({
       aria-current={active ? "page" : undefined}
       aria-label={collapsed || count ? label : undefined}
       className={cn(
-        "group relative flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors",
+        "group relative flex h-8 pointer-coarse:h-11 items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors",
         "hover:bg-sidebar-accent hover:text-foreground",
         active && "bg-sidebar-accent text-foreground",
         collapsed && "justify-center px-0",
@@ -114,7 +114,7 @@ function NavLink({
           aria-hidden="true"
           style={{ backgroundColor: badge?.color }}
           className={cn(
-            "tabular rounded-full px-1.5 text-[10.5px] leading-[18px] font-semibold text-background",
+            "tabular rounded-full px-1.5 text-[11px] leading-[18px] font-semibold text-background",
             collapsed && "absolute -top-0.5 -right-0.5 min-w-4 px-1 text-center leading-4",
           )}
         >
@@ -199,7 +199,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
           {!collapsed && (
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px]">{display}</span>
-              {secondary && <span className="block truncate text-[11.5px] text-muted-foreground">{secondary}</span>}
+              {secondary && <span className="block truncate text-[12px] text-muted-foreground">{secondary}</span>}
             </span>
           )}
         </button>

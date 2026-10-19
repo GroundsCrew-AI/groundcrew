@@ -2,6 +2,7 @@
 
 import { Check, X } from "lucide-react";
 import Link from "next/link";
+import { Suspense } from "react";
 import { toast } from "sonner";
 
 import { DecideDialog } from "@/components/approvals/decide-dialog";
@@ -15,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Approval, Decision } from "@/lib/api/client";
 import { agentName, formatRelative, formatTimestamp } from "@/lib/format";
 import { useApprovals, useDecide } from "@/lib/queries";
+import { useSearchParam } from "@/lib/use-search-param";
 import { useWorkspace } from "@/lib/workspace";
 
 function ApprovalItem({ approval, decided = false }: { approval: Approval; decided?: boolean }) {
@@ -109,14 +111,26 @@ function ApprovalList({ tab }: { tab: "pending" | "decided" }) {
 }
 
 export default function ApprovalsPage() {
+  // The tab lives in the URL (useSearchParams).
+  return (
+    <Suspense>
+      <Approvals />
+    </Suspense>
+  );
+}
+
+/** /approvals?tab=decided opens the decided list; switching tabs adds a history entry. */
+function Approvals() {
   const { workspace } = useWorkspace();
   const pending = useApprovals(workspace?.id, "pending");
   const count = pending.data?.length ?? 0;
+  const [param, setParam] = useSearchParam("tab");
+  const tab = param === "decided" ? "decided" : "pending";
   return (
     <>
       <PageHeader title="Approvals" />
       <PageBody className="max-w-5xl">
-        <Tabs defaultValue="pending">
+        <Tabs value={tab} onValueChange={(v) => setParam(v === "decided" ? "decided" : null)}>
           <TabsList>
             <TabsTrigger value="pending">
               Pending

@@ -18,7 +18,7 @@ export function SystemSummary({ summary }: { summary: Summary | null | undefined
         <h2 id="summary-title" className="text-[13px] font-medium">
           System summary
         </h2>
-        <p className="text-[11.5px] text-subtle">
+        <p className="text-[12px] text-subtle">
           {summary.generated_at ? `Scout, Nemotron Nano, ${formatRelative(summary.generated_at)}` : "Not written yet"}
           {summary.run_id && (
             <>

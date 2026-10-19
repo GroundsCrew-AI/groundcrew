@@ -122,8 +122,11 @@ export function MapCanvas({
             resource,
             selected: resource.id === selectedId,
             dimmed: neighbors !== null && !neighbors.has(resource.id),
+            onOpen: onSelect,
           },
           draggable: false,
+          // The button inside the node takes focus and opens the panel (click, Enter, Space).
+          focusable: false,
         },
       ];
     });
@@ -142,7 +145,7 @@ export function MapCanvas({
         ]
       : [];
     return [...groups, ...resources, ...stubs];
-  }, [layout, nodes, selectedId, neighbors, tooling, toolingOpen]);
+  }, [layout, nodes, selectedId, neighbors, tooling, toolingOpen, onSelect]);
 
   const flowEdges = useMemo<RoutedFlowEdge[]>(() => {
     const end = (id: string) => (stubbed.has(id) ? TOOLING_STUB : id);
@@ -194,7 +197,6 @@ export function MapCanvas({
       maxZoom={1.75}
       nodesConnectable={false}
       nodesDraggable={false}
-      onNodeClick={(_event, node) => node.type === "resource" && onSelect(node.id)}
       onPaneClick={() => onSelect(null)}
       className="[--xy-background-color:transparent] [--xy-controls-button-background-color:var(--card)] [--xy-controls-button-border-color:var(--border)]"
     >

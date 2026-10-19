@@ -88,7 +88,7 @@ export function DeployStep({ step, rounds = 1 }: { step: Step; rounds?: number }
             >
               {data.status === "succeeded" ? "done" : data.status}
             </span>
-            <span className="tabular ml-auto font-mono text-[11.5px] text-muted-foreground">
+            <span className="tabular ml-auto font-mono text-[12px] text-muted-foreground">
               {formatDuration(data.duration_ms)}
             </span>
           </p>
@@ -127,7 +127,7 @@ export function DeployStep({ step, rounds = 1 }: { step: Step; rounds?: number }
                 {rounds > 1 && ` (same for ${rounds} checks)`}
               </span>
             )}
-            <span className="tabular ml-auto font-mono text-[11.5px] text-muted-foreground">
+            <span className="tabular ml-auto font-mono text-[12px] text-muted-foreground">
               {formatDuration(data.duration_ms)}
             </span>
           </p>
@@ -142,7 +142,7 @@ export function DeployStep({ step, rounds = 1 }: { step: Step; rounds?: number }
                 )}
                 <span className="capitalize">{c.name}</span>
                 <span className="text-muted-foreground">{c.detail}</span>
-                {c.url && <span className="truncate font-mono text-[11.5px] text-subtle">{c.url}</span>}
+                {c.url && <span className="truncate font-mono text-[12px] text-subtle">{c.url}</span>}
               </li>
             ))}
           </ul>

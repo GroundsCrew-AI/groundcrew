@@ -81,9 +81,13 @@ describe("DeployForm", () => {
     await userEvent.type(repo, "not a repo");
     await userEvent.click(screen.getByRole("button", { name: /^deploy$/i }));
     expect(onSubmit).not.toHaveBeenCalled();
+    // The problem is said under the field, and tied to it.
+    expect(repo).toHaveAttribute("aria-invalid", "true");
+    expect(repo).toHaveAccessibleDescription("Enter the repository as owner/name.");
     await userEvent.clear(repo);
     await userEvent.type(repo, "GroundsCrew-AI/legacy-flask-app");
     await userEvent.click(screen.getByRole("button", { name: /^deploy$/i }));
+    expect(repo).toHaveAttribute("aria-invalid", "false");
     expect(onSubmit.mock.calls[0][0].repo).toEqual({
       connection_id: "gh2",
       repo: "GroundsCrew-AI/legacy-flask-app",

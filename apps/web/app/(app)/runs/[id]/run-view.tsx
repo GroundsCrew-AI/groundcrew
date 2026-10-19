@@ -6,9 +6,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { RejectedMarker, StatusPill, stopReasonLabel } from "@/components/runs/badges";
+import { RejectedMarker, StatusPill, statusLabel, stopReasonLabel } from "@/components/runs/badges";
 import { Timeline } from "@/components/runs/timeline";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { useAnnounceChange } from "@/components/shell/shell-context";
 import { EmptyState, ErrorState } from "@/components/states/states";
 import {
   AlertDialog,
@@ -54,7 +55,7 @@ function useNow(active: boolean): number {
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[11.5px] text-subtle">{label}</dt>
+      <dt className="text-[12px] text-subtle">{label}</dt>
       <dd className="tabular mt-0.5 truncate text-[13px]">{children}</dd>
     </div>
   );
@@ -138,6 +139,7 @@ export function RunView({ runId }: { runId: string }) {
   });
   const live = run ? STOPPABLE.has(run.status) : false;
   const now = useNow(live);
+  useAnnounceChange(run ? `Run status: ${statusLabel(run.status)}` : undefined);
 
   // Auto-scroll: follow new steps while the reader is at the bottom; otherwise offer a jump.
   const endRef = useRef<HTMLDivElement>(null);

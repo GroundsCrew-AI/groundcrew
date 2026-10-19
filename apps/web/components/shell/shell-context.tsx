@@ -17,6 +17,8 @@ type ShellContextValue = {
   toggleCollapsed: () => void;
   mobileOpen: boolean;
   setMobileOpen: (open: boolean) => void;
+  /** Read `text` to screen readers through the shell's one live region. */
+  announce: (text: string) => void;
 };
 
 const ShellContext = createContext<ShellContextValue | null>(null);
@@ -24,6 +26,7 @@ const ShellContext = createContext<ShellContextValue | null>(null);
 export function ShellProvider({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
     try {
@@ -44,11 +47,39 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const announce = useCallback((text: string) => {
+    // Clear first so the same text twice is read twice.
+    setMessage("");
+    window.setTimeout(() => setMessage(text), 50);
+  }, []);
+
   const value = useMemo(
-    () => ({ collapsed, toggleCollapsed, mobileOpen, setMobileOpen }),
-    [collapsed, toggleCollapsed, mobileOpen],
+    () => ({ collapsed, toggleCollapsed, mobileOpen, setMobileOpen, announce }),
+    [collapsed, toggleCollapsed, mobileOpen, announce],
   );
-  return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;
+  return (
+    <ShellContext.Provider value={value}>
+      {children}
+      {/* Mounted once and kept: screen readers ignore a live region added with its text. */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {message}
+      </div>
+    </ShellContext.Provider>
+  );
+}
+
+/**
+ * Announce `text` whenever it changes (a run or incident status), skipping the first value so
+ * opening a page reads nothing. A no-op outside the app shell (tests, sign-in pages).
+ */
+export function useAnnounceChange(text: string | null | undefined): void {
+  const announce = useContext(ShellContext)?.announce;
+  const [previous, setPrevious] = useState(text);
+  useEffect(() => {
+    if (text === previous) return;
+    setPrevious(text);
+    if (text && previous !== undefined && announce) announce(text);
+  }, [text, previous, announce]);
 }
 
 export function useShell(): ShellContextValue {

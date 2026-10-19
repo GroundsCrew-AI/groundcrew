@@ -120,11 +120,11 @@ export function DeployPlanCard({
         </div>
 
         <div>
-          <h4 className="mb-1.5 text-[11.5px] text-subtle">Resources</h4>
+          <h4 className="mb-1.5 text-[12px] text-subtle">Resources</h4>
           <ul className="space-y-1 text-[12.5px]">
             {plan.resources.map((r) => (
               <li key={`${r.kind}/${r.name}`} className="flex flex-wrap items-baseline gap-x-2">
-                <span className="w-14 shrink-0 font-mono text-[11.5px] text-muted-foreground">{r.action}</span>
+                <span className="w-14 shrink-0 font-mono text-[12px] text-muted-foreground">{r.action}</span>
                 <span className="text-muted-foreground">{r.kind}</span>
                 <span className="font-mono">{r.name}</span>
                 {r.detail && <span className="text-muted-foreground">{r.detail}</span>}
@@ -135,7 +135,7 @@ export function DeployPlanCard({
 
         {plan.env.length > 0 && (
           <div>
-            <h4 className="mb-1.5 text-[11.5px] text-subtle">Env vars</h4>
+            <h4 className="mb-1.5 text-[12px] text-subtle">Env vars</h4>
             <table className="w-full text-left text-[12.5px]">
               <caption className="sr-only">Env vars in this plan. Secret values are never shown.</caption>
               <thead className="sr-only">
@@ -197,7 +197,7 @@ export function DeployPlanCard({
         )}
 
         <div>
-          <h4 className="mb-1.5 text-[11.5px] text-subtle">Preflight</h4>
+          <h4 className="mb-1.5 text-[12px] text-subtle">Preflight</h4>
           <ul className="space-y-1 text-[12.5px]">
             {plan.preflight.map((c) => (
               <li key={c.name} className="flex items-baseline gap-2">
@@ -366,7 +366,7 @@ function PlanFact({
 }) {
   return (
     <div className={cn("min-w-0", wide && "col-span-2 sm:col-span-4")}>
-      <dt className="text-[11.5px] text-subtle">{label}</dt>
+      <dt className="text-[12px] text-subtle">{label}</dt>
       <dd className={cn("truncate", mono && "font-mono text-[12px]")} title={typeof children === "string" ? children : undefined}>
         {children}
       </dd>
