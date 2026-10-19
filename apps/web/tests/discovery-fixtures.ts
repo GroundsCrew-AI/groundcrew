@@ -42,6 +42,8 @@ export function connection(overrides: Partial<Connection> = {}): Connection {
     server: null,
     tier: "observe",
     deploy_role_arn: null,
+    regions: ["us-east-2"],
+    regions_chosen: false,
     error: null,
     resource_count: 21,
     last_discovery: null,

@@ -33,6 +33,7 @@ from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.discovery_schemas import (
     AwsCompleteIn,
     AwsOperateIn,
+    AwsRegionsIn,
     AwsStartIn,
     AwsStartOut,
     AwsTemplateUrlOut,
@@ -356,6 +357,22 @@ def _verify_operate_role(account: str, external_id: str) -> str:
             "the services and secrets Groundcrew may act on, then try again."
         ) from None
     return role_arn
+
+
+@router.put("/{connection_id}/aws/regions")
+async def aws_set_regions(
+    connection_id: uuid.UUID, body: AwsRegionsIn, user: CurrentUser, session: SessionDep
+) -> ConnectionOut:
+    """Choose the regions Groundcrew discovers, watches, and acts in for this AWS account (owner
+    only). An empty list goes back to the platform default (DISCOVERY_REGIONS). The read-only
+    and operate roles are global, so no stack update is needed; run a discovery afterwards to
+    find the resources in a newly added region."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "aws":
+        raise _unprocessable("Only an AWS connection has regions.")
+    conn.config = {**conn.config, "regions": body.regions}
+    await session.commit()
+    return await _out(session, conn)
 
 
 @router.post("/{connection_id}/aws/operate")

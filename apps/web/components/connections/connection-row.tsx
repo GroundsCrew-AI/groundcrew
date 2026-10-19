@@ -10,6 +10,7 @@ import type { Connection } from "@/lib/discovery";
 import { formatRelative } from "@/lib/format";
 
 import { AwsOperateDialog, isOperate } from "./aws-operate-dialog";
+import { AwsRegionsDialog } from "./aws-regions-dialog";
 import { K8sOperateDialog } from "./k8s-operate-dialog";
 import { AwsTierDialog } from "./aws-tier-dialog";
 import { RemoveConnection } from "./remove-connection";
@@ -29,7 +30,9 @@ export function connectionStatus(connection: Connection): { label: string; color
 function detail(connection: Connection): string {
   switch (connection.kind) {
     case "aws":
-      return connection.role_arn ?? `ExternalId ${connection.external_id ?? ""}`;
+      return [connection.role_arn ?? `ExternalId ${connection.external_id ?? ""}`, (connection.regions ?? []).join(", ")]
+        .filter(Boolean)
+        .join(" · ");
     case "github":
       return (connection.repos ?? []).join(", ") || "No repositories linked";
     case "vercel":
@@ -74,6 +77,7 @@ export function ConnectionRow({
   const last = connection.last_discovery;
   const [tierOpen, setTierOpen] = useState(false);
   const [operateOpen, setOperateOpen] = useState(false);
+  const [regionsOpen, setRegionsOpen] = useState(false);
   const awsConnected = connection.kind === "aws" && connection.status === "connected";
   const k8sConnected = connection.kind === "k8s" && connection.status === "connected";
   const ownerOnly = { disabled: !canManage, "aria-describedby": canManage ? undefined : reasonId };
@@ -135,6 +139,11 @@ export function ConnectionRow({
           </Button>
         )}
         {awsConnected && (
+          <Button size="sm" variant="ghost" onClick={() => setRegionsOpen(true)} {...ownerOnly}>
+            Regions
+          </Button>
+        )}
+        {awsConnected && (
           <Button size="sm" variant="ghost" onClick={() => setTierOpen(true)} {...ownerOnly}>
             {connection.tier === "deploy" ? "Turn off deploys" : "Enable deploys"}
           </Button>
@@ -147,6 +156,9 @@ export function ConnectionRow({
         <RemoveConnection connection={connection} disabled={!canManage} describedBy={ownerOnly["aria-describedby"]} />
       </div>
       {awsConnected && tierOpen && <AwsTierDialog connection={connection} open onOpenChange={setTierOpen} />}
+      {awsConnected && regionsOpen && (
+        <AwsRegionsDialog connection={connection} open onOpenChange={setRegionsOpen} onSaved={onRefresh} />
+      )}
       {awsConnected && operateOpen && (
         <AwsOperateDialog connection={connection} open onOpenChange={setOperateOpen} />
       )}

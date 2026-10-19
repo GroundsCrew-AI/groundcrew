@@ -31,7 +31,7 @@ from sqlalchemy import func, select, text
 from app import queue
 from app.agents.medic.events import Signal
 from app.config import Settings, get_settings
-from app.connectors.aws import AwsReader
+from app.connectors.aws import AwsReader, connection_regions
 from app.connectors.credentials import ConnectionCredentialsProvider
 from app.connectors.kubernetes import KubeReader
 from app.db.models import Connection, Edge, Incident, Job, JobStatus, Resource, Workspace
@@ -61,7 +61,11 @@ class Target:
 def default_reader_for(settings: Settings) -> ReaderFor:
     def reader_for(connection: Connection) -> AwsReader:
         provider = ConnectionCredentialsProvider([connection])
-        return AwsReader(provider.aws_session(connection.id), settings)
+        return AwsReader(
+            provider.aws_session(connection.id),
+            settings,
+            connection_regions(connection.config, settings),
+        )
 
     return reader_for
 

@@ -233,3 +233,15 @@ All additive.
   `ConnectionOut.capabilities` is now set for Kubernetes connections too (`observe`, `operate`).
 - `infra/k8s-readonly-rbac.yaml` adds `events`, `replicasets`, and `pods/log` (get): re-apply it
   on clusters connected before.
+
+## Per-connection AWS regions (2026-10-19)
+
+All additive; connections without a choice behave as before.
+- `PUT /connections/{connection_id}/aws/regions` `{regions: [...]}` (owner): the regions
+  Groundcrew discovers, watches, and acts in for that account (at most 10; AWS region names,
+  lower-cased and de-duplicated). `[]` goes back to the platform default DISCOVERY_REGIONS.
+- `ConnectionOut.regions` (AWS: the effective list) and `regions_chosen` (the owner chose them).
+- Emergency actions run in the region of the resource's ARN, which must be one of the
+  connection's regions.
+- The read-only role is global, so no stack update is needed. The Resource Explorer index exists
+  only in the stack's region; elsewhere discovery reads ECS, RDS, Lambda, and the rest directly.

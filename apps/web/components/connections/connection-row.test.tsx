@@ -18,7 +18,8 @@ describe("ConnectionRow", () => {
     });
     render(<ConnectionRow connection={conn} onRefresh={vi.fn()} refreshing={false} />);
     expect(screen.getByText("Connected")).toBeInTheDocument();
-    expect(screen.getByText(conn.role_arn!)).toBeInTheDocument();
+    // The role, then the regions Groundcrew reads in this account.
+    expect(screen.getByText(`${conn.role_arn!} · us-east-2`)).toBeInTheDocument();
     expect(screen.getByText(/Discovered just now, 21 resources/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View run" })).toHaveAttribute("href", "/runs/run-1");
   });

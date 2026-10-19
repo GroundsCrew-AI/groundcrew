@@ -39,7 +39,7 @@ from app.actions.base import (
     EmergencyActionError,
 )
 from app.config import Settings, get_settings
-from app.connectors.aws import error_text
+from app.connectors.aws import arn_region, connection_regions, error_text
 from app.connectors.credentials import ConnectionCredentialsProvider, CredentialsError
 from app.db.models import Connection
 from app.db.session import SessionFactory
@@ -110,21 +110,32 @@ class AwsEmergencyActions:
         session_factory: SessionFactory,
         settings: Settings | None = None,
         *,
-        client_for: Callable[[Connection, str], Client] | None = None,
-        read_client_for: Callable[[Connection, str], Client] | None = None,
+        client_for: Callable[[Connection, str, str], Client] | None = None,
+        read_client_for: Callable[[Connection, str, str], Client] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.settings = settings or get_settings()
         self._client_for = client_for or self._operate_client
         self._read_client_for = read_client_for or self._read_client
 
-    def _operate_client(self, conn: Connection, service: str) -> Client:
+    def _operate_client(self, conn: Connection, service: str, region: str) -> Client:
         session = ConnectionCredentialsProvider([conn]).aws_operate_session(conn.id)
-        return session.client(service, region_name=self.settings.discovery_regions[0])
+        return session.client(service, region_name=region)
 
-    def _read_client(self, conn: Connection, service: str) -> Client:
+    def _read_client(self, conn: Connection, service: str, region: str) -> Client:
         session = ConnectionCredentialsProvider([conn]).aws_session(conn.id)
-        return session.client(service, region_name=self.settings.discovery_regions[0])
+        return session.client(service, region_name=region)
+
+    def _region(self, conn: Connection, arn: str | None) -> str:
+        """The region of the resource acted on (from its ARN), which must be one of the
+        connection's regions; the connection's first region when there is no ARN."""
+        allowed = connection_regions(conn.config, self.settings)
+        region = arn_region(arn) or allowed[0]
+        if region not in allowed:
+            raise EmergencyActionError(
+                f"{region} is not one of this connection's regions ({', '.join(allowed)})."
+            )
+        return region
 
     async def _connection(self, connection_id: uuid.UUID) -> Connection:
         async with self.session_factory() as session:
@@ -133,10 +144,13 @@ class AwsEmergencyActions:
             raise EmergencyActionError("The AWS connection no longer exists.")
         return conn
 
-    async def _client(self, connection_id: uuid.UUID, service: str) -> Client:
+    async def _client(
+        self, connection_id: uuid.UUID, service: str, arn: str | None = None
+    ) -> Client:
         conn = await self._connection(connection_id)
+        region = self._region(conn, arn)
         try:
-            return await asyncio.to_thread(self._client_for, conn, service)
+            return await asyncio.to_thread(self._client_for, conn, service, region)
         except CredentialsError as exc:
             raise EmergencyActionError(str(exc)) from None
 
@@ -149,7 +163,8 @@ class AwsEmergencyActions:
         if not role:
             return None
         try:
-            iam = await asyncio.to_thread(self._read_client_for, conn, "iam")
+            region = connection_regions(conn.config, self.settings)[0]
+            iam = await asyncio.to_thread(self._read_client_for, conn, "iam", region)
             found = await self._call(iam, "get_role_policy", RoleName=role, PolicyName=role)
             return pass_role_patterns(found.get("PolicyDocument"))
         except (CredentialsError, EmergencyActionError, ValueError):
@@ -183,7 +198,7 @@ class AwsEmergencyActions:
     async def plan_ecs_rollback_service(
         self, connection_id: uuid.UUID, cluster: str, service: str
     ) -> ActionPlan:
-        ecs = await self._client(connection_id, "ecs")
+        ecs = await self._client(connection_id, "ecs", cluster)
         current = str((await self._service(ecs, cluster, service)).get("taskDefinition") or "")
         if not current:
             raise EmergencyActionError(f"{service} has no task definition.")
@@ -232,7 +247,7 @@ class AwsEmergencyActions:
     async def plan_secret_rollback_version(
         self, connection_id: uuid.UUID, secret_arn: str
     ) -> ActionPlan:
-        sm = await self._client(connection_id, "secretsmanager")
+        sm = await self._client(connection_id, "secretsmanager", secret_arn)
         secret = await self._call(sm, "describe_secret", SecretId=secret_arn)
         stages: dict[str, list[str]] = secret.get("VersionIdsToStages") or {}
         current = next((v for v, s in stages.items() if "AWSCURRENT" in s), None)
@@ -253,7 +268,7 @@ class AwsEmergencyActions:
     async def plan_force_redeploy(
         self, connection_id: uuid.UUID, cluster: str, service: str
     ) -> ActionPlan:
-        ecs = await self._client(connection_id, "ecs")
+        ecs = await self._client(connection_id, "ecs", cluster)
         found = await self._service(ecs, cluster, service)
         return ActionPlan(
             action=FORCE_REDEPLOY,
@@ -293,7 +308,9 @@ class AwsEmergencyActions:
 
         try:
             if plan.action == SECRET_ROLLBACK_VERSION:
-                sm = await self._client(plan.connection_id, "secretsmanager")
+                sm = await self._client(
+                    plan.connection_id, "secretsmanager", plan.params["secret_arn"]
+                )
                 secret = await self._call(sm, "describe_secret", SecretId=plan.params["secret_arn"])
                 stages: dict[str, list[str]] = secret.get("VersionIdsToStages") or {}
                 now = next((v for v, s in stages.items() if "AWSCURRENT" in s), None)
@@ -319,7 +336,7 @@ class AwsEmergencyActions:
                         "previous_version": str(plan.current),
                     },
                 )
-            ecs = await self._client(plan.connection_id, "ecs")
+            ecs = await self._client(plan.connection_id, "ecs", plan.params["cluster"])
             cluster, service = plan.params["cluster"], plan.params["service"]
             found = await self._service(ecs, cluster, service)
             if plan.action == ECS_ROLLBACK_SERVICE:

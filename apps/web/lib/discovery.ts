@@ -66,6 +66,21 @@ export function useAwsSetTier(workspaceId: string | undefined) {
   });
 }
 
+/** Choose the regions Groundcrew reads and acts in for one AWS account ([] = the default). */
+export function useAwsSetRegions(workspaceId: string | undefined) {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async ({ connectionId, regions }: { connectionId: string; regions: string[] }) =>
+      unwrap(
+        await api.PUT("/connections/{connection_id}/aws/regions", {
+          params: { path: { connection_id: connectionId } },
+          body: { regions },
+        }),
+      ),
+    onSettled: () => workspaceId && invalidate(workspaceId),
+  });
+}
+
 /** Turn approved emergency fixes on (verifies the groundcrew-operate role first) or off. */
 export function useAwsSetOperate(workspaceId: string | undefined) {
   const invalidate = useInvalidateWorkspace();

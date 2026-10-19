@@ -208,7 +208,27 @@ class ReadOnlyViolationError(AwsError):
 
 
 class RegionNotAllowedError(AwsError):
-    """A regional client was asked for outside DISCOVERY_REGIONS."""
+    """A regional client was asked for outside the connection's regions."""
+
+
+# Commercial and GovCloud region names: us-east-2, eu-central-1, ap-southeast-4, us-gov-west-1.
+AWS_REGION = re.compile(r"^[a-z]{2}(-gov)?-[a-z]+-\d{1,2}$")
+MAX_CONNECTION_REGIONS = 10
+
+
+def connection_regions(config: dict[str, Any] | None, settings: Settings) -> list[str]:
+    """The regions Groundcrew reads for one AWS connection: the list its owner chose
+    (`config["regions"]`), else DISCOVERY_REGIONS (the platform default, as before)."""
+    chosen = [
+        r for r in (config or {}).get("regions") or [] if isinstance(r, str) and AWS_REGION.match(r)
+    ]
+    return chosen[:MAX_CONNECTION_REGIONS] or list(settings.discovery_regions)
+
+
+def arn_region(arn: str | None) -> str | None:
+    """The region field of an ARN (arn:aws:ecs:eu-west-1:...), or None."""
+    parts = (arn or "").split(":")
+    return parts[3] if len(parts) > 4 and parts[0] == "arn" and AWS_REGION.match(parts[3]) else None
 
 
 def is_read_operation(name: str) -> bool:
@@ -460,24 +480,32 @@ class AwsSessions:
 
 
 class AwsReader:
-    """Read-only clients for one customer session, limited to DISCOVERY_REGIONS."""
+    """Read-only clients for one customer session, limited to the connection's regions
+    (`connection_regions`; DISCOVERY_REGIONS when none are given)."""
 
-    def __init__(self, session: boto3.Session, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        session: boto3.Session,
+        settings: Settings | None = None,
+        regions: list[str] | None = None,
+    ) -> None:
         self.session = session
         self.settings = settings or get_settings()
+        self._regions = list(regions) if regions else list(self.settings.discovery_regions)
         self._clients: dict[tuple[str, str], Any] = {}
         self._lock = threading.Lock()
 
     @property
     def regions(self) -> list[str]:
-        return list(self.settings.discovery_regions)
+        return list(self._regions)
 
     def client(self, service: str, region: str | None = None) -> Any:
         if service in GLOBAL_SERVICES:
             region = self.regions[0]
-        elif region is None or region not in self.settings.discovery_regions:
+        elif region is None or region not in self._regions:
             raise RegionNotAllowedError(
-                f"Region {region!r} is not in DISCOVERY_REGIONS ({', '.join(self.regions)})."
+                f"Region {region!r} is not one of this connection's regions "
+                f"({', '.join(self.regions)})."
             )
         key = (service, region)
         with self._lock:

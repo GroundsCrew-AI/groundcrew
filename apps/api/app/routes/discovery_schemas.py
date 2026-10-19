@@ -10,8 +10,10 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from app.config import get_settings
+from app.connectors.aws import AWS_REGION, MAX_CONNECTION_REGIONS, connection_regions
 from app.connectors.credentials import capabilities
 from app.db.models import Connection, Edge, Resource
 from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
@@ -72,6 +74,10 @@ class ConnectionOut(BaseModel):
     operate_role_arn: str | None = None
     # AWS: the region the connect stack was created in (CloudFormation console links).
     region: str | None = None
+    # AWS: the regions Groundcrew discovers, watches, and acts in for this account (the owner's
+    # choice, else the platform default DISCOVERY_REGIONS), and whether the owner chose them.
+    regions: list[str] | None = None
+    regions_chosen: bool = False
     # Kubernetes: namespaces the kubeconfig could list when it was verified.
     namespaces: int | None = None
     error: str | None = None
@@ -106,12 +112,33 @@ class ConnectionOut(BaseModel):
             capabilities=capabilities(conn) if conn.kind in ("aws", "k8s") else None,
             operate_role_arn=c.get("operate_role_arn"),
             region=c.get("region") if conn.kind == "aws" else None,
+            regions=connection_regions(c, get_settings()) if conn.kind == "aws" else None,
+            regions_chosen=conn.kind == "aws" and bool(c.get("regions")),
             namespaces=c.get("namespaces"),
             error=c.get("last_error"),
             resource_count=resource_count,
             last_discovery=last,
             created_at=conn.created_at,
         )
+
+
+class AwsRegionsIn(BaseModel):
+    """The regions to discover, watch, and act in for one AWS account. Empty: the platform
+    default (DISCOVERY_REGIONS)."""
+
+    regions: list[str] = Field(max_length=MAX_CONNECTION_REGIONS)
+
+    @field_validator("regions")
+    @classmethod
+    def _valid(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for region in value:
+            region = region.strip().lower()
+            if not AWS_REGION.match(region):
+                raise ValueError(f"{region!r} is not an AWS region name (like eu-west-1).")
+            if region not in out:
+                out.append(region)
+        return out
 
 
 class AwsStartIn(BaseModel):

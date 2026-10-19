@@ -36,6 +36,7 @@ class World:
         self.primary = "ecs-svc/2"
         self.stages = {BAD: ["AWSCURRENT"], GOOD: ["AWSPREVIOUS"]}
         self.calls: list[str] = []
+        self.regions: list[str] = []
         self.writes: list[tuple[str, dict[str, Any]]] = []
         # The revision a rollback goes to, and the operate role's PassRole scope (the stack's
         # OperatePassRoleArns), read with the read-only role. None: GetRolePolicy fails.
@@ -136,11 +137,12 @@ async def _setup(
         await session.commit()
         cid = conn.id
 
-    def client_for(conn: Connection, service: str) -> Any:
+    def client_for(conn: Connection, service: str, region: str) -> Any:
+        world.regions.append(region)
         session = fixture_session(world.responses(), world.calls, allowed=AWS_OPERATE_OPERATIONS)
         return session.client(service, region_name=REGION)
 
-    def read_client_for(conn: Connection, service: str) -> Any:
+    def read_client_for(conn: Connection, service: str, region: str) -> Any:
         session = fixture_session(world.responses(), world.calls, allowed=AWS_READ_OPERATIONS)
         return session.client(service, region_name=REGION)
 
