@@ -20,12 +20,13 @@ sys.path.insert(0, str(REPO_ROOT / "apps" / "api"))
 
 from sqlalchemy import select  # noqa: E402
 
-from app.accounts import upsert_user  # noqa: E402
+from app.accounts import OAuthProfile, oauth_sign_in  # noqa: E402
 from app.db.models import Connection, Edge, Resource, Workspace  # noqa: E402
 from app.db.session import get_engine, get_session_factory  # noqa: E402
-from app.security.auth import WebIdentity  # noqa: E402
 
-TEST_USER = WebIdentity(github_id=990001, login="e2e-tester", name="E2E Tester")
+TEST_USER = OAuthProfile(
+    provider="github", account_id="990001", login="e2e-tester", name="E2E Tester"
+)
 
 CONNECTIONS = [
     (
@@ -68,7 +69,7 @@ RESOURCES = [
 
 async def seed() -> None:
     async with get_session_factory()() as session:
-        user = await upsert_user(session, TEST_USER)
+        user = await oauth_sign_in(session, TEST_USER)
         workspace = await session.scalar(select(Workspace).where(Workspace.owner_id == user.id))
         if workspace is None:
             raise SystemExit("The test user has no workspace.")

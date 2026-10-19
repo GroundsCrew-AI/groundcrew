@@ -1,28 +1,41 @@
 """Workspaces as a team: create one, its name and settings, members and invites.
 
 Reading is for members; changing anything is for owners (403 for members, 404 for everyone
-else). A workspace always keeps at least one owner. Members are added by GitHub login: an
-existing user joins at once, anyone else gets an invite that applies when they first sign in.
+else). A workspace always keeps at least one owner. Members are added by email address or
+GitHub login: an existing user (with that confirmed address, or that GitHub account) joins at
+once; anyone else gets an invite that applies when they sign up or sign in. Email invites are
+also sent by email.
 """
 
+import logging
 import re
 import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from sqlalchemy import ColumnElement, func, select
 
-from app.accounts import ForbiddenError, NotFoundError, member_workspace, require_owner
+from app.accounts import (
+    ForbiddenError,
+    NotFoundError,
+    display_name,
+    member_workspace,
+    normalize_email,
+    require_owner,
+)
 from app.db.models import User, Workspace, WorkspaceInvite, WorkspaceMember, WorkspaceRole
-from app.routes.deps import CurrentUser, SessionDep
+from app.mail import Mailer, MailError, get_mailer, invite_mail
+from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.schemas import WorkspaceOut
 from app.workspace_settings import WorkspaceConfig, get_config, set_config
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+log = logging.getLogger(__name__)
 
 _LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+_EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$")
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
@@ -50,6 +63,7 @@ class MemberOut(BaseModel):
     user_id: uuid.UUID
     github_login: str | None
     name: str | None
+    email: str | None = None
     avatar_url: str | None
     role: WorkspaceRole
     joined_at: datetime
@@ -57,21 +71,32 @@ class MemberOut(BaseModel):
 
 class InviteOut(BaseModel):
     id: uuid.UUID
-    github_login: str
+    # One of the two is set.
+    github_login: str | None
+    email: str | None = None
     role: WorkspaceRole
     created_at: datetime
 
 
 class MembersOut(BaseModel):
     members: list[MemberOut]
-    # GitHub logins invited who have not signed in yet.
+    # People invited who have not joined yet.
     invites: list[InviteOut]
 
 
 class MemberAdd(BaseModel):
+    """Add by `email` or by `github_login` (exactly one)."""
+
     model_config = ConfigDict(extra="forbid")
-    github_login: str = Field(min_length=1, max_length=39, examples=["octocat"])
+    email: str | None = Field(default=None, max_length=320, examples=["ada@example.com"])
+    github_login: str | None = Field(default=None, min_length=1, max_length=40)
     role: WorkspaceRole = WorkspaceRole.member
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "MemberAdd":
+        if (self.email is None) == (self.github_login is None):
+            raise ValueError("Send either an email address or a GitHub login.")
+        return self
 
 
 class MemberUpdate(BaseModel):
@@ -108,6 +133,7 @@ async def _members(session: SessionDep, workspace_id: uuid.UUID) -> MembersOut:
                 user_id=u.id,
                 github_login=u.github_login,
                 name=u.name,
+                email=u.email,
                 avatar_url=u.avatar_url,
                 role=m.role,
                 joined_at=m.created_at,
@@ -115,7 +141,13 @@ async def _members(session: SessionDep, workspace_id: uuid.UUID) -> MembersOut:
             for m, u in rows
         ],
         invites=[
-            InviteOut(id=i.id, github_login=i.github_login, role=i.role, created_at=i.created_at)
+            InviteOut(
+                id=i.id,
+                github_login=i.github_login,
+                email=i.email,
+                role=i.role,
+                created_at=i.created_at,
+            )
             for i in invites
         ],
     )
@@ -216,19 +248,16 @@ async def list_members(
     return await _members(session, workspace_id)
 
 
-@router.post("/{workspace_id}/members")
-async def add_member(
-    workspace_id: uuid.UUID, body: MemberAdd, user: CurrentUser, session: SessionDep
-) -> MembersOut:
-    """Add someone by GitHub login (owners). They join at once if they have signed in to
-    Groundcrew before; otherwise the invite applies when they first sign in."""
-    await _owner(session, user, workspace_id)
-    login = body.github_login.strip().lstrip("@")
-    if not _LOGIN.match(login):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That is not a GitHub login.")
-    existing = await session.scalar(
-        select(User).where(func.lower(User.github_login) == login.lower())
-    )
+async def _add_or_invite(
+    session: SessionDep,
+    workspace_id: uuid.UUID,
+    existing: User | None,
+    invite_filter: ColumnElement[bool],
+    new_invite: WorkspaceInvite,
+    label: str,
+) -> bool:
+    """Add `existing` at once, or create (or update) the invite. True when a new invite was
+    created."""
     if existing is not None:
         member = await session.scalar(
             select(WorkspaceMember).where(
@@ -236,26 +265,80 @@ async def add_member(
             )
         )
         if member is not None:
-            raise HTTPException(status.HTTP_409_CONFLICT, f"{login} is already a member.")
-        session.add(WorkspaceMember(workspace_id=workspace_id, user_id=existing.id, role=body.role))
-    else:
-        invite = await session.scalar(
-            select(WorkspaceInvite).where(
-                WorkspaceInvite.workspace_id == workspace_id,
-                WorkspaceInvite.github_login == login.lower(),
-            )
+            raise HTTPException(status.HTTP_409_CONFLICT, f"{label} is already a member.")
+        session.add(
+            WorkspaceMember(workspace_id=workspace_id, user_id=existing.id, role=new_invite.role)
         )
-        if invite is None:
-            session.add(
-                WorkspaceInvite(
-                    workspace_id=workspace_id,
-                    github_login=login.lower(),
-                    role=body.role,
-                    invited_by=user.id,
-                )
+        return False
+    invite = await session.scalar(
+        select(WorkspaceInvite).where(WorkspaceInvite.workspace_id == workspace_id, invite_filter)
+    )
+    if invite is not None:
+        invite.role = new_invite.role
+        return False
+    session.add(new_invite)
+    return True
+
+
+@router.post("/{workspace_id}/members")
+async def add_member(
+    workspace_id: uuid.UUID,
+    body: MemberAdd,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    mailer: Annotated[Mailer, Depends(get_mailer)],
+) -> MembersOut:
+    """Add someone by email address or GitHub login (owners). They join at once if they have
+    an account (with that confirmed address, or that GitHub account); otherwise they are
+    invited, by email for an address, and join when they sign up or sign in."""
+    workspace = await _owner(session, user, workspace_id)
+    if body.email is not None:
+        email = normalize_email(body.email)
+        if not _EMAIL.match(email):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "That is not an email address."
             )
-        else:
-            invite.role = body.role
+        existing = await session.scalar(
+            select(User).where(func.lower(User.email) == email, User.email_verified_at.is_not(None))
+        )
+        invited = await _add_or_invite(
+            session,
+            workspace_id,
+            existing,
+            WorkspaceInvite.email == email,
+            WorkspaceInvite(
+                workspace_id=workspace_id, email=email, role=body.role, invited_by=user.id
+            ),
+            email,
+        )
+        await session.commit()
+        if invited:
+            try:
+                await mailer.send(invite_mail(settings, email, workspace.name, display_name(user)))
+            except MailError:
+                log.warning("invite email to workspace %s was not sent", workspace_id)
+        return await _members(session, workspace_id)
+
+    login = (body.github_login or "").strip().lstrip("@")
+    if not _LOGIN.match(login):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That is not a GitHub login.")
+    existing = await session.scalar(
+        select(User).where(func.lower(User.github_login) == login.lower())
+    )
+    await _add_or_invite(
+        session,
+        workspace_id,
+        existing,
+        WorkspaceInvite.github_login == login.lower(),
+        WorkspaceInvite(
+            workspace_id=workspace_id,
+            github_login=login.lower(),
+            role=body.role,
+            invited_by=user.id,
+        ),
+        login,
+    )
     await session.commit()
     return await _members(session, workspace_id)
 

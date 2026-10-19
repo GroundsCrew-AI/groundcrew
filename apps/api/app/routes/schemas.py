@@ -39,6 +39,35 @@ class UserOut(BaseModel):
     name: str | None
     email: str | None
     avatar_url: str | None
+    email_verified: bool = False
+    has_password: bool = False
+    # How this person can sign in: "password", "github", "google".
+    sign_in_methods: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def build(cls, user: User, methods: list[str]) -> "UserOut":
+        return cls(
+            id=user.id,
+            github_login=user.github_login,
+            name=user.name,
+            email=user.email,
+            avatar_url=user.avatar_url,
+            email_verified=user.email_verified_at is not None,
+            has_password=user.password_hash is not None,
+            sign_in_methods=methods,
+        )
+
+
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=200)
+
+
+class PasswordChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Required when the account has a password; GitHub and Google accounts can add one.
+    current_password: str | None = Field(default=None, max_length=200)
+    new_password: str = Field(min_length=1, max_length=200)
 
 
 class WorkspaceOut(BaseModel):

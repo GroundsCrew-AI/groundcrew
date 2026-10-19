@@ -13,7 +13,6 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 import app.routes.connections as connections_routes
-from app.accounts import upsert_user
 from app.config import Settings, get_settings
 from app.connectors.aws import AwsError, CallerIdentity
 from app.connectors.vercel import VercelClient
@@ -22,9 +21,8 @@ from app.db.session import SessionFactory, get_session_factory
 from app.discovery.engine import DiscoveryEngine, start_discovery
 from app.discovery.types import ConnectorError
 from app.main import app
-from app.security.auth import WebIdentity
 from app.security.crypto import decrypt, generate_key
-from tests.auth_helpers import TEST_JWT_SECRET, auth_headers
+from tests.auth_helpers import TEST_JWT_SECRET, auth_headers, github_user
 from tests.discovery_helpers import FAKE_VERCEL_TOKEN, github_app, load, mock_transport
 from tests.fakes import FakeLLM, reply
 from tests.test_discovery_engine import SUMMARY, Inventory
@@ -111,12 +109,11 @@ class Member:
 
 
 async def _member(sf: SessionFactory, github_id: int, login: str) -> Member:
+    user = await github_user(sf, github_id, login)
     async with sf() as s:
-        user = await upsert_user(s, WebIdentity(github_id=github_id, login=login))
         ws = await s.scalar(select(Workspace).where(Workspace.owner_id == user.id))
         assert ws is not None
-        await s.commit()
-        return Member(ws.id, auth_headers(github_id, login))
+        return Member(ws.id, auth_headers(user.id))
 
 
 @pytest.fixture

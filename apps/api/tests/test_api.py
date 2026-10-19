@@ -16,7 +16,6 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import select, text
 
-from app.accounts import upsert_user
 from app.agents.base import AgentRunner
 from app.config import Settings, get_settings
 from app.db.models import (
@@ -32,9 +31,8 @@ from app.db.models import (
 from app.db.session import SessionFactory, get_session_factory
 from app.llm.budget import PgUsageStore
 from app.main import app
-from app.security.auth import WebIdentity
 from app.worker import Worker
-from tests.auth_helpers import TEST_JWT_SECRET, auth_headers
+from tests.auth_helpers import TEST_JWT_SECRET, auth_headers, github_user
 from tests.fakes import FakeLLM, reply, tool_call
 
 pytestmark = pytest.mark.anyio
@@ -68,11 +66,11 @@ class Member:
 
 
 async def _member(sf: SessionFactory, github_id: int, login: str) -> Member:
+    user = await github_user(sf, github_id, login)
     async with sf() as session:
-        user = await upsert_user(session, WebIdentity(github_id=github_id, login=login))
         workspace = await session.scalar(select(Workspace).where(Workspace.owner_id == user.id))
         assert workspace is not None
-        return Member(user.id, workspace.id, auth_headers(github_id, login))
+        return Member(user.id, workspace.id, auth_headers(user.id))
 
 
 @pytest.fixture
@@ -400,7 +398,7 @@ async def test_me_and_summary(
     me = (await client.get("/me", headers=alice.headers)).json()
     assert me["user"]["github_login"] == "alice"
     assert me["workspaces"] == [
-        {"id": str(alice.workspace_id), "name": "alice's workspace", "role": "owner"}
+        {"id": str(alice.workspace_id), "name": "Alice's workspace", "role": "owner"}
     ]
     run_id = await _new_run(session_factory, alice.workspace_id)
     async with session_factory() as session:
@@ -468,7 +466,7 @@ async def test_other_users_cannot_see_a_workspace(
         resp = await client.request(method, path, json=body, headers=b)
         assert resp.status_code == 404, (method, path, resp.status_code)
     me = (await client.get("/me", headers=b)).json()
-    assert [w["name"] for w in me["workspaces"]] == ["bob's workspace"]
+    assert [w["name"] for w in me["workspaces"]] == ["Bob's workspace"]
     async with session_factory() as session:
         stored = await session.get_one(Approval, approval.id)
     assert stored.status == ApprovalStatus.pending

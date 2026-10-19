@@ -22,6 +22,7 @@ from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
 from app.routes import (
     approvals,
+    auth,
     connections,
     deploys,
     evidence,
@@ -106,14 +107,24 @@ app.add_middleware(
 )
 app.add_middleware(RequestIdMiddleware)
 
-# Request fields whose raw input must never come back in a 422 (POST /deploys env values).
-_SECRET_INPUT_FIELDS = frozenset({"env"})
+# Request fields whose raw input must never come back in a 422 (POST /deploys env values,
+# passwords, email link tokens).
+_SECRET_INPUT_FIELDS = frozenset({"env", "password", "current_password", "new_password", "token"})
 
 
 @app.exception_handler(ForbiddenError)
 async def forbidden(_request: Request, exc: ForbiddenError) -> JSONResponse:
     """Owner-only actions by a member: 403 with the reason (they can see the workspace)."""
     return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(auth.AuthFlowError)
+async def auth_failure(_request: Request, exc: auth.AuthFlowError) -> JSONResponse:
+    """Sign-in failures carry a code the web app maps to the next step (confirm your email,
+    reset your password, wait)."""
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.detail, "code": exc.code}
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -129,7 +140,9 @@ async def validation_error(_request: Request, exc: RequestValidationError) -> JS
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
 
-# Every route except /health and the SSE stream requires the signed-in user (CurrentUser).
+# Every route except /health, /ready, and the SSE stream requires the signed-in user
+# (CurrentUser); /auth requires the web server's service token instead.
+app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(workspace_admin.router)
 app.include_router(runs.router)

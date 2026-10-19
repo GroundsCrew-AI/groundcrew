@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.accounts import upsert_user
 from app.config import Settings, get_settings
 from app.db.models import User
 from app.db.session import SessionFactory, get_session, get_session_factory
@@ -34,14 +33,21 @@ async def current_user(
     session: SessionDep,
     settings: SettingsDep,
 ) -> User:
-    """The signed-in user, from the internal JWT the web app attaches to every call."""
+    """The signed-in user, from the internal JWT the web app attaches to every call. A session
+    that started before the password was changed or reset is refused."""
     try:
         identity = verify_internal_token(token, settings)
     except AuthConfigError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from None
     except AuthError as exc:
         raise _unauthorized(str(exc)) from None
-    return await upsert_user(session, identity)
+    user = await session.get(User, identity.user_id)
+    if user is None:
+        raise _unauthorized("Sign in again.")
+    valid_after = user.sessions_valid_after
+    if valid_after is not None and identity.auth_time < int(valid_after.timestamp()):
+        raise _unauthorized("Your session ended. Sign in again.")
+    return user
 
 
 CurrentUser = Annotated[User, Depends(current_user)]

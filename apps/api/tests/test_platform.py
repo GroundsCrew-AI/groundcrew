@@ -29,6 +29,7 @@ def _prod(**overrides: Any) -> Settings:
         "internal_jwt_secret": SecretStr(SECRET),
         "approval_token_key": SecretStr(SECRET),
         "web_origin": "https://app.example.com",
+        "smtp_host": "smtp.example.com",
         **overrides,
     }
     return Settings(_env_file=None, **values)
@@ -45,6 +46,9 @@ def test_production_needs_its_secrets_and_a_real_origin() -> None:
     ]
     with pytest.raises(RuntimeError, match="APP_ENV=production cannot start"):
         bad.require_production_ready()
+    # Email sign-up needs a way to send its links, unless it is off.
+    assert any("SMTP_HOST" in p for p in _prod(smtp_host=None).production_problems())
+    assert _prod(smtp_host=None, password_auth_enabled=False).production_problems() == []
     # Dev and test run without them.
     Settings(_env_file=None, app_env="dev").require_production_ready()
 

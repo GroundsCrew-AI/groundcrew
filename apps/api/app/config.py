@@ -293,8 +293,32 @@ class Settings(BaseSettings):
     # Auth. The web app signs a short-lived HS256 JWT with this secret for every API call
     # (and the API signs 60-second SSE stream tokens with it). At least 32 characters.
     internal_jwt_secret: SecretStr | None = None
-    # The web app's origin. CORS is allowed for it only, for the direct SSE connection.
+    # The web app's origin. CORS is allowed for it only, for the direct SSE connection. Links in
+    # emails (verify, reset password, invites) point here too.
     web_origin: str = "http://localhost:3000"
+
+    # Accounts. Email and password sign-up next to GitHub and Google (the web app enables those
+    # when their OAuth credentials are set). New passwords need PASSWORD_MIN_LENGTH characters.
+    password_auth_enabled: bool = True
+    password_min_length: int = 10
+    # Password accounts sign in only after opening the link sent to their address.
+    auth_require_verified_email: bool = True
+    # After this many wrong passwords in a row the account waits AUTH_LOCKOUT_MINUTES.
+    auth_lockout_attempts: int = 10
+    auth_lockout_minutes: int = 15
+    email_verification_hours: int = 48
+    password_reset_minutes: int = 60
+
+    # Outgoing email (verification links, password resets, invites). Without SMTP_HOST, dev and
+    # test write the message to the log instead; staging and production refuse to start while
+    # email sign-up is on.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    # "starttls" (port 587), "ssl" (port 465), or "none" (a local relay only).
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
+    email_from: str = "Groundcrew <no-reply@localhost>"
 
     # Logging
     log_level: str = "INFO"
@@ -319,6 +343,11 @@ class Settings(BaseSettings):
             problems.append("INTERNAL_JWT_SECRET is shorter than 32 characters")
         if "localhost" in self.web_origin or "127.0.0.1" in self.web_origin:
             problems.append("WEB_ORIGIN still points at localhost")
+        if self.password_auth_enabled and not self.smtp_host:
+            problems.append(
+                "SMTP_HOST is not set, so email sign-up cannot send verification links "
+                "(set it, or PASSWORD_AUTH_ENABLED=false)"
+            )
         return problems
 
     def require_production_ready(self) -> None:

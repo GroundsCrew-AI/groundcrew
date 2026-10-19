@@ -1,8 +1,13 @@
-"""Internal JWTs from the web app, and short-lived SSE stream tokens.
+"""Internal JWTs from the web app, service tokens for sign-in, and SSE stream tokens.
 
 The web app (Next.js) signs an HS256 JWT with INTERNAL_JWT_SECRET for every API call it
-proxies. It lives 5 minutes and carries the GitHub identity of the signed-in user. The API
-never sees the user's GitHub token or the Auth.js session.
+proxies. It lives 5 minutes and carries the signed-in user's id and when they signed in
+(`auth_time`, checked against users.sessions_valid_after). The API never sees the user's
+provider tokens or the Auth.js session.
+
+Sign-in itself (/auth/*: OAuth accounts, passwords, email links) is called by the web server
+only, with a service token: same secret, its own audience, 60 seconds. A user's token is
+never accepted there, and a service token is never accepted anywhere else.
 
 SSE goes from the browser straight to the API, so it cannot carry that JWT. Instead the API
 issues a 60-second stream token bound to one run and one user (POST /runs/{id}/stream-token).
@@ -20,6 +25,7 @@ from app.config import Settings
 ALGORITHM = "HS256"
 WEB_ISSUER = "groundcrew-web"
 API_AUDIENCE = "groundcrew-api"
+SERVICE_AUDIENCE = "groundcrew-api-auth"
 STREAM_ISSUER = "groundcrew-api"
 STREAM_AUDIENCE = "groundcrew-sse"
 STREAM_TOKEN_TTL = timedelta(seconds=60)
@@ -40,11 +46,9 @@ class AuthConfigError(AuthError):
 class WebIdentity(BaseModel):
     """Claims the web app puts in the internal JWT."""
 
-    github_id: int = Field(gt=0)
-    login: str = Field(min_length=1, max_length=100)
-    email: str | None = Field(default=None, max_length=320)
-    name: str | None = Field(default=None, max_length=200)
-    avatar_url: str | None = Field(default=None, max_length=500)
+    user_id: uuid.UUID
+    # When this web session signed in (seconds since the epoch).
+    auth_time: int = Field(ge=0)
 
 
 def _secret(settings: Settings) -> str:
@@ -80,15 +84,16 @@ def _decode(token: str, settings: Settings, *, audience: str, issuer: str) -> di
 def verify_internal_token(token: str, settings: Settings) -> WebIdentity:
     claims = _decode(token, settings, audience=API_AUDIENCE, issuer=WEB_ISSUER)
     try:
-        return WebIdentity(
-            github_id=int(claims["sub"]),
-            login=claims.get("login", ""),
-            email=claims.get("email"),
-            name=claims.get("name"),
-            avatar_url=claims.get("avatar_url"),
-        )
-    except (ValueError, ValidationError):
+        return WebIdentity(user_id=uuid.UUID(claims["sub"]), auth_time=claims.get("auth_time"))
+    except (ValueError, TypeError, ValidationError):
         raise AuthError("Invalid token claims.") from None
+
+
+def verify_service_token(token: str, settings: Settings) -> None:
+    """A token the web server signed for the sign-in endpoints. Raises AuthError otherwise."""
+    claims = _decode(token, settings, audience=SERVICE_AUDIENCE, issuer=WEB_ISSUER)
+    if claims.get("sub") != "web":
+        raise AuthError("Invalid token claims.")
 
 
 def create_stream_token(

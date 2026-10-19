@@ -9,7 +9,14 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, func, or_, select
 
-from app.accounts import NotFoundError, member_workspace, user_workspaces
+from app.accounts import (
+    NotFoundError,
+    SignInError,
+    change_password,
+    member_workspace,
+    sign_in_methods,
+    user_workspaces,
+)
 from app.agents.medic.events import PENDING_FOLLOWUP_STATES
 from app.config import get_settings
 from app.db.models import (
@@ -30,12 +37,15 @@ from app.routes.runs import rejected_counts
 from app.routes.schemas import (
     ApprovalOut,
     MeOut,
+    PasswordChange,
+    ProfileUpdate,
     RunOut,
     RunPage,
     UserOut,
     WorkspaceOut,
     WorkspaceSummary,
 )
+from app.security.passwords import hash_password_async, password_problem
 
 router = APIRouter(tags=["workspaces"])
 
@@ -51,13 +61,55 @@ async def _check_member(session: SessionDep, user: User, workspace_id: uuid.UUID
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.") from None
 
 
-@router.get("/me")
-async def me(user: CurrentUser, session: SessionDep) -> MeOut:
+async def _me(session: SessionDep, user: User) -> MeOut:
     workspaces = await user_workspaces(session, user)
     return MeOut(
-        user=UserOut.model_validate(user),
+        user=UserOut.build(user, await sign_in_methods(session, user)),
         workspaces=[WorkspaceOut.build(w, r) for w, r in workspaces],
     )
+
+
+@router.get("/me")
+async def me(user: CurrentUser, session: SessionDep) -> MeOut:
+    return await _me(session, user)
+
+
+@router.patch("/me")
+async def update_me(body: ProfileUpdate, user: CurrentUser, session: SessionDep) -> MeOut:
+    """Change your display name."""
+    user.name = body.name.strip() or user.name
+    await session.commit()
+    return await _me(session, user)
+
+
+@router.post("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_my_password(
+    body: PasswordChange, user: CurrentUser, session: SessionDep, settings: SettingsDep
+) -> None:
+    """Change your password, or add one to a GitHub or Google account (it then signs in with
+    its email too). Every session ends, this one included: sign in again with the new one."""
+    if not settings.password_auth_enabled:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Email sign-in is turned off on this server."
+        )
+    if not user.email:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Your account has no email address, so a password would not sign you in.",
+        )
+    problem = password_problem(
+        body.new_password, min_length=settings.password_min_length, email=user.email
+    )
+    if problem:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, problem)
+    try:
+        await change_password(
+            session, user, body.current_password, await hash_password_async(body.new_password)
+        )
+    except SignInError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Your current password is not right."
+        ) from None
 
 
 def _encode_cursor(run: Run) -> str:
