@@ -194,6 +194,8 @@ export function useReportIncident() {
     mutationFn: async (body: IncidentCreate) => unwrap(await api.POST("/incidents", { body })),
     onSuccess: (_created, body) => {
       void client.invalidateQueries({ queryKey: ["incidents", body.workspace_id] });
+      // The sidebar badge and the overview count open incidents.
+      void client.invalidateQueries({ queryKey: ["summary", body.workspace_id] });
     },
   });
 }
