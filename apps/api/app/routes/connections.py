@@ -406,17 +406,25 @@ async def aws_set_operate(
 
 
 async def _k8s_operate_namespaces(conn: Connection, namespaces: list[str]) -> list[str]:
-    """The namespaces (of the cluster's discovered Deployments) where the kubeconfig's identity
-    may patch Deployments and list ReplicaSets, or [""] when it may everywhere."""
+    """The namespaces (of the cluster's discovered Deployments and StatefulSets) where the
+    kubeconfig's identity may patch Deployments and list ReplicaSets, or patch StatefulSets and
+    list ControllerRevisions, or [""] when it may everywhere. Each fix's plan checks again for
+    its own kind (app.actions.k8s.OPERATE_RIGHTS)."""
     from app.security.crypto import decrypt
 
     operator = kube.live_operator(decrypt(conn.secret_encrypted or ""))
     try:
 
         async def allowed(ns: str | None) -> bool:
-            return await operator.can_i(
-                "patch", "apps", "deployments", ns
-            ) and await operator.can_i("list", "apps", "replicasets", ns)
+            for workloads, revisions in (
+                ("deployments", "replicasets"),
+                ("statefulsets", "controllerrevisions"),
+            ):
+                if await operator.can_i("patch", "apps", workloads, ns) and await operator.can_i(
+                    "list", "apps", revisions, ns
+                ):
+                    return True
+            return False
 
         if await allowed(None):
             return [""]
@@ -433,9 +441,9 @@ async def k8s_set_operate(
 ) -> ConnectionOut:
     """Turn approved emergency fixes on or off for a connected cluster. On: checks (with
     SelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list
-    ReplicaSets, cluster-wide or in a namespace of a discovered Deployment
-    (infra/k8s-operate-rbac.yaml grants that); nothing changes if it may not. Every fix still
-    needs a person's approval."""
+    ReplicaSets (or patch StatefulSets and list ControllerRevisions), cluster-wide or in a
+    namespace of a discovered Deployment or StatefulSet (infra/k8s-operate-rbac.yaml grants
+    that); nothing changes if it may not. Every fix still needs a person's approval."""
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     if conn.kind != "k8s" or conn.status != "connected":
         raise _unprocessable("Only a connected Kubernetes cluster can run emergency fixes.")
@@ -445,7 +453,7 @@ async def k8s_set_operate(
             for r in await session.scalars(
                 select(Resource).where(
                     Resource.connection_id == conn.id,
-                    Resource.type == "k8s:deployment",
+                    Resource.type.in_(("k8s:deployment", "k8s:statefulset")),
                     Resource.stale.is_(False),
                 )
             )
@@ -461,10 +469,11 @@ async def k8s_set_operate(
             raise _unprocessable(str(exc)) from None
         if not allowed:
             raise _unprocessable(
-                "This kubeconfig's identity may not patch Deployments"
+                "This kubeconfig's identity may not patch Deployments or StatefulSets"
                 + (f" in {', '.join(namespaces)}" if namespaces else "")
                 + ". Apply infra/k8s-operate-rbac.yaml (or a Role with patch on deployments and "
-                "list on replicasets in your app's namespace), then try again."
+                "list on replicasets, or patch on statefulsets and list on controllerrevisions, "
+                "in your app's namespace), then try again."
             )
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     conn.config = {

@@ -3,7 +3,8 @@ linked resources and open (or join) incidents.
 
 Linked resources are ECS services (with the log groups they `logs_to`) and RDS databases (with
 the log groups of the services that `reads` them, for the slow-query rule) on a connected AWS
-connection, and Deployments on a connected Kubernetes cluster (app/incidents/k8s_rules.py:
+connection, and Deployments and StatefulSets on a connected Kubernetes cluster
+(app/incidents/k8s_rules.py:
 rollout, pods, and their logs), not stale. All calls are read-only, through the connection's
 guarded read-only session or its kubeconfig. One pass:
 
@@ -38,13 +39,14 @@ from app.db.models import Connection, Edge, Incident, Job, JobStatus, Resource, 
 from app.db.session import SessionFactory
 from app.incidents import k8s_rules, rules
 from app.incidents.store import OPEN_STATUSES, Opened, open_incident, resource_group
+from app.telemetry import k8s
 from app.workspace_settings import get_config
 
 logger = logging.getLogger("groundcrew.incidents")
 
 WATCH_JOB: Final = "watch_incidents"
 WATCH_TYPES = ("ecs:service", "rds:db", "lambda:function", "ec2:instance")
-K8S_WATCH_TYPES = ("k8s:deployment",)
+K8S_WATCH_TYPES = ("k8s:deployment", "k8s:statefulset")
 CHECK_TIMEOUT_SECONDS = 30.0
 
 ReaderFor = Callable[[Connection], AwsReader]
@@ -174,7 +176,9 @@ async def _check(
             kube = await asyncio.to_thread(kube_for, target.connection)
             try:
                 return await asyncio.wait_for(
-                    k8s_rules.check_deployment(kube, r.id, namespace, r.name, now),
+                    k8s_rules.check_workload(
+                        kube, r.id, namespace, r.name, now, k8s.RESOURCE_KINDS[r.type]
+                    ),
                     CHECK_TIMEOUT_SECONDS,
                 )
             finally:

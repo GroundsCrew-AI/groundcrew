@@ -701,3 +701,42 @@ How to set up a cluster: docs/kind.md, Real clusters. API: docs/api-changes.md.
   web lib/discovery.ts, lib/api/{openapi.json,schema.d.ts},
   components/connections/{connection-row,k8s-deploy-settings-dialog}.tsx; docs/kind.md,
   docs/api-changes.md.
+
+## Kubernetes StatefulSets, ConfigMap and Secret changes (2026-10-19)
+
+Kubernetes incidents worked for Deployments only. StatefulSets now get the same loop, and a
+ConfigMap or Secret change (no new revision) shows up as a cause.
+- Detect: crashing / unready pods and log spikes as for Deployments; a stuck rollout
+  (currentRevision != updateRevision, pods failing, `k8s.STUCK_AFTER` = 5 min after the new
+  ControllerRevision) is `k8s_rollout_failed`; down when 0 pods are ready. The watcher checks
+  `k8s:statefulset` too.
+- Evidence: ControllerRevisions (`apps/v1`, owned by the StatefulSet, `.revision`) are its
+  revisions and `deploy` markers. ConfigMaps and Secrets the pod template uses (envFrom, env
+  valueFrom, volumes, projected volumes) are read as metadata only through a raw ApiClient call
+  with `Accept: application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1`
+  (`KubeReader.list_metadata`; a response that is not a PartialObjectMetadataList is refused);
+  one whose newest managedFields time is in the window is a `config` / `secret_change` marker,
+  ref `<ns>/configmap/<name>@<resourceVersion>`. Missing rights: skipped with a note line.
+- Fix: `k8s_rollout_undo` / `k8s_rollout_restart` take `kind` (deployment | statefulset); a
+  StatefulSet's undo patches `/spec/template` with the previous ControllerRevision's
+  `data.spec.template` (its `$patch` marker dropped). Deployment params and plan hashes are
+  unchanged. Plan-time access reviews: patch statefulsets + list controllerrevisions. For a
+  Kubernetes ConfigMap / Secret cause Medic proposes no emergency action, only "<ConfigMap>
+  changed at <time>; restore it, then Groundcrew can restart <workload>." The ECS secret path
+  is unchanged (Kubernetes markers never select it).
+- Verify: rollout complete (currentRevision == updateRevision, readyReplicas == replicas) and
+  pods healthy; waits while the StatefulSet rolls out.
+- RBAC: readonly adds controllerrevisions and list configmaps (metadata only), with an optional
+  commented-out secrets block; operate adds patch statefulsets, get/list controllerrevisions.
+- Tests: tests/test_k8s_statefulsets.py (14: detect, stuck vs fresh rollout, watcher, evidence,
+  undo plan + rights, params/hash compatibility, `$patch` dropped, verify, Medic end to end,
+  ConfigMap/Secret markers without values, missing secrets rights, live reader Accept header,
+  refusing a response with data, restore note instead of a rollback). Existing Deployment tests
+  unchanged.
+- Files (teammate-owned, changed with the user's OK, marked *): app/telemetry/k8s.py*,
+  app/telemetry/collect.py*, app/incidents/k8s_rules.py*, app/incidents/watcher.py*,
+  app/agents/medic/fixes.py*, app/agents/medic/verify.py*, app/agents/medic/agent.py*;
+  app/actions/{base,fake,k8s}.py, app/connectors/kubernetes.py, app/routes/connections.py;
+  infra/k8s-readonly-rbac.yaml, infra/k8s-operate-rbac.yaml; web
+  components/connections/k8s-operate-dialog.tsx, lib/api/{openapi.json,schema.d.ts};
+  docs/api-changes.md, docs/phase5-interfaces.md.

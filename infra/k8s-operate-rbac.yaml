@@ -5,9 +5,13 @@
 #   - k8s_rollout_undo: put the previous revision's pod template back (kubectl rollout undo)
 #   - k8s_rollout_restart: replace every pod with the same template (kubectl rollout restart)
 #
-# Both are PATCHes on a Deployment, and each one runs only after a person approves it.
-# Groundcrew checks these permissions (SelfSubjectAccessReview) when you turn emergency fixes on
-# for the cluster on the Connections page, and again before it proposes a fix.
+# Both are PATCHes on a Deployment or a StatefulSet's pod template, and each one runs only after
+# a person approves it. A Deployment's previous revision is read from its ReplicaSets, a
+# StatefulSet's from its ControllerRevisions. Groundcrew checks these permissions
+# (SelfSubjectAccessReview) when you turn emergency fixes on for the cluster on the Connections
+# page (patch deployments + list replicasets, or patch statefulsets + list controllerrevisions),
+# and again, for the workload's own kind, before it proposes a fix. No ConfigMap or Secret write:
+# when one of those caused an incident, Medic asks you to restore it.
 #
 #   kubectl apply -f infra/k8s-operate-rbac.yaml
 #
@@ -19,10 +23,10 @@ metadata:
   name: groundcrew-operator
 rules:
   - apiGroups: ["apps"]
-    resources: ["deployments"]
+    resources: ["deployments", "statefulsets"]
     verbs: ["patch"]
   - apiGroups: ["apps"]
-    resources: ["replicasets"]
+    resources: ["replicasets", "controllerrevisions"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

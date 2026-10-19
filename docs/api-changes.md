@@ -279,3 +279,26 @@ All additive.
   `Secret <app>-registry` step (imagePullSecret, value masked), and `expected_url` is
   `https://<app>.<app_domain>` with TLS. Preflight has a new `other` check: it fails on a cluster
   that is not the local kind cluster and has no deploy settings.
+
+## Kubernetes StatefulSets, ConfigMap and Secret changes (2026-10-19)
+
+All additive; no new endpoint or field.
+- Incidents now cover `k8s:statefulset` resources like `k8s:deployment`: `k8s_pods_crashing`,
+  `health_check`, `log_error_spike`, and `k8s_rollout_failed` for a stuck rollout
+  (currentRevision is not updateRevision, pods failing, 5+ minutes after the new revision).
+  Evidence sources for them are keyed `k8s:statefulset/<name>`.
+- Change markers (`ChangeMarker`): a StatefulSet's ControllerRevision created in the window is a
+  `deploy` marker, ref `<ns>/<name> revision <n>`. A ConfigMap or Secret a workload's pods use
+  that changed in the window is a `config` marker (ref `<ns>/configmap/<name>@<resourceVersion>`)
+  or a `secret_change` marker (ref `<ns>/secret/<name>@<resourceVersion>`), label
+  "ConfigMap shop/web-config changed". Read as metadata only; no value ever reaches Groundcrew.
+- `ActionPlan.params` for `k8s_rollout_undo` / `k8s_rollout_restart` on a StatefulSet:
+  `{namespace, statefulset, kind: "statefulset"}`. A Deployment's stay `{namespace, deployment}`.
+- A ConfigMap or Secret change as the cause gets no emergency fix, only a note in the run
+  ("ConfigMap shop/web-config changed at <time>; restore it, then Groundcrew can restart web.").
+- `POST /connections/{id}/k8s/operate` also accepts a kubeconfig that may patch StatefulSets and
+  list ControllerRevisions (and counts discovered StatefulSets' namespaces); the 422 text now
+  says "may not patch Deployments or StatefulSets".
+- RBAC: infra/k8s-readonly-rbac.yaml adds `controllerrevisions` and `list configmaps` (metadata
+  only), plus an optional, commented-out `list secrets` block; infra/k8s-operate-rbac.yaml adds
+  `patch statefulsets` and `get/list controllerrevisions`. Re-apply them to get these.

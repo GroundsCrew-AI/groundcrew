@@ -298,18 +298,26 @@ def plan_readers(
                 return await vercel.read_project(clients.vercel(conn), pid, name, since, until)
 
             job = vc
-        elif r.type == "k8s:deployment":
-            key = f"k8s:{r.name}"
+        elif r.type in k8s.RESOURCE_KINDS:
+            workload_kind = k8s.RESOURCE_KINDS[r.type]
+            key = (
+                f"k8s:{r.name}"
+                if workload_kind == k8s.DEPLOYMENT
+                else f"k8s:{workload_kind}/{r.name}"
+            )
             ns, conn = str(r.config.get("namespace") or r.region or "default"), r.connection_id
 
             async def kd(
-                ns: str = ns, conn: uuid.UUID | None = conn, name: str = r.name
+                ns: str = ns,
+                conn: uuid.UUID | None = conn,
+                name: str = r.name,
+                kind: str = workload_kind,
             ) -> ReaderOutput:
                 if conn is None:
                     raise LookupError(f"{name} has no Kubernetes connection.")
                 reader = await asyncio.to_thread(clients.kube, conn)
                 try:
-                    return await k8s.read_workload(reader, ns, name, since, until)
+                    return await k8s.read_workload(reader, ns, name, since, until, kind)
                 finally:
                     close = getattr(reader, "close", None)
                     if close is not None:

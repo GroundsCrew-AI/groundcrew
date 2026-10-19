@@ -11,9 +11,12 @@ objects are never listed. Pod and template env values are dropped except endpoin
 (same rule as AWS task definitions); secretKeyRef / envFrom keep only the Secret's name.
 
 Incidents (app/incidents/k8s_rules.py, app/telemetry/k8s.py) also read ReplicaSets (a
-Deployment's revisions), Warning events, pod status (container states, restarts, readiness;
-never the pod spec's env), and pod logs. `LiveKubeOperator` adds the one write Medic's
-approved emergency fixes make: patching a Deployment's pod template (rollout undo, restart).
+Deployment's revisions), ControllerRevisions (a StatefulSet's), Warning events, pod status
+(container states, restarts, readiness; never the pod spec's env), and pod logs. ConfigMaps
+and Secrets are read as metadata only (`list_metadata`: a PartialObjectMetadataList, asked for
+with the Accept header METADATA_ACCEPT), so no value in them ever reaches Groundcrew.
+`LiveKubeOperator` adds the one write Medic's approved emergency fixes make: patching a
+Deployment's or StatefulSet's pod template (rollout undo, restart).
 """
 
 import asyncio
@@ -40,9 +43,15 @@ K8S_READ_KINDS: frozenset[str] = frozenset(
         "statefulsets",
         "pods",
         "replicasets",
+        "controllerrevisions",
         "events",
     }
 )
+# Kinds read only as metadata (`list_metadata`), never with `list`: their data holds values.
+K8S_METADATA_KINDS: frozenset[str] = frozenset({"configmaps", "secrets"})
+# Asks the API server for metadata only (names, resourceVersion, managedFields): the response
+# is a PartialObjectMetadataList, which has no `data` at all.
+METADATA_ACCEPT = "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1"
 
 
 class KubeReadRefusedError(ConnectorError):
@@ -53,6 +62,31 @@ def check_kind(kind: str) -> str:
     if kind not in K8S_READ_KINDS:
         raise KubeReadRefusedError(f"Groundcrew does not list {kind} in Kubernetes.")
     return kind
+
+
+def check_metadata_kind(kind: str) -> str:
+    if kind not in K8S_METADATA_KINDS:
+        raise KubeReadRefusedError(f"Groundcrew does not read {kind} metadata in Kubernetes.")
+    return kind
+
+
+def metadata_shape(item: dict[str, Any]) -> dict[str, Any]:
+    """What Groundcrew keeps of a ConfigMap or Secret: name, namespace, resourceVersion,
+    creation time, and when (and by which manager) each managed field set was written.
+    Everything else (data, stringData, annotations that may embed values) is dropped."""
+    meta = item.get("metadata") or {}
+    return {
+        "metadata": {
+            "name": meta.get("name"),
+            "namespace": meta.get("namespace"),
+            "resourceVersion": meta.get("resourceVersion"),
+            "creationTimestamp": meta.get("creationTimestamp"),
+            "managedFields": [
+                {k: f.get(k) for k in ("manager", "operation", "time")}
+                for f in meta.get("managedFields") or []
+            ],
+        }
+    }
 
 
 # What a stored kubeconfig may contain. Credentials must be inline: an exec plugin or auth
@@ -186,12 +220,23 @@ class KubeReader(Protocol):
         """Every container's log lines, each prefixed with its RFC 3339 timestamp."""
         ...
 
+    async def list_metadata(self, kind: str, namespace: str) -> "builtins.list[dict[str, Any]]":
+        """ConfigMaps or Secrets in a namespace, metadata only (`metadata_shape`), never
+        their data."""
+        ...
+
 
 class KubeOperator(KubeReader, Protocol):
     async def patch_deployment(
         self, namespace: str, name: str, patch: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """A JSON patch on a Deployment; returns the Deployment after it."""
+        ...
+
+    async def patch_statefulset(
+        self, namespace: str, name: str, patch: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """A JSON patch on a StatefulSet; returns the StatefulSet after it."""
         ...
 
     async def can_i(self, verb: str, group: str, resource: str, namespace: str | None) -> bool:
@@ -267,12 +312,34 @@ class FixtureKubeReader:
         lines = self.logs.get(f"{namespace}/{pod}", "").splitlines()
         return "\n".join(lines[-tail_lines:])
 
+    async def list_metadata(self, kind: str, namespace: str) -> "builtins.list[dict[str, Any]]":
+        """The fixture's ConfigMaps or Secrets in `metadata_shape`, as the live reader returns
+        them: a fixture item's data never comes back."""
+        check_metadata_kind(kind)
+        self.calls.append(f"metadata {kind}")
+        return [
+            metadata_shape(i)
+            for i in self.items.get(kind, [])
+            if (i.get("metadata") or {}).get("namespace") == namespace
+        ]
+
     async def patch_deployment(
         self, namespace: str, name: str, patch: "builtins.list[dict[str, Any]]"
     ) -> dict[str, Any]:
-        """Applies `replace` ops to the fixture Deployment (all the actions use)."""
+        return self._patch("deployments", namespace, name, patch)
+
+    async def patch_statefulset(
+        self, namespace: str, name: str, patch: "builtins.list[dict[str, Any]]"
+    ) -> dict[str, Any]:
+        return self._patch("statefulsets", namespace, name, patch)
+
+    def _patch(
+        self, kind: str, namespace: str, name: str, patch: "builtins.list[dict[str, Any]]"
+    ) -> dict[str, Any]:
+        """Applies `replace` / `add` ops to the fixture workload (all the actions use).
+        `patches` records every one, Deployments' and StatefulSets' alike."""
         self.patches.append((namespace, name, patch))
-        for item in self.items.get("deployments", []):
+        for item in self.items.get(kind, []):
             meta = item.get("metadata") or {}
             if meta.get("namespace") == namespace and meta.get("name") == name:
                 for op in patch:
@@ -282,7 +349,7 @@ class FixtureKubeReader:
                         target = target.setdefault(part, {})
                     target[parts[-1]] = op["value"]
                 return item
-        raise ConnectorError(f"Deployment {namespace}/{name} not found.")
+        raise ConnectorError(f"{kind} {namespace}/{name} not found.")
 
     async def can_i(self, verb: str, group: str, resource: str, namespace: str | None) -> bool:
         return (verb, resource) in self.allowed
@@ -391,6 +458,10 @@ class LiveKubeReader:
                 apps.list_namespaced_replica_set,
                 apps.list_replica_set_for_all_namespaces,
             ),
+            "controllerrevisions": (
+                apps.list_namespaced_controller_revision,
+                apps.list_controller_revision_for_all_namespaces,
+            ),
             "events": (core.list_namespaced_event, core.list_event_for_all_namespaces),
         }
         namespaced, everywhere = table[kind]
@@ -449,6 +520,49 @@ class LiveKubeReader:
         self.calls.append(kind)
         return await asyncio.to_thread(self._list, kind, namespace, label_selector, field_selector)
 
+    def _list_metadata(self, kind: str, namespace: str) -> "builtins.list[dict[str, Any]]":
+        """GET /api/v1/namespaces/<ns>/<kind> with Accept: METADATA_ACCEPT through the raw
+        ApiClient (the typed list_namespaced_secret would ask for the data, and get it). A
+        response that is not a PartialObjectMetadataList is refused and dropped unread."""
+        items: list[dict[str, Any]] = []
+        token: str | None = None
+        while True:
+            query: list[tuple[str, Any]] = [("limit", PAGE_SIZE)]
+            if token:
+                query.append(("continue", token))
+            try:
+                page = self._api.call_api(
+                    f"/api/v1/namespaces/{{namespace}}/{kind}",
+                    "GET",
+                    path_params={"namespace": namespace},
+                    query_params=query,
+                    header_params={"Accept": METADATA_ACCEPT},
+                    auth_settings=["BearerToken"],
+                    _preload_content=False,
+                    _request_timeout=REQUEST_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:
+                raise ConnectorError(_explain(exc, f"{kind} (metadata)", self.server)) from None
+            try:
+                data = json.loads(page.data)
+            except ValueError:
+                raise ConnectorError(
+                    f"The cluster returned something that is not JSON for {kind}."
+                ) from None
+            if data.get("kind") != "PartialObjectMetadataList":
+                raise ConnectorError(
+                    f"The cluster did not return {kind} as metadata only; Groundcrew skipped them."
+                )
+            items += [metadata_shape(i) for i in data.get("items") or []]
+            token = (data.get("metadata") or {}).get("continue")
+            if not token or len(items) >= self.max_items:
+                return items[: self.max_items]
+
+    async def list_metadata(self, kind: str, namespace: str) -> "builtins.list[dict[str, Any]]":
+        check_metadata_kind(kind)
+        self.calls.append(f"metadata {kind}")
+        return await asyncio.to_thread(self._list_metadata, kind, namespace)
+
     def _logs(self, namespace: str, pod: str, since_seconds: int, tail_lines: int) -> str:
         try:
             response = self._core.read_namespaced_pod_log(
@@ -483,9 +597,16 @@ class LiveKubeOperator(LiveKubeReader):
     """The reader plus the writes approved emergency fixes make. Only app.actions.k8s creates
     one, after checking the connection's operate capability."""
 
-    def _patch(self, namespace: str, name: str, patch: list[dict[str, Any]]) -> dict[str, Any]:
+    def _patch(
+        self, kind: str, namespace: str, name: str, patch: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        method = (
+            self._apps.patch_namespaced_stateful_set
+            if kind == "statefulsets"
+            else self._apps.patch_namespaced_deployment
+        )
         try:
-            response = self._apps.patch_namespaced_deployment(
+            response = method(
                 name,
                 namespace,
                 patch,
@@ -493,14 +614,19 @@ class LiveKubeOperator(LiveKubeReader):
                 _preload_content=False,
             )
         except Exception as exc:
-            raise ConnectorError(_explain(exc, "deployments (patch)", self.server)) from None
+            raise ConnectorError(_explain(exc, f"{kind} (patch)", self.server)) from None
         result: dict[str, Any] = json.loads(response.data)
         return result
 
     async def patch_deployment(
         self, namespace: str, name: str, patch: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        return await asyncio.to_thread(self._patch, namespace, name, patch)
+        return await asyncio.to_thread(self._patch, "deployments", namespace, name, patch)
+
+    async def patch_statefulset(
+        self, namespace: str, name: str, patch: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self._patch, "statefulsets", namespace, name, patch)
 
     def _review(self, verb: str, group: str, resource: str, namespace: str | None) -> bool:
         from kubernetes import client

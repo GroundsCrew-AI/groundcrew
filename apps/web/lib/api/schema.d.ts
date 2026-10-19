@@ -532,9 +532,9 @@ export interface paths {
          * K8S Set Operate
          * @description Turn approved emergency fixes on or off for a connected cluster. On: checks (with
          *     SelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list
-         *     ReplicaSets, cluster-wide or in a namespace of a discovered Deployment
-         *     (infra/k8s-operate-rbac.yaml grants that); nothing changes if it may not. Every fix still
-         *     needs a person's approval.
+         *     ReplicaSets (or patch StatefulSets and list ControllerRevisions), cluster-wide or in a
+         *     namespace of a discovered Deployment or StatefulSet (infra/k8s-operate-rbac.yaml grants
+         *     that); nothing changes if it may not. Every fix still needs a person's approval.
          */
         post: operations["k8s_set_operate_connections__connection_id__k8s_operate_post"];
         delete?: never;

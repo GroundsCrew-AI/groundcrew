@@ -1,21 +1,26 @@
-"""Emergency actions on a Kubernetes Deployment, through the connection's kubeconfig.
+"""Emergency actions on a Kubernetes Deployment or StatefulSet, through the connection's
+kubeconfig.
 
 Only for connections with the operate capability: an owner turns it on (POST
 /connections/{id}/k8s/operate), and Groundcrew first checks with SelfSubjectAccessReviews that
-the kubeconfig's identity may patch Deployments and list ReplicaSets
-(infra/k8s-operate-rbac.yaml grants exactly that). Every action still needs a person's approval;
-`execute` consumes it before the write and re-reads the Deployment first: if its revision moved
-since the plan, nothing is written (ok=False).
+the kubeconfig's identity may patch Deployments and list ReplicaSets, or patch StatefulSets and
+list ControllerRevisions (infra/k8s-operate-rbac.yaml grants exactly that). Every action still
+needs a person's approval; `execute` consumes it before the write and re-reads the workload
+first: if its revision moved since the plan, nothing is written (ok=False).
 
 - k8s_rollout_undo: what `kubectl rollout undo` does. The pod template of the previous
-  revision's ReplicaSet (without its pod-template-hash label) replaces the Deployment's
-  template; Kubernetes rolls it out as a new revision.
+  revision (a Deployment's ReplicaSet without its pod-template-hash label, a StatefulSet's
+  ControllerRevision `data.spec.template`) replaces the workload's template; Kubernetes rolls
+  it out as a new revision.
 - k8s_rollout_restart: what `kubectl rollout restart` does. The template gets a
   kubectl.kubernetes.io/restartedAt annotation, so every pod is replaced (they read
   ConfigMaps and Secrets again).
 
-`current` and `desired` are "<namespace>/<name> revision <n>", the same text as the deploy
-change markers (app.telemetry.k8s.change_ref), so Medic can tell a direct revert.
+Plans carry `params` {"namespace", "deployment": <name>} for a Deployment (as before, so its
+plan hashes do not change) and {"namespace", "statefulset": <name>, "kind": "statefulset"} for
+a StatefulSet (`app.actions.base.k8s_workload` reads either). `current` and `desired` are
+"<namespace>/<name> revision <n>", the same text as the deploy change markers
+(app.telemetry.k8s.change_ref), so Medic can tell a direct revert.
 """
 
 import copy
@@ -32,6 +37,8 @@ from app.actions.base import (
     ActionPlan,
     ActionResult,
     EmergencyActionError,
+    k8s_params,
+    k8s_workload,
 )
 from app.config import Settings, get_settings
 from app.connectors.credentials import capabilities
@@ -44,6 +51,11 @@ from app.telemetry import k8s
 
 RESTARTED_AT = "kubectl.kubernetes.io/restartedAt"
 OperatorFor = Callable[[Connection], KubeOperator]
+# What the kubeconfig's identity must be allowed to do, per workload kind: (verb, resource).
+OPERATE_RIGHTS: dict[str, tuple[tuple[str, str], ...]] = {
+    k8s.DEPLOYMENT: (("patch", "deployments"),),
+    k8s.STATEFULSET: (("patch", "statefulsets"), ("list", "controllerrevisions")),
+}
 
 
 def default_operator_for(connection: Connection) -> KubeOperator:
@@ -61,14 +73,24 @@ def _close(operator: KubeOperator) -> None:
         close()
 
 
-def rollback_template(replicaset: dict[str, Any]) -> dict[str, Any]:
-    """The ReplicaSet's pod template as a Deployment template: its pod-template-hash label is
-    Kubernetes' own and is dropped (kubectl rollout undo does the same)."""
-    template = copy.deepcopy((replicaset.get("spec") or {}).get("template") or {})
+def rollback_template(revision: dict[str, Any]) -> dict[str, Any]:
+    """The revision's pod template as the workload's template. A ReplicaSet's
+    pod-template-hash label is Kubernetes' own and is dropped (kubectl rollout undo does the
+    same); a ControllerRevision's stored "$patch" marker is dropped too."""
+    template = copy.deepcopy(k8s.revision_template(revision))
     labels = (template.get("metadata") or {}).get("labels")
     if isinstance(labels, dict):
         labels.pop(k8s.POD_TEMPLATE_HASH, None)
     return template
+
+
+async def _patch(
+    operator: KubeOperator, kind: str, namespace: str, name: str, patch: list[dict[str, Any]]
+) -> None:
+    if kind == k8s.STATEFULSET:
+        await operator.patch_statefulset(namespace, name, patch)
+    else:
+        await operator.patch_deployment(namespace, name, patch)
 
 
 class K8sEmergencyActions:
@@ -99,30 +121,34 @@ class K8sEmergencyActions:
             raise EmergencyActionError(str(exc)) from None
 
     async def _workload(
-        self, operator: KubeOperator, namespace: str, deployment: str
+        self, operator: KubeOperator, namespace: str, name: str, kind: str = k8s.DEPLOYMENT
     ) -> k8s.Workload:
-        """The Deployment as it is now. Refuses first when the kubeconfig's identity may not
-        patch Deployments in its namespace, so nobody approves a fix the cluster would refuse."""
+        """The workload as it is now. Refuses first when the kubeconfig's identity may not
+        patch it (and, for a StatefulSet, list its ControllerRevisions) in its namespace, so
+        nobody approves a fix the cluster would refuse."""
+        label = k8s.KINDS[k8s.check_workload_kind(kind)][2]
         try:
-            if not await operator.can_i("patch", "apps", "deployments", namespace):
-                raise EmergencyActionError(
-                    f"The cluster's kubeconfig may not patch Deployments in {namespace} "
-                    "(infra/k8s-operate-rbac.yaml grants it)."
-                )
-            found = await k8s.fetch_workload(operator, namespace, deployment)
+            for verb, resource in OPERATE_RIGHTS[kind]:
+                if not await operator.can_i(verb, "apps", resource, namespace):
+                    what = f"{label}s" if verb == "patch" else "ControllerRevisions"
+                    raise EmergencyActionError(
+                        f"The cluster's kubeconfig may not {verb} {what} in {namespace} "
+                        "(infra/k8s-operate-rbac.yaml grants it)."
+                    )
+            found = await k8s.fetch_workload(operator, namespace, name, kind)
         except ConnectorError as exc:
             raise EmergencyActionError(str(exc)) from None
         if found is None:
-            raise EmergencyActionError(f"Deployment {namespace}/{deployment} not found.")
+            raise EmergencyActionError(f"{label} {namespace}/{name} not found.")
         return found
 
     @staticmethod
     def _previous(workload: k8s.Workload) -> tuple[int, dict[str, Any]]:
-        current = k8s.revision(workload.deployment)
+        current = k8s.current_revision(workload)
         older = [
             rs
-            for rs in workload.replicasets
-            if (k8s.revision(rs) or 0) < (current or 0) and (rs.get("spec") or {}).get("template")
+            for rs in workload.revisions
+            if (k8s.revision(rs) or 0) < (current or 0) and k8s.revision_template(rs)
         ]
         if current is None or not older:
             raise EmergencyActionError(f"{workload.name} has no previous revision to roll back to.")
@@ -132,48 +158,56 @@ class K8sEmergencyActions:
     # ------------------------------------------------------------------ plans (read)
 
     async def plan_k8s_rollout_undo(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self,
+        connection_id: uuid.UUID,
+        namespace: str,
+        name: str,
+        kind: str = k8s.DEPLOYMENT,
     ) -> ActionPlan:
         operator = await self._operator(connection_id)
         try:
-            workload = await self._workload(operator, namespace, deployment)
+            workload = await self._workload(operator, namespace, name, kind)
         finally:
             _close(operator)
-        current = k8s.revision(workload.deployment)
+        current = k8s.current_revision(workload)
         previous, rs = self._previous(workload)
-        now_image = k8s.images((workload.deployment.get("spec") or {}).get("template") or {})
-        old_image = k8s.images((rs.get("spec") or {}).get("template") or {})
+        now_image = k8s.images(workload.template)
+        old_image = k8s.images(k8s.revision_template(rs))
         return ActionPlan(
             action=K8S_ROLLOUT_UNDO,
             connection_id=connection_id,
-            target=f"{namespace}/{deployment}",
-            params={"namespace": namespace, "deployment": deployment},
-            current=k8s.change_ref(namespace, deployment, current),
-            desired=k8s.change_ref(namespace, deployment, previous),
+            target=f"{namespace}/{name}",
+            params=k8s_params(namespace, name, kind),
+            current=k8s.change_ref(namespace, name, current),
+            desired=k8s.change_ref(namespace, name, previous),
             summary=(
-                f"Roll {deployment} back to revision {previous} ({old_image}); now revision "
+                f"Roll {name} back to revision {previous} ({old_image}); now revision "
                 f"{current} ({now_image})"
             ),
             planned_at=datetime.now(UTC),
         )
 
     async def plan_k8s_rollout_restart(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self,
+        connection_id: uuid.UUID,
+        namespace: str,
+        name: str,
+        kind: str = k8s.DEPLOYMENT,
     ) -> ActionPlan:
         operator = await self._operator(connection_id)
         try:
-            workload = await self._workload(operator, namespace, deployment)
+            workload = await self._workload(operator, namespace, name, kind)
         finally:
             _close(operator)
-        current = k8s.revision(workload.deployment)
+        current = k8s.current_revision(workload)
         return ActionPlan(
             action=K8S_ROLLOUT_RESTART,
             connection_id=connection_id,
-            target=f"{namespace}/{deployment}",
-            params={"namespace": namespace, "deployment": deployment},
-            current=k8s.change_ref(namespace, deployment, current),
+            target=f"{namespace}/{name}",
+            params=k8s_params(namespace, name, kind),
+            current=k8s.change_ref(namespace, name, current),
             desired=None,
-            summary=f"Replace every {deployment} pod (revision {current}, same template)",
+            summary=f"Replace every {name} pod (revision {current}, same template)",
             planned_at=datetime.now(UTC),
         )
 
@@ -202,25 +236,25 @@ class K8sEmergencyActions:
                 **kw,
             )
 
-        namespace, name = plan.params["namespace"], plan.params["deployment"]
+        kind, namespace, name = k8s_workload(plan.params)
         try:
             operator = await self._operator(plan.connection_id)
         except EmergencyActionError as exc:
             return result(False, "Not run.", error=str(exc))
         try:
-            workload = await self._workload(operator, namespace, name)
-            now = k8s.change_ref(namespace, name, k8s.revision(workload.deployment))
+            workload = await self._workload(operator, namespace, name, kind)
+            now = k8s.change_ref(namespace, name, k8s.current_revision(workload))
             if now != plan.current:
                 return result(
                     False,
-                    "Not run: the Deployment changed since the plan was approved.",
+                    f"Not run: the {workload.label} changed since the plan was approved.",
                     error=f"it is at {now}, the plan expected {plan.current}",
                 )
             if plan.action == K8S_ROLLOUT_UNDO:
                 wanted = next(
                     (
                         rs
-                        for rs in workload.replicasets
+                        for rs in workload.revisions
                         if k8s.change_ref(namespace, name, k8s.revision(rs)) == plan.desired
                     ),
                     None,
@@ -229,10 +263,16 @@ class K8sEmergencyActions:
                     return result(
                         False,
                         "Not run: the previous revision is gone.",
-                        error=f"no ReplicaSet for {plan.desired}",
+                        error=(
+                            "no "
+                            + ("ControllerRevision" if kind == k8s.STATEFULSET else "ReplicaSet")
+                            + f" for {plan.desired}"
+                        ),
                     )
                 template = rollback_template(wanted)
-                await operator.patch_deployment(
+                await _patch(
+                    operator,
+                    kind,
                     namespace,
                     name,
                     [{"op": "replace", "path": "/spec/template", "value": template}],
@@ -242,14 +282,14 @@ class K8sEmergencyActions:
                     plan.summary,
                     details={"image": k8s.images(template), "rolled_back_to": str(plan.desired)},
                 )
-            template_meta = ((workload.deployment.get("spec") or {}).get("template") or {}).get(
-                "metadata"
-            ) or {}
+            template_meta = workload.template.get("metadata") or {}
             annotations = {
                 **(template_meta.get("annotations") or {}),
                 RESTARTED_AT: datetime.now(UTC).isoformat(),
             }
-            await operator.patch_deployment(
+            await _patch(
+                operator,
+                kind,
                 namespace,
                 name,
                 [
