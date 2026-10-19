@@ -45,6 +45,8 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Any], ...] = (
     (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b"), REDACTED),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), REDACTED),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), REDACTED),
+    # Slack incoming webhooks: the path is the credential.
+    (re.compile(r"\b(hooks\.slack\.com/services/)[A-Za-z0-9/_-]+"), rf"\1{REDACTED}"),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), REDACTED),
     # key=value / "key": "value" where the key names a secret. Pure numbers stay (max_tokens: 20).
     (

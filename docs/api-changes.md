@@ -279,3 +279,24 @@ All additive.
   `Secret <app>-registry` step (imagePullSecret, value masked), and `expected_url` is
   `https://<app>.<app_domain>` with TLS. Preflight has a new `other` check: it fails on a cluster
   that is not the local kind cluster and has no deploy settings.
+
+## Incident and approval notifications (2026-10-19)
+
+All additive.
+- `WorkspaceConfig.notifications` (`NotificationConfig`): `email` (`members`, `owners`, or
+  `none`; default `owners`) and four toggles, `incident_opened`, `approval_needed`,
+  `incident_resolved`, `incident_failed` (default on). `PATCH /workspaces/{id}` still replaces
+  `settings` as a whole, except that leaving `notifications` out keeps the saved ones (older
+  clients do not reset them).
+- `WorkspaceUpdate.slack_webhook_url` (owners): a Slack incoming webhook
+  (`https://hooks.slack.com/services/...`, else 422) saves it, Fernet-encrypted in
+  `workspaces.settings["slack_webhook"]`; `null` removes it; left out keeps it. 503 without
+  `SECRETS_KEY`. The URL is never returned: `WorkspaceDetail.slack_saved` says one is saved.
+- `POST /workspaces/{id}/notifications/test` (owners; 403 for members): sends a sample to every
+  channel that is set up, now. `NotificationTestOut {results: [{channel: "slack" | "email", ok,
+  detail}]}`, one per channel; `[]` when none is set up.
+- New job kind `notify` (`app/notifications.py`, max 5 attempts): one per channel and email
+  recipient, enqueued in the event's transaction; payload `{event_key, event, incident_id,
+  approval_ids, channel, user_id?}`. An event key that was already enqueued is not enqueued again.
+- Messages link to `{WEB_ORIGIN}/incidents/{id}`, never to approve or reject (link scanners open
+  links; approving stays an authenticated action in the app).
