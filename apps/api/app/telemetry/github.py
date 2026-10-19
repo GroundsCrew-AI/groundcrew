@@ -5,6 +5,7 @@ service to the commit that touched its task definition or a migration. Commits a
 also change markers for the timeline chart.
 """
 
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -19,6 +20,35 @@ MAX_FILES = 12
 # A commit pushed a little before the window still explains an incident inside it (the deploy
 # takes a few minutes), so commits are read from this much earlier.
 LOOKBACK = timedelta(minutes=30)
+
+
+# Words in a workflow's file name or display name that make its runs deploys: deploy.yml,
+# release.yml, cd.yml, ci-cd.yml, publish.yml, "Ship to production", promote-prod.yml.
+_DEPLOY_WORDS = frozenset(
+    {
+        "deploy",
+        "deployment",
+        "deploys",
+        "release",
+        "releases",
+        "cd",
+        "publish",
+        "ship",
+        "prod",
+        "production",
+        "rollout",
+        "promote",
+        "delivery",
+    }
+)
+
+
+def is_deploy_workflow(run: dict[str, Any]) -> bool:
+    """A workflow run that deploys, by whole words of its file path or name ("cd" in ci-cd.yml
+    counts; "abcd.yml" does not)."""
+    text = f"{run.get('path') or ''} {run.get('name') or ''}".lower()
+    words = set(re.split(r"[^a-z0-9]+", text))
+    return bool(words & _DEPLOY_WORDS) or "deploy" in text
 
 
 def _iso(at: datetime) -> str:
@@ -95,7 +125,7 @@ async def read_repo(
             out.lines.append(line(created, SOURCE, full, f"{run} started at {sha}"))
         out.changes.append(
             ChangeMarker(
-                kind="deploy" if "deploy" in path.lower() else "other",
+                kind="deploy" if is_deploy_workflow(r) else "other",
                 ref=str(r.get("id")),
                 at=created,
                 label=f"{path} {r.get('conclusion') or r.get('status')} at {sha}",
