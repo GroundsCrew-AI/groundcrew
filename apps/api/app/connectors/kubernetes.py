@@ -90,6 +90,11 @@ def _private(host: str) -> bool:
     )
 
 
+# The same check for other hosts Groundcrew reaches for a cluster (a deploy registry, an app
+# domain, a verify URL; app.targets.k8s_deploy).
+is_private_host = _private
+
+
 def check_kubeconfig(data: Any, *, allow_private: bool | None = None) -> dict[str, Any]:
     """Refuse a kubeconfig that could run commands, read files, or reach internal addresses
     from Groundcrew's servers. Returns the parsed config. `allow_private` (default: the

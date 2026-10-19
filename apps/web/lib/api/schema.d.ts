@@ -492,6 +492,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/k8s/deploy-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * K8S Set Deploy Settings
+         * @description Where this cluster's deploys go: the image registry (push credentials optional, the
+         *     token stored encrypted and never returned), an optional imagePullSecret, the Ingress class,
+         *     app domain, and TLS. A cluster without them deploys like the local kind cluster.
+         */
+        put: operations["k8s_set_deploy_settings_connections__connection_id__k8s_deploy_settings_put"];
+        post?: never;
+        /**
+         * K8S Clear Deploy Settings
+         * @description Forget the deploy settings (and the saved registry token): back to the local kind
+         *     defaults.
+         */
+        delete: operations["k8s_clear_deploy_settings_connections__connection_id__k8s_deploy_settings_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/k8s/operate": {
         parameters: {
             query?: never;
@@ -1520,6 +1547,7 @@ export interface components {
             created_at: string;
             /** Deploy Role Arn */
             deploy_role_arn?: string | null;
+            deploy_settings?: components["schemas"]["K8sDeploySettingsOut"] | null;
             /** Error */
             error?: string | null;
             /** External Id */
@@ -2796,6 +2824,61 @@ export interface components {
              */
             id: string;
             role: components["schemas"]["WorkspaceRole"];
+        };
+        /**
+         * K8sDeploySettingsIn
+         * @description Where a real cluster's deploys go (app.targets.k8s_deploy). Without these a cluster
+         *     deploys like the local kind cluster.
+         */
+        K8sDeploySettingsIn: {
+            /** App Domain */
+            app_domain?: string | null;
+            /**
+             * Ingress Class
+             * @default nginx
+             */
+            ingress_class: string;
+            /** Public Url Base */
+            public_url_base?: string | null;
+            /**
+             * Pull Secret
+             * @default false
+             */
+            pull_secret: boolean;
+            /** Registry */
+            registry: string;
+            /**
+             * Tls
+             * @default false
+             */
+            tls: boolean;
+            /** Tls Cluster Issuer */
+            tls_cluster_issuer?: string | null;
+            /** Token */
+            token?: string | null;
+            /** Username */
+            username?: string | null;
+        };
+        /** K8sDeploySettingsOut */
+        K8sDeploySettingsOut: {
+            /** App Domain */
+            app_domain: string | null;
+            /** Ingress Class */
+            ingress_class: string;
+            /** Public Url Base */
+            public_url_base: string | null;
+            /** Pull Secret */
+            pull_secret: boolean;
+            /** Registry */
+            registry: string;
+            /** Tls */
+            tls: boolean;
+            /** Tls Cluster Issuer */
+            tls_cluster_issuer: string | null;
+            /** Token Saved */
+            token_saved: boolean;
+            /** Username */
+            username: string | null;
         };
         /**
          * K8sOperateIn
@@ -4923,6 +5006,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    k8s_set_deploy_settings_connections__connection_id__k8s_deploy_settings_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["K8sDeploySettingsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    k8s_clear_deploy_settings_connections__connection_id__k8s_deploy_settings_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
                 };
             };
             /** @description Validation Error */

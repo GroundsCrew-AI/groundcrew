@@ -11,6 +11,7 @@ import { formatRelative } from "@/lib/format";
 
 import { AwsOperateDialog, isOperate } from "./aws-operate-dialog";
 import { AwsRegionsDialog } from "./aws-regions-dialog";
+import { K8sDeploySettingsDialog } from "./k8s-deploy-settings-dialog";
 import { K8sOperateDialog } from "./k8s-operate-dialog";
 import { AwsTierDialog } from "./aws-tier-dialog";
 import { RemoveConnection } from "./remove-connection";
@@ -78,6 +79,7 @@ export function ConnectionRow({
   const [tierOpen, setTierOpen] = useState(false);
   const [operateOpen, setOperateOpen] = useState(false);
   const [regionsOpen, setRegionsOpen] = useState(false);
+  const [deployOpen, setDeployOpen] = useState(false);
   const awsConnected = connection.kind === "aws" && connection.status === "connected";
   const k8sConnected = connection.kind === "k8s" && connection.status === "connected";
   const ownerOnly = { disabled: !canManage, "aria-describedby": canManage ? undefined : reasonId };
@@ -101,6 +103,14 @@ export function ConnectionRow({
           )}
           {(connection.kind === "aws" || connection.kind === "k8s") && isOperate(connection) && (
             <span className="rounded-full border px-2 text-[11.5px] text-muted-foreground">Emergency fixes</span>
+          )}
+          {connection.kind === "k8s" && connection.deploy_settings && (
+            <span
+              className="max-w-64 truncate rounded-full border px-2 text-[11.5px] text-muted-foreground"
+              title={`Images go to ${connection.deploy_settings.registry}`}
+            >
+              Deploys to {connection.deploy_settings.registry}
+            </span>
           )}
         </div>
         <p className="truncate font-mono text-[12px] text-muted-foreground" title={detail(connection)}>
@@ -148,6 +158,11 @@ export function ConnectionRow({
             {connection.tier === "deploy" ? "Turn off deploys" : "Enable deploys"}
           </Button>
         )}
+        {k8sConnected && (
+          <Button size="sm" variant="ghost" onClick={() => setDeployOpen(true)} {...ownerOnly}>
+            Deploy settings
+          </Button>
+        )}
         {(awsConnected || k8sConnected) && (
           <Button size="sm" variant="ghost" onClick={() => setOperateOpen(true)} {...ownerOnly}>
             {isOperate(connection) ? "Turn off emergency fixes" : "Enable emergency fixes"}
@@ -164,6 +179,9 @@ export function ConnectionRow({
       )}
       {k8sConnected && operateOpen && (
         <K8sOperateDialog connection={connection} open onOpenChange={setOperateOpen} />
+      )}
+      {k8sConnected && deployOpen && (
+        <K8sDeploySettingsDialog connection={connection} open onOpenChange={setDeployOpen} />
       )}
     </li>
   );

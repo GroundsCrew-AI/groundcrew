@@ -45,12 +45,15 @@ from app.routes.discovery_schemas import (
     GitHubInstallationsOut,
     GitHubLinkIn,
     GitHubRepoOut,
+    K8sDeploySettingsIn,
     K8sOperateIn,
     KubernetesConnectIn,
     VercelConnectIn,
 )
 from app.routes.schemas import RunCreated
 from app.security.crypto import SecretsKeyError, encrypt
+from app.targets.k8s_deploy import CONFIG_KEY as DEPLOY_SETTINGS_KEY
+from app.targets.k8s_deploy import DeploySettingsError, build_settings, deploy_settings
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 
@@ -469,6 +472,65 @@ async def k8s_set_operate(
         "operate": bool(body.enabled),
         "operate_namespaces": allowed if body.enabled else [],
     }
+    await session.commit()
+    return await _out(session, conn)
+
+
+def _allow_private(settings: Settings) -> bool:
+    """Same rule as check_kubeconfig: private addresses only with K8S_ALLOW_PRIVATE_SERVERS
+    (default on in APP_ENV=dev, for the local kind registry)."""
+    if settings.k8s_allow_private_servers is not None:
+        return settings.k8s_allow_private_servers
+    return settings.app_env == "dev"
+
+
+@router.put("/{connection_id}/k8s/deploy-settings")
+async def k8s_set_deploy_settings(
+    connection_id: uuid.UUID,
+    body: K8sDeploySettingsIn,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> ConnectionOut:
+    """Where this cluster's deploys go: the image registry (push credentials optional, the
+    token stored encrypted and never returned), an optional imagePullSecret, the Ingress class,
+    app domain, and TLS. A cluster without them deploys like the local kind cluster."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "k8s" or conn.status != "connected":
+        raise _unprocessable("Only a connected Kubernetes cluster has deploy settings.")
+    try:
+        new = build_settings(
+            registry=body.registry,
+            username=body.username,
+            token=body.token,
+            previous=deploy_settings(conn),
+            pull_secret=body.pull_secret,
+            ingress_class=body.ingress_class,
+            app_domain=body.app_domain,
+            tls=body.tls,
+            tls_cluster_issuer=body.tls_cluster_issuer,
+            public_url_base=body.public_url_base,
+            allow_private=_allow_private(settings),
+            is_private=kube.is_private_host,
+            encrypt=_encrypt,
+        )
+    except DeploySettingsError as exc:
+        raise _unprocessable(str(exc)) from None
+    conn.config = {**conn.config, DEPLOY_SETTINGS_KEY: new.to_config()}
+    await session.commit()
+    return await _out(session, conn)
+
+
+@router.delete("/{connection_id}/k8s/deploy-settings")
+async def k8s_clear_deploy_settings(
+    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> ConnectionOut:
+    """Forget the deploy settings (and the saved registry token): back to the local kind
+    defaults."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "k8s":
+        raise _unprocessable("Only a Kubernetes cluster has deploy settings.")
+    conn.config = {k: v for k, v in conn.config.items() if k != DEPLOY_SETTINGS_KEY}
     await session.commit()
     return await _out(session, conn)
 
