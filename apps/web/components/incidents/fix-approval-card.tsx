@@ -79,6 +79,14 @@ export function FixApprovalCard({
         <div>
           <p className="text-[13.5px] font-medium">{fix.title}</p>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">{fix.rationale}</p>
+          {fix.degraded && (
+            <p className="mt-1.5 text-[12.5px]">
+              <span className="mr-1.5 rounded border border-[color-mix(in_oklab,var(--status-waiting)_45%,var(--border))] px-1 text-[11px] font-medium text-[var(--status-waiting)]">
+                Service degraded, not down
+              </span>
+              <span className="text-muted-foreground">{fix.degraded}</span>
+            </p>
+          )}
         </div>
         {(fix.plan_lines ?? []).length > 0 && (
           <ul className="space-y-1 rounded-md border bg-background px-3 py-2 text-[12.5px]">

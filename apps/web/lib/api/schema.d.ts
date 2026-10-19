@@ -2068,6 +2068,8 @@ export interface components {
             merged_from?: string[];
             /** Merged Into */
             merged_into?: string | null;
+            /** Merged Into Title */
+            merged_into_title?: string | null;
             /**
              * Opened At
              * Format: date-time
@@ -2276,6 +2278,8 @@ export interface components {
             merged_from?: string[];
             /** Merged Into */
             merged_into?: string | null;
+            /** Merged Into Title */
+            merged_into_title?: string | null;
             /**
              * Opened At
              * Format: date-time
@@ -2578,6 +2582,11 @@ export interface components {
              * @default null
              */
             approval_id: string | null;
+            /**
+             * Degraded
+             * @default null
+             */
+            degraded: string | null;
             /** Depends On */
             depends_on?: string[];
             /**

@@ -443,6 +443,34 @@ incident failed.
   named only by the event; the fix's own task failing, stopped or running; a draining task).
 - Files (Ahmed's code marked *): app/agents/medic/verify.py*, tests/test_live_fixes_4.py.
 
+## Final broken-env run: degraded emergency fixes, merged in the list (2026-10-19)
+
+Incident d230faf1 ("checkout-worker: 5 error lines") ended "No fix Medic can apply. " with no
+notes. The diagnosis was high confidence and named secret version cd5bcca5 on
+checkout/database-url. Memory matched 33f1028c at 0.95, and that incident was resolved by the
+same fixes. The model proposed the secret rollback. But every signal was an error spike with
+`down: false`, and emergency fixes needed a down service. The deployment-failed incident
+9205c740 took it over 6 minutes later and resolved it (9m35s).
+- `fixes.emergency` now also offers fixes for a degraded service when ALL of these hold: the
+  confidence is high, the triggering change is a secret, config, or deploy change, and either
+  the action directly reverts it (AWSCURRENT is still the version the change set, or the
+  service still runs the task definition that deploy shipped), or the reused memory hit (at or
+  above `medic_memory_threshold`) was resolved by applied fixes. A degraded deploy rolls back
+  only the services that deploy changed. A commit alone never qualifies. The fixes still need
+  approval. `ProposedFix.degraded` carries the reason, and the card shows "Service degraded,
+  not down". When the gate refuses, a note says why, so "No fix" is never empty for this case.
+- Merged incidents are listed under "All" too. Each merged row has a "Merged into <title>"
+  link below it, outside the row's own link. `IncidentSummary.merged_into_title` holds the
+  title.
+- The test_live_fixes_4 "No fix" grace tests now use a medium-confidence diagnosis, because a
+  high-confidence secret revert gets its fix right away.
+- Tests: tests/test_live_fixes_6.py (7), tests/test_live_fixes_4.py (updated); web
+  incidents.test.tsx (3), incidents-home.test.tsx (renamed).
+- Files (Ahmed's code marked *): app/agents/medic/{fixes,events,agent}.py*,
+  app/incidents/views.py*, app/routes/{incidents,incident_schemas}.py; web
+  components/incidents/{fix-approval-card,incident-list}.tsx, app/(app)/incidents/
+  incidents-home.tsx, lib/api/{openapi.json,schema.d.ts}, tests/incident-fixtures.ts.
+
 ## How to resume
 
 ```bash

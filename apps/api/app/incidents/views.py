@@ -89,8 +89,13 @@ def _ms(later: datetime | None, earlier: datetime | None) -> int | None:
 
 
 def _summary_fields(
-    incident: Incident, state: MedicState, refs: dict[uuid.UUID, ResourceRef], t: Totals
+    incident: Incident,
+    state: MedicState,
+    refs: dict[uuid.UUID, ResourceRef],
+    t: Totals,
+    titles: dict[uuid.UUID, str] | None = None,
 ) -> dict[str, Any]:
+    merged_into = _uuid((incident.state or {}).get("merged_into"))
     applied = [r for r in state.fixes if r.status == "applied"]
     rc = state.root_cause
     return {
@@ -121,7 +126,8 @@ def _summary_fields(
         "first_signal_at": incident.first_signal_at,
         "time_to_detect_ms": _ms(incident.created_at, incident.first_signal_at),
         "duration_ms": _ms(incident.resolved_at, incident.created_at),
-        "merged_into": _uuid((incident.state or {}).get("merged_into")),
+        "merged_into": merged_into,
+        "merged_into_title": (titles or {}).get(merged_into) if merged_into else None,
         "merged_from": [
             u for u in map(_uuid, (incident.state or {}).get("merged_from") or []) if u
         ],
@@ -135,13 +141,25 @@ def _uuid(value: Any) -> uuid.UUID | None:
         return None
 
 
+async def _merged_titles(session: AsyncSession, incidents: list[Incident]) -> dict[uuid.UUID, str]:
+    """Titles of the incidents these were merged into, for the "Merged into" link."""
+    ids = {u for i in incidents if (u := _uuid((i.state or {}).get("merged_into")))}
+    if not ids:
+        return {}
+    rows = await session.execute(select(Incident.id, Incident.title).where(Incident.id.in_(ids)))
+    return {row.id: row.title for row in rows}
+
+
 async def summaries(session: AsyncSession, incidents: list[Incident]) -> list[IncidentSummary]:
     totals = await _totals(session, [i.id for i in incidents])
     refs = await _refs(session, incidents)
     followups = await fu.for_incidents(session, [i.id for i in incidents])
+    titles = await _merged_titles(session, incidents)
     return [
         IncidentSummary(
-            **_summary_fields(i, MedicState.model_validate(i.state or {}), refs, totals[i.id]),
+            **_summary_fields(
+                i, MedicState.model_validate(i.state or {}), refs, totals[i.id], titles
+            ),
             has_open_followups=fu.pending(followups[i.id]),
         )
         for i in incidents
@@ -173,7 +191,7 @@ async def detail(session: AsyncSession, incident: Incident) -> IncidentDetail:
         else None
     )
     return IncidentDetail(
-        **_summary_fields(incident, state, refs, totals),
+        **_summary_fields(incident, state, refs, totals, await _merged_titles(session, [incident])),
         signals=[Signal.model_validate(s) for s in incident.signals],
         evidence=state.evidence,
         changes=state.changes,

@@ -54,7 +54,10 @@ export function IncidentListHeader() {
   );
 }
 
-/** Incident rows: status, title with severity and resources, detector, time to resolve, cost, when. */
+/**
+ * Incident rows: status, title with severity and resources, detector, time to resolve, cost, when.
+ * A merged incident links (below its row, not inside the row's link) to the one that took it over.
+ */
 export function IncidentList({ incidents, now = Date.now() }: { incidents: IncidentSummary[]; now?: number }) {
   return (
     <ul className="divide-y divide-border">
@@ -100,6 +103,14 @@ export function IncidentList({ incidents, now = Date.now() }: { incidents: Incid
               {formatRelative(i.opened_at, now)}
             </time>
           </Link>
+          {i.merged_into && (
+            <p className="-mt-1.5 truncate px-4 pb-2.5 text-[12px] text-muted-foreground sm:pl-[calc(124px+2rem)]">
+              Merged into{" "}
+              <Link href={`/incidents/${i.merged_into}`} className="font-medium text-foreground underline underline-offset-2">
+                {i.merged_into_title ?? "a later incident"}
+              </Link>
+            </p>
+          )}
         </li>
       ))}
     </ul>

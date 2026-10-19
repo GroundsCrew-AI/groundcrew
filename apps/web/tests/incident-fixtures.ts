@@ -52,6 +52,7 @@ export const ROLLBACK: ProposedFix = {
   plan_lines: [{ what: "checkout-worker task definition", before: "checkout-worker:42", after: "checkout-worker:41" }],
   pull_request: null,
   approval_id: "approval-1",
+  degraded: null,
 };
 
 export const PR_FIX: ProposedFix = {
@@ -77,6 +78,7 @@ export const PR_FIX: ProposedFix = {
     ],
   },
   approval_id: "approval-2",
+  degraded: null,
 };
 
 export function incidentSummary(overrides: Partial<IncidentSummary> = {}): IncidentSummary {
