@@ -26,7 +26,7 @@ from sqlalchemy import or_, select
 
 from app.agents.medic.events import ChangeMarker, ResourceRef
 from app.config import Settings, get_settings
-from app.connectors.aws import AwsReader, error_text
+from app.connectors.aws import AwsReader, connection_regions, error_text
 from app.connectors.credentials import ConnectionCredentialsProvider
 from app.connectors.github import GitHubApp, get_github_app
 from app.connectors.kubernetes import KubeReader
@@ -74,7 +74,11 @@ class ConnectionClients:
         return conn
 
     def aws(self, connection_id: uuid.UUID) -> AwsReader:
-        return AwsReader(self._credentials.aws_session(connection_id), self.settings)
+        return AwsReader(
+            self._credentials.aws_session(connection_id),
+            self.settings,
+            connection_regions(self._conn(connection_id).config, self.settings),
+        )
 
     def github(self) -> GitHubApp:
         return self._github or get_github_app()

@@ -481,8 +481,7 @@ same fixes. The model proposed the secret rollback. But every signal was an erro
 - Log levels (`telemetry.log_levels`): pino / bunyan numeric levels (50 error, 60 fatal), HTTP
   status under `res.statusCode` / `response.status` (pino-http, Fastify), and Node stack
   frames ("at f (/app/x.js:1:2)", "at async ...", a bare "Error: ...") count as errors.
-- Not done: per-connection AWS regions (discovery and reads still use DISCOVERY_REGIONS for
-  every account); needs an owner-chosen region list per connection and multi-region discovery.
+- Per-connection AWS regions: done on 2026-10-19 (below).
 - Tests: tests/test_general_apps.py (17).
 - Files (Ahmed's code marked *): app/telemetry/{github,log_levels}.py*, app/incidents/followups.py*.
 ## Kubernetes incidents end to end (2026-10-19)
@@ -513,6 +512,19 @@ loop as an ECS service:
   app/connectors/{kubernetes,credentials}.py, app/policy/actions.py,
   app/routes/{connections,discovery_schemas}.py, infra/k8s-{readonly,operate}-rbac.yaml; web
   lib/{incidents,discovery}.ts, components/connections/{connection-row,k8s-operate-dialog}.tsx.
+
+## Per-connection AWS regions (2026-10-19)
+
+An owner picks the regions for each AWS account (Connections, "Regions"); without a choice,
+DISCOVERY_REGIONS as before. `connection_regions(config, settings)` is the one rule: discovery,
+the watcher, evidence, and verify build `AwsReader(session, settings, regions)` with it, and
+the reader refuses any other region. Emergency actions take the region from the cluster or
+secret ARN and refuse one outside the list.
+- Tests: tests/test_aws_regions.py (5); web aws-regions-dialog.test.tsx (2).
+- Files (Ahmed's code marked *): app/connectors/aws.py, app/discovery/engine.py,
+  app/telemetry/collect.py*, app/incidents/watcher.py*, app/actions/aws.py,
+  app/routes/{connections,discovery_schemas}.py, tests/test_actions_aws.py; web
+  components/connections/{connection-row,aws-regions-dialog}.tsx, lib/discovery.ts.
 
 ## How to resume
 

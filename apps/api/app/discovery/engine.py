@@ -81,7 +81,7 @@ def _now() -> datetime:
 async def _discover_aws(
     conn: Connection, settings: Settings, progress: Progress
 ) -> ConnectorResult:
-    from app.connectors.aws import AwsReader
+    from app.connectors.aws import AwsReader, connection_regions
     from app.connectors.credentials import ConnectionCredentialsProvider
     from app.discovery.aws import AwsDiscovery
 
@@ -90,7 +90,7 @@ async def _discover_aws(
         raise ConnectorError("This AWS connection is not finished: paste the role ARN first.")
     with ConnectionCredentialsProvider([conn]) as credentials:
         session = await asyncio.to_thread(credentials.aws_session, conn.id)
-    reader = AwsReader(session, settings)
+    reader = AwsReader(session, settings, connection_regions(conn.config, settings))
     return await AwsDiscovery(
         reader, account, max_resources=settings.max_resources_per_connection, progress=progress
     ).run()

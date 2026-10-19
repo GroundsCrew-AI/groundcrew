@@ -486,6 +486,24 @@
         "title": "AwsOperateIn",
         "type": "object"
       },
+      "AwsRegionsIn": {
+        "description": "The regions to discover, watch, and act in for one AWS account. Empty: the platform\ndefault (DISCOVERY_REGIONS).",
+        "properties": {
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Regions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "regions"
+        ],
+        "title": "AwsRegionsIn",
+        "type": "object"
+      },
       "AwsStartIn": {
         "properties": {
           "tier": {
@@ -1073,6 +1091,25 @@
               }
             ],
             "title": "Region"
+          },
+          "regions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regions"
+          },
+          "regions_chosen": {
+            "default": false,
+            "title": "Regions Chosen",
+            "type": "boolean"
           },
           "repos": {
             "items": {
@@ -9488,6 +9525,76 @@
           }
         },
         "summary": "Aws Set Operate",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/aws/regions": {
+      "put": {
+        "description": "Choose the regions Groundcrew discovers, watches, and acts in for this AWS account (owner\nonly). An empty list goes back to the platform default (DISCOVERY_REGIONS). The read-only\nand operate roles are global, so no stack update is needed; run a discovery afterwards to\nfind the resources in a newly added region.",
+        "operationId": "aws_set_regions_connections__connection_id__aws_regions_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AwsRegionsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Aws Set Regions",
         "tags": [
           "connections"
         ]

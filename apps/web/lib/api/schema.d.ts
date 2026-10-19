@@ -429,6 +429,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/aws/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Aws Set Regions
+         * @description Choose the regions Groundcrew discovers, watches, and acts in for this AWS account (owner
+         *     only). An empty list goes back to the platform default (DISCOVERY_REGIONS). The read-only
+         *     and operate roles are global, so no stack update is needed; run a discovery afterwards to
+         *     find the resources in a newly added region.
+         */
+        put: operations["aws_set_regions_connections__connection_id__aws_regions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/aws/tier": {
         parameters: {
             query?: never;
@@ -1274,6 +1297,15 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /**
+         * AwsRegionsIn
+         * @description The regions to discover, watch, and act in for one AWS account. Empty: the platform
+         *     default (DISCOVERY_REGIONS).
+         */
+        AwsRegionsIn: {
+            /** Regions */
+            regions: string[];
+        };
         /** AwsStartIn */
         AwsStartIn: {
             /**
@@ -1509,6 +1541,13 @@ export interface components {
             preview: boolean;
             /** Region */
             region?: string | null;
+            /** Regions */
+            regions?: string[] | null;
+            /**
+             * Regions Chosen
+             * @default false
+             */
+            regions_chosen: boolean;
             /** Repos */
             repos?: string[];
             /**
@@ -4767,6 +4806,43 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AwsOperateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_set_regions_connections__connection_id__aws_regions_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AwsRegionsIn"];
             };
         };
         responses: {
