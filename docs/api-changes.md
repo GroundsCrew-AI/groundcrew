@@ -178,7 +178,8 @@ was open or merged.
 
 All additive.
 - `IncidentStatus` `merged`: a newer incident on a related resource took this one over (was
-  `failed`). `GET /incidents` leaves merged incidents out unless `status=merged`.
+  `failed`). `GET /incidents` leaves merged incidents out unless `status=merged` (listed by
+  default since 2026-10-19).
   `IncidentSummary.merged_into` (uuid or null) and `merged_from` (uuids). `incident_updated`
   on the merged incident has `status: "merged"`, `previous_status`, `merged_into`.
 - `Signal.down` (bool): an error spike where nearly every operation fails counts as down.
@@ -206,4 +207,14 @@ All additive.
   `groundcrew:role` or `groundcrew_role` = `tooling` are skipped; Vercel redeploys are labeled
   "<project> redeploy READY (same source, commit <sha>)". The UI folds back-to-back repeats into
   one row with a count.
+
+## Phase 5: degraded emergency fixes, merged incidents in the list (2026-10-19)
+
+All additive, except that `GET /incidents` now lists merged incidents by default.
+- `ProposedFix.degraded` (string or null): set on an emergency fix offered while the service is
+  degraded, not down. It says why the fix is offered anyway ("It reverts the change that
+  started the errors." or "The same fix resolved <incident> (95% similar)."). Null when the
+  service is down. The approval card shows "Service degraded, not down".
+- `GET /incidents` without `status` now includes `merged` incidents.
+  `IncidentSummary.merged_into_title`: the title of the incident that took this one over.
 

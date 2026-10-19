@@ -29,7 +29,7 @@ describe("IncidentsHome", () => {
     expect(useIncidents).toHaveBeenLastCalledWith("ws-1", { pending_fix: true });
   });
 
-  it("hides merged incidents from All and shows them under Merged", async () => {
+  it("keeps merged incidents in All and filters them under Merged", async () => {
     render(<IncidentsHome />);
     expect(useIncidents).toHaveBeenLastCalledWith("ws-1", {});
     await userEvent.click(screen.getByRole("tab", { name: "Merged" }));

@@ -282,6 +282,9 @@ class ProposedFix(BaseModel):
     # Fixes (fix_id) that must be applied first, e.g. a restart needs the secret rollback: it
     # cannot be approved before they are applied, and is not run if one is rejected or fails.
     depends_on: list[str] = Field(default_factory=list)
+    # kind = emergency on a degraded (not down) service: why it is offered anyway (it reverts
+    # the triggering change, or the same fix resolved a remembered incident). None when down.
+    degraded: str | None = None
 
 
 class FixProposed(BaseModel):

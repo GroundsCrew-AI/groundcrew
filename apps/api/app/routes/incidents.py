@@ -128,9 +128,6 @@ async def list_incidents(
     )
     if status_filter is not None:
         query = query.where(Incident.status == status_filter)
-    else:
-        # Merged incidents live on in the incident that took them over (?status=merged).
-        query = query.where(Incident.status != "merged")
     if severity is not None:
         query = query.where(Incident.severity == severity)
     if resource_id is not None:

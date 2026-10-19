@@ -1,7 +1,11 @@
 """Fixes Medic proposes, in order (docs/phase5-interfaces.md, Per scenario).
 
 Emergency actions are chosen by rules, never from model text, and only when production is down
-now (health checks failing, a failed rollout, or tasks crashing):
+now (health checks failing, a failed rollout, or tasks crashing), or degraded (errors up, still
+answering) when all of these hold: the diagnosis is high confidence, it names a concrete secret,
+config, or deploy change that started it, and either a remembered incident (at or above the
+memory threshold) was resolved by applied fixes or the action directly reverts that change.
+Such fixes carry `degraded` so the approval card says the service is degraded, not down:
 
 - a secret change started it: `secret_rollback_version` on that secret, then `force_redeploy`
   of every ECS service that `uses` it (tasks read secrets only at start);
@@ -24,6 +28,7 @@ from app.actions.base import ActionPlan, EmergencyActionError, EmergencyActions
 from app.agents.medic.events import (
     ChangeMarker,
     FileChange,
+    MemoryHit,
     PlanLine,
     ProposedFix,
     PullRequestView,
@@ -147,10 +152,16 @@ def plan_lines(plan: ActionPlan) -> list[PlanLine]:
 
 
 def _emergency_record(
-    plan: ActionPlan, order: int, title: str, rationale: str, depends_on: list[str] | None = None
+    plan: ActionPlan,
+    order: int,
+    title: str,
+    rationale: str,
+    depends_on: list[str] | None = None,
+    degraded: str | None = None,
 ) -> FixRecord:
     fix = ProposedFix(
         depends_on=depends_on or [],
+        degraded=degraded,
         fix_id=f"fix-{order}",
         kind="emergency",
         order=order,
@@ -278,6 +289,54 @@ async def resolve_repo(
     return f"No fix PR: {name} is not in any GitHub connection of this workspace."
 
 
+# A degraded service gets an emergency fix only for a change it can name and revert.
+DEGRADED_CHANGES = frozenset({"secret_change", "config", "deploy"})
+
+
+def _degraded_gate(root_cause: RootCause) -> str | None:
+    """Why a degraded (not down) service gets no emergency fix, or None when it may."""
+    change = root_cause.triggering_change
+    if root_cause.confidence != "high":
+        return f"the diagnosis is {root_cause.confidence} confidence, not high"
+    if change is None or change.kind not in DEGRADED_CHANGES:
+        return "no secret, config, or deploy change was found to have started it"
+    return None
+
+
+def _memory_fixed(memory: MemoryHit | None) -> bool:
+    """A remembered incident at or above the threshold whose applied fixes resolved it."""
+    return memory is not None and bool(memory.fix_summary)
+
+
+def _changed_version(
+    change_ref: str | None, secret: Resource, changes: list[ChangeMarker]
+) -> str | None:
+    """The secret version the triggering change set: from its ref ("<arn>:<version>" or the
+    bare version), else from the latest change marker on that secret."""
+    if change_ref:
+        last = change_ref.rsplit(":", 1)[-1]
+        if last and last != secret.external_id.rsplit(":", 1)[-1] and "/" not in last:
+            return last
+    marked = sorted(
+        (c for c in changes if c.kind == "secret_change" and c.resource_id == secret.id),
+        key=lambda c: c.at,
+    )
+    return marked[-1].ref.rsplit(":", 1)[-1] if marked else None
+
+
+def _deployed(change_ref: str | None, changes: list[ChangeMarker]) -> list[ChangeMarker]:
+    """The deploy markers the triggering deploy names (by task definition, deployment, or
+    commit)."""
+    if not change_ref:
+        return []
+    return [
+        c
+        for c in changes
+        if c.kind == "deploy"
+        and (c.ref == change_ref or change_ref in c.ref or (c.commit or "") == change_ref)
+    ]
+
+
 async def emergency(
     root_cause: RootCause,
     signals: list[Signal],
@@ -285,11 +344,24 @@ async def emergency(
     changes: list[ChangeMarker],
     actions: EmergencyActions | None,
     start_order: int = 1,
+    memory: MemoryHit | None = None,
 ) -> Proposal:
+    """Emergency fixes for a down service, or for a degraded one under the rules above.
+    `memory` is the remembered incident Medic reused (at or above the threshold), if any."""
     out = Proposal()
-    if root_cause.false_alarm or not any(is_down(s) for s in signals):
+    if root_cause.false_alarm or not signals:
         return out
+    down = any(is_down(s) for s in signals)
     change = root_cause.triggering_change
+    if not down:
+        refused = _degraded_gate(root_cause)
+        if refused is not None:
+            if change is not None and change.kind in DEGRADED_CHANGES:
+                out.notes.append(
+                    f"The service is degraded, not down, and {refused}, so no emergency "
+                    "action is offered."
+                )
+            return out
     kinds = {o.kind for o in root_cause.fix_options}
     secret_case = (change is not None and change.kind == "secret_change") or (
         "secret_rollback_version" in kinds
@@ -302,10 +374,23 @@ async def emergency(
         return out
     if actions is None:
         out.notes.append(
-            "Production is down, but this connection has no Operate role, so no emergency "
+            ("Production is down" if down else "The service is degraded")
+            + ", but this connection has no Operate role, so no emergency "
             "action is offered. Fix it through the pull request or by hand."
         )
         return out
+    remembered = _memory_fixed(memory)
+
+    def degraded(revert: bool) -> str | None:
+        """The approval card's reason for a degraded service's fix (None when down)."""
+        if down:
+            return None
+        if not revert and memory is not None:
+            return (
+                f"The same fix resolved {memory.title} ({round(memory.similarity * 100)}% similar)."
+            )
+        return "It reverts the change that started the errors."
+
     order = start_order
     try:
         if secret_case:
@@ -316,11 +401,27 @@ async def emergency(
             plan = await actions.plan_secret_rollback_version(
                 secret.connection_id, secret.external_id
             )
+            # A direct revert: AWSCURRENT is still the version the triggering change set.
+            revert = (
+                change is not None
+                and change.kind == "secret_change"
+                and plan.current is not None
+                and plan.current == _changed_version(change.ref, secret, changes)
+            )
+            if not down and not (revert or remembered):
+                out.notes.append(
+                    f"The service is degraded, not down; rolling back {secret.name} would not "
+                    "revert the triggering change and no remembered incident was fixed this "
+                    "way, so no emergency action is offered."
+                )
+                return out
+            reason = degraded(revert)
             rollback = _emergency_record(
                 plan,
                 order,
                 f"Roll back {secret.name} to its previous version",
                 "The secret changed right before the failures; the previous version worked.",
+                degraded=reason,
             )
             out.records.append(rollback)
             order += 1
@@ -336,14 +437,29 @@ async def emergency(
                         f"Restart {svc.name} so it reads the restored secret",
                         "ECS tasks read secrets only when they start. Runs after the rollback.",
                         depends_on=[rollback.fix.fix_id],
+                        degraded=reason,
                     )
                 )
                 order += 1
         else:
-            crashing = {s.resource_id for s in signals if s.rule in CRASH_RULES or s.down}
-            for rid in graph.affected:
+            if down:
+                targets = {s.resource_id for s in signals if s.rule in CRASH_RULES or s.down}
+                deployed: dict[uuid.UUID, str] = {}
+            else:
+                # Degraded: only the services the triggering deploy changed, and only for a
+                # deploy (a commit alone is not a change Medic can revert in place).
+                markers = (
+                    _deployed(change.ref, changes)
+                    if change is not None and change.kind == "deploy"
+                    else []
+                )
+                deployed = {m.resource_id: m.ref for m in markers if m.resource_id}
+                signaled = {s.resource_id for s in signals}
+                targets = {r for r in deployed if r in signaled or r in graph.affected}
+            order_by = graph.affected if down else sorted(deployed, key=str)
+            for rid in order_by:
                 found = graph.resources.get(rid)
-                if found is None or found.type != "ecs:service" or rid not in crashing:
+                if found is None or found.type != "ecs:service" or rid not in targets:
                     continue
                 conn_id = found.connection_id
                 if conn_id is None:
@@ -351,12 +467,23 @@ async def emergency(
                 svc = found
                 cluster = str(svc.config.get("cluster_arn") or "")
                 plan = await actions.plan_ecs_rollback_service(conn_id, cluster, svc.name)
+                revert = plan.current is not None and plan.current == deployed.get(rid)
+                if not down and not (revert or remembered):
+                    out.notes.append(
+                        f"{svc.name} is degraded, not down; rolling it back would not revert "
+                        "the triggering deploy and no remembered incident was fixed this way."
+                    )
+                    continue
                 out.records.append(
                     _emergency_record(
                         plan,
                         order,
                         f"Roll back {svc.name} to {short(plan.desired)}",
-                        "Production is down now; the previous revision ran without these failures.",
+                        "Production is down now; the previous revision ran without these failures."
+                        if down
+                        else "The errors started with this deploy; the previous revision ran "
+                        "without them.",
+                        degraded=degraded(revert),
                     )
                 )
                 order += 1
