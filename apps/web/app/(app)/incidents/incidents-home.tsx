@@ -96,13 +96,14 @@ export function IncidentsHome() {
       <PageHeader title="Incidents" actions={<ReportIncidentDialog />} />
       <PageBody className="p-0 md:p-0">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-2 md:px-6">
-          <div role="tablist" aria-label="Filter incidents by status" className="-ml-1 flex flex-wrap gap-1">
+          {/* Toggle buttons, not tabs: each one filters the one list below rather than showing its
+              own panel. The pressed one is the current status filter. */}
+          <div role="group" aria-label="Filter incidents by status" className="-ml-1 flex flex-wrap gap-1">
             {INCIDENT_TABS.map((t) => (
               <button
                 key={t.id}
                 type="button"
-                role="tab"
-                aria-selected={filters.tab === t.id}
+                aria-pressed={filters.tab === t.id}
                 onClick={() => update({ tab: t.id })}
                 className={cn(
                   "rounded-md px-2.5 py-1 text-[12.5px] text-muted-foreground hover:text-foreground",

@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { FormState } from "@/lib/auth-forms";
+import { fieldError, type FormState } from "@/lib/auth-forms";
 
 function Submit({ children, pending: pendingText }: { children: ReactNode; pending: string }) {
   const { pending } = useFormStatus();
@@ -47,8 +47,17 @@ function Field({
   label,
   hint,
   aside,
+  error,
   ...input
-}: React.ComponentProps<typeof Input> & { id: string; label: string; hint?: string; aside?: ReactNode }) {
+}: React.ComponentProps<typeof Input> & {
+  id: string;
+  label: string;
+  hint?: string;
+  aside?: ReactNode;
+  /** What was wrong with this field on the last attempt; read with the field and on arrival. */
+  error?: string;
+}) {
+  const describedBy = [hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(" ") || undefined;
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between">
@@ -57,7 +66,19 @@ function Field({
         </Label>
         {aside}
       </div>
-      <Input id={id} name={id} className="h-10 text-[14px]" aria-describedby={hint ? `${id}-hint` : undefined} {...input} />
+      <Input
+        id={id}
+        name={id}
+        className="h-10 text-[14px]"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy}
+        {...input}
+      />
+      {error && (
+        <p id={`${id}-error`} role="alert" className="text-[12px] text-[var(--status-failed)]">
+          {error}
+        </p>
+      )}
       {hint && (
         <p id={`${id}-hint`} className="text-[12px] text-muted-foreground">
           {hint}
@@ -127,13 +148,14 @@ export function PasswordSignInForm({ next, defaultEmail }: { next: string; defau
           type="password"
           autoComplete="current-password"
           required
+          error={fieldError(state, "password")}
           aside={
             <Link href="/forgot-password" className="text-[12px] text-muted-foreground underline-offset-4 hover:underline">
               Forgot password?
             </Link>
           }
         />
-        {state.error && <FormMessage>{state.error}</FormMessage>}
+        {state.error && !state.field && <FormMessage>{state.error}</FormMessage>}
         <Submit pending="Signing in...">Sign in</Submit>
       </form>
       {state.code === "unverified" && state.email && <ResendVerification email={state.email} />}
@@ -166,9 +188,10 @@ export function SignUpForm({ defaultEmail, minLength }: { defaultEmail?: string;
         required
         minLength={minLength}
         hint={`At least ${minLength} characters. A few unrelated words work well.`}
+        error={fieldError(state, "password")}
       />
       <Field id="confirm" label="Confirm password" type="password" autoComplete="new-password" required minLength={minLength} />
-      {state.error && <FormMessage>{state.error}</FormMessage>}
+      {state.error && !state.field && <FormMessage>{state.error}</FormMessage>}
       <Submit pending="Creating account...">Create account</Submit>
     </form>
   );
@@ -187,8 +210,16 @@ export function VerifyEmailForm({ token }: { token: string }) {
   return (
     <form action={action} className="space-y-4">
       <input type="hidden" name="token" value={token} />
-      <Field id="password" label="Password" type="password" autoComplete="current-password" required autoFocus />
-      {state.error && (
+      <Field
+        id="password"
+        label="Password"
+        type="password"
+        autoComplete="current-password"
+        required
+        autoFocus
+        error={fieldError(state, "password")}
+      />
+      {state.error && !state.field && (
         <FormMessage>
           {state.error}
           {expired && (
@@ -245,9 +276,10 @@ export function ResetPasswordForm({ token, minLength }: { token: string; minLeng
         required
         minLength={minLength}
         hint={`At least ${minLength} characters. This signs you out on every other device.`}
+        error={fieldError(state, "password")}
       />
       <Field id="confirm" label="Confirm new password" type="password" autoComplete="new-password" required minLength={minLength} />
-      {state.error && (
+      {state.error && !state.field && (
         <FormMessage>
           {state.error}
           {state.code === "invalid_link" && (

@@ -4,11 +4,13 @@ import { ArrowLeft, ArrowRight, ExternalLink, FileCode, X } from "lucide-react";
 
 import { ErrorState } from "@/components/states/states";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type ResourceDetail, useResource } from "@/lib/discovery";
 import { formatRelative } from "@/lib/format";
 import { edgeLabel, PROVIDER_LABELS, typeLabel } from "@/lib/graph";
 import { configRows } from "@/lib/resource-summary";
+import { useMediaQuery } from "@/lib/use-media-query";
 
 import { ConfidenceTag, CoverageBadge, ResourceIcon } from "./resource-meta";
 
@@ -21,7 +23,19 @@ export function ResourcePanel({
   onClose: () => void;
   onSelect: (id: string) => void;
 }) {
-  const query = useResource(resourceId);
+  const desktop = useMediaQuery("(min-width: 768px)");
+  const body = <PanelBody resourceId={resourceId} onSelect={onSelect} />;
+  // Below md a side panel would cover the whole map: show the details in a bottom sheet instead.
+  if (!desktop) {
+    return (
+      <Sheet open onOpenChange={(open) => !open && onClose()}>
+        <SheetContent side="bottom" aria-describedby={undefined} className="max-h-[85dvh] gap-0 pt-10">
+          <SheetTitle className="sr-only">Resource details</SheetTitle>
+          {body}
+        </SheetContent>
+      </Sheet>
+    );
+  }
   return (
     <aside
       aria-label="Resource details"
@@ -32,20 +46,27 @@ export function ResourcePanel({
           <X />
         </Button>
       </div>
-      <div className="flex-1 overflow-y-auto px-4 pb-6">
-        {query.error ? (
-          <ErrorState error={query.error} onRetry={() => void query.refetch()} className="mt-4" />
-        ) : !query.data ? (
-          <div aria-busy="true" className="space-y-3 pt-4">
-            <Skeleton className="h-5 w-48" />
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-24 w-full" />
-          </div>
-        ) : (
-          <ResourceDetails detail={query.data} onSelect={onSelect} />
-        )}
-      </div>
+      {body}
     </aside>
+  );
+}
+
+function PanelBody({ resourceId, onSelect }: { resourceId: string; onSelect: (id: string) => void }) {
+  const query = useResource(resourceId);
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
+      {query.error ? (
+        <ErrorState error={query.error} onRetry={() => void query.refetch()} className="mt-4" />
+      ) : !query.data ? (
+        <div aria-busy="true" className="space-y-3 pt-4">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : (
+        <ResourceDetails detail={query.data} onSelect={onSelect} />
+      )}
+    </div>
   );
 }
 
