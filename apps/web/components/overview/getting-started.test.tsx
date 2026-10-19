@@ -1,14 +1,34 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { setupChecklist } from "@/lib/setup-checklist";
+import type { DeploySummary } from "@/lib/deploys";
+import type { Connection } from "@/lib/discovery";
+import { readSetupHidden, setupChecklist, writeSetupHidden } from "@/lib/setup-checklist";
 import { connection } from "@/tests/discovery-fixtures";
 
-import { SetupCard } from "./getting-started";
+import { GettingStarted, SetupCard } from "./getting-started";
+
+const data = vi.hoisted(() => ({
+  connections: [] as Connection[],
+  deploys: [] as DeploySummary[],
+  incidentWatch: true,
+  loads: 0,
+}));
 
 vi.mock("@/components/connections/run-discovery-button", () => ({
   RunDiscoveryButton: () => <button type="button">Run discovery</button>,
+}));
+vi.mock("@/lib/workspace", () => ({ useWorkspace: () => ({ workspace: { id: "ws-1", role: "owner" } }) }));
+vi.mock("@/lib/discovery", () => ({
+  useConnections: () => {
+    data.loads += 1;
+    return { data: data.connections };
+  },
+}));
+vi.mock("@/lib/deploys", () => ({ useDeploys: () => ({ data: { items: data.deploys, next_cursor: null } }) }));
+vi.mock("@/lib/queries", () => ({
+  useWorkspaceConfig: () => ({ data: { incident_watch: data.incidentWatch }, isLoading: false }),
 }));
 
 const empty = setupChecklist({ connections: [], deploys: [], incidentWatch: true });
@@ -66,5 +86,41 @@ describe("SetupCard", () => {
     render(<SetupCard checklist={empty} canManage onHide={onHide} />);
     await userEvent.click(screen.getByRole("button", { name: "Hide" }));
     expect(onHide).toHaveBeenCalled();
+  });
+});
+
+describe("GettingStarted", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    data.connections = [];
+    data.deploys = [];
+    data.loads = 0;
+  });
+
+  it("shows the checklist for a new workspace", () => {
+    render(<GettingStarted />);
+    expect(screen.getByRole("heading", { name: "Get started" })).toBeInTheDocument();
+  });
+
+  it("goes away for good once every step is done", () => {
+    data.connections = [connection({ resource_count: 5 })];
+    data.deploys = [{ status: "live" } as DeploySummary];
+    render(<GettingStarted />);
+    expect(screen.queryByRole("heading", { name: "Get started" })).not.toBeInTheDocument();
+    expect(readSetupHidden("ws-1")).toBe(true);
+  });
+
+  it("loads nothing once hidden for the workspace", () => {
+    writeSetupHidden("ws-1");
+    render(<GettingStarted />);
+    expect(screen.queryByRole("heading", { name: "Get started" })).not.toBeInTheDocument();
+    expect(data.loads).toBe(0);
+  });
+
+  it("hides when asked", async () => {
+    render(<GettingStarted />);
+    await userEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByRole("heading", { name: "Get started" })).not.toBeInTheDocument();
+    expect(readSetupHidden("ws-1")).toBe(true);
   });
 });

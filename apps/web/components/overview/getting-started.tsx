@@ -3,7 +3,7 @@
 import { cn } from "cn";
 import { Check } from "lucide-react";
 import Link from "next/link";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { RunDiscoveryButton } from "@/components/connections/run-discovery-button";
 import { Button } from "@/components/ui/button";
@@ -158,36 +158,51 @@ export function SetupCard({
 
 /**
  * The overview's first-run checklist, from the workspace's connections, deploys, and settings.
- * It shows nothing until those have loaded (so it never flashes for a set-up workspace), and
- * nothing once every step is done or someone hid it on this browser.
+ * It shows nothing until those have loaded (so it never flashes for a set-up workspace). Once
+ * every step is done, or someone hides it, it is remembered for that workspace on this browser,
+ * so a set-up workspace's overview does not keep loading (and polling) what the list needs.
  */
 export function GettingStarted() {
   const { workspace } = useWorkspace();
-  const connections = useConnections(workspace?.id);
-  const deploys = useDeploys(workspace?.id);
-  const config = useWorkspaceConfig(workspace?.id);
   const [hidden, setHidden] = useState<string | null>(null);
+  if (!workspace || hidden === workspace.id || readSetupHidden(workspace.id)) return null;
+  const hide = () => {
+    writeSetupHidden(workspace.id);
+    setHidden(workspace.id);
+  };
+  return (
+    <SetupLoader key={workspace.id} workspaceId={workspace.id} canManage={workspace.role === "owner"} onHide={hide} />
+  );
+}
 
-  if (!workspace || !connections.data || config.isLoading) return null;
+function SetupLoader({
+  workspaceId,
+  canManage,
+  onHide,
+}: {
+  workspaceId: string;
+  canManage: boolean;
+  onHide: () => void;
+}) {
+  const connections = useConnections(workspaceId);
+  const deploys = useDeploys(workspaceId);
+  const config = useWorkspaceConfig(workspaceId);
   // Deploys and settings only refine the list: if they fail to load, it still shows.
   const deployItems = deploys.data?.items ?? (deploys.error ? [] : undefined);
-  if (!deployItems) return null;
-  if (hidden === workspace.id || readSetupHidden(workspace.id)) return null;
+  const checklist =
+    connections.data && deployItems && !config.isLoading
+      ? setupChecklist({
+          connections: connections.data,
+          deploys: deployItems,
+          incidentWatch: config.data?.incident_watch ?? true,
+        })
+      : null;
+  const complete = checklist?.complete ?? false;
 
-  const checklist = setupChecklist({
-    connections: connections.data,
-    deploys: deployItems,
-    incidentWatch: config.data?.incident_watch ?? true,
-  });
-  if (checklist.complete) return null;
-  return (
-    <SetupCard
-      checklist={checklist}
-      canManage={workspace.role === "owner"}
-      onHide={() => {
-        writeSetupHidden(workspace.id);
-        setHidden(workspace.id);
-      }}
-    />
-  );
+  useEffect(() => {
+    if (complete) onHide();
+  }, [complete, onHide]);
+
+  if (!checklist || complete) return null;
+  return <SetupCard checklist={checklist} canManage={canManage} onHide={onHide} />;
 }
