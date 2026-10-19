@@ -25,7 +25,7 @@ function Field({ id, label, hint, children }: { id: string; label: string; hint?
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
       {children}
-      {hint && <p className="text-[11.5px] text-muted-foreground">{hint}</p>}
+      {hint && <p className="text-[12px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -242,7 +242,7 @@ export function KubernetesConnectDialog({ open, onOpenChange }: DialogProps) {
       description={
         <>
           A kubeconfig for a service account Groundcrew may use: the read-only one in infra/k8s-readonly-rbac.yaml,
-          or the local kind cluster&apos;s deployer from <code className="font-mono text-[11.5px]">make kind-kubeconfig</code>{" "}
+          or the local kind cluster&apos;s deployer from <code className="font-mono text-[12px]">make kind-kubeconfig</code>{" "}
           (.kind/groundcrew-deployer.kubeconfig). Groundcrew lists namespaces with it before saving, stores it encrypted,
           and never lists Secrets.
         </>
@@ -284,7 +284,7 @@ export function KubernetesConnectDialog({ open, onOpenChange }: DialogProps) {
             setFileName(null);
           }}
           rows={8}
-          className="font-mono text-[11.5px]"
+          className="font-mono text-[12px]"
           spellCheck={false}
           required
         />

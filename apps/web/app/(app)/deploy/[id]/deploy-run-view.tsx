@@ -8,7 +8,9 @@ import { toast } from "sonner";
 import { DeployStatePill } from "@/components/deploy/deploy-list";
 import { StageStrip } from "@/components/deploy/stage-strip";
 import { Timeline } from "@/components/runs/timeline";
+import { statusLabel } from "@/components/runs/badges";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { useAnnounceChange } from "@/components/shell/shell-context";
 import { EmptyState, ErrorState } from "@/components/states/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, type Approval, type Decision, type RunDetail } from "@/lib/api/client";
@@ -43,7 +45,7 @@ function useNow(active: boolean): number {
 function Fact({ label, children, title }: { label: string; children: React.ReactNode; title?: string }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[11.5px] text-subtle">{label}</dt>
+      <dt className="text-[12px] text-subtle">{label}</dt>
       <dd className="tabular mt-0.5 text-[13px] [overflow-wrap:anywhere]" title={title}>
         {children}
       </dd>
@@ -88,6 +90,7 @@ export function DeployRunView({ deployId }: { deployId: string }) {
   const run = state.run;
   const live = run ? ["queued", "running", "waiting_approval"].includes(run.status) : false;
   const now = useNow(live);
+  useAnnounceChange(run ? `Deploy run status: ${statusLabel(run.status)}` : undefined);
 
   const onDecide = useCallback(
     (approval: Approval, decision: Decision) => {

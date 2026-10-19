@@ -69,7 +69,7 @@ export function LeaveWorkspace({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" onClick={() => void confirm()}>
+            <AlertDialogAction variant="destructive-solid" onClick={() => void confirm()}>
               Leave workspace
             </AlertDialogAction>
           </AlertDialogFooter>

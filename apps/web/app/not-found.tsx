@@ -11,7 +11,7 @@ export default function NotFound() {
   return (
     <div className="flex min-h-dvh flex-col px-6 py-6 sm:px-12">
       <Logo />
-      <main className="my-auto max-w-sm py-16">
+      <main id="main" tabIndex={-1} className="my-auto max-w-sm py-16 outline-none">
         <p className="tabular text-[12px] text-subtle">404</p>
         <h1 className="mt-1 text-[22px] leading-tight font-semibold tracking-tight">Page not found</h1>
         <p className="mt-2 text-[14px] text-muted-foreground">

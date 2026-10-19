@@ -82,6 +82,9 @@ export function DeployForm({
   const repoInvalid = typing && !REPO_NAME.test(chosenRepo);
   const target = targets.find((t) => t.connection.id === targetId && !t.disabled);
   const errors = envErrors(rows);
+  // Shown under their fields once a submit was tried.
+  const repoError = attempted && repoInvalid;
+  const refError = attempted && !ref.trim();
   const ready = Boolean(
     source && chosenRepo && !repoInvalid && ref.trim() && target && Object.keys(errors).length === 0,
   );
@@ -159,15 +162,26 @@ export function DeployForm({
                   placeholder="owner/name"
                   value={typedRepo}
                   onChange={(e) => setTypedRepo(e.target.value)}
-                  aria-invalid={attempted && repoInvalid}
+                  aria-invalid={repoError}
+                  aria-describedby={repoError ? `${id}-repo-error` : undefined}
                   className="font-mono text-[12.5px]"
                 />
+              )}
+              {repoError && (
+                <p id={`${id}-repo-error`} className="text-[12px] text-[var(--status-failed)]">
+                  Enter the repository as owner/name.
+                </p>
               )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor={`${id}-ref`}>Branch, tag, or commit</Label>
               <Input id={`${id}-ref`} value={ref} onChange={(e) => setRef(e.target.value)} maxLength={255} required
-                aria-invalid={attempted && !ref.trim()} />
+                aria-invalid={refError} aria-describedby={refError ? `${id}-ref-error` : undefined} />
+              {refError && (
+                <p id={`${id}-ref-error`} className="text-[12px] text-[var(--status-failed)]">
+                  Enter a branch, tag, or commit.
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -236,8 +250,12 @@ export function DeployForm({
             {rows.map((row) => {
               const error = attempted ? errors[row.key] : undefined;
               return (
-                <li key={row.key} className="grid grid-cols-[1fr_1.4fr_auto_auto] items-start gap-2">
-                  <div>
+                // Phones stack name and value, with the switch and remove button under them.
+                <li
+                  key={row.key}
+                  className="grid grid-cols-[1fr_auto] items-start gap-2 rounded-lg border p-2 sm:grid-cols-[1fr_1.4fr_auto_auto] sm:rounded-none sm:border-0 sm:p-0"
+                >
+                  <div className="col-span-2 sm:col-span-1">
                     <Label htmlFor={`${id}-n${row.key}`} className="sr-only">Name</Label>
                     <Input id={`${id}-n${row.key}`} placeholder="NAME" value={row.name} autoComplete="off"
                       className="font-mono" aria-invalid={Boolean(error)}
@@ -245,7 +263,7 @@ export function DeployForm({
                       onChange={(e) => update(row.key, { name: e.target.value })} />
                     {error && <p id={`${id}-e${row.key}`} className="mt-1 text-[12px] text-[var(--status-failed)]">{error}</p>}
                   </div>
-                  <div>
+                  <div className="col-span-2 sm:col-span-1">
                     <Label htmlFor={`${id}-v${row.key}`} className="sr-only">Value of {row.name || "this variable"}</Label>
                     <Input id={`${id}-v${row.key}`} placeholder="value" value={row.value} autoComplete="off"
                       type={row.secret ? "password" : "text"} className="font-mono"

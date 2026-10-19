@@ -22,7 +22,7 @@ export function StatusPill({ status, className }: { status: RunStatus; className
   return (
     <span
       className={cn(
-        "tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11.5px] font-medium whitespace-nowrap",
+        "tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[12px] font-medium whitespace-nowrap",
         className,
       )}
       style={{ "--tint": color } as CSSProperties}
@@ -86,7 +86,7 @@ export function PolicyTag({ policy }: { policy: ToolPolicy | null | undefined })
   const { label, color, hint } = POLICIES[policy];
   return (
     <span
-      className="tint inline-flex h-[18px] items-center rounded px-1.5 font-mono text-[10.5px]"
+      className="tint inline-flex h-[18px] items-center rounded px-1.5 font-mono text-[11px]"
       style={{ "--tint": color } as CSSProperties}
       title={hint}
     >

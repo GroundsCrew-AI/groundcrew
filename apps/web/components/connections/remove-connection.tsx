@@ -88,7 +88,7 @@ export function RemoveConnection({
           </DialogHeader>
           <ol className="list-decimal space-y-2 pl-5 text-[12.5px] leading-relaxed">
             {done?.cleanup.map((step) => (
-              <li key={step} className={step.startsWith("Or run:") ? "font-mono text-[11.5px] break-all" : undefined}>
+              <li key={step} className={step.startsWith("Or run:") ? "font-mono text-[12px] break-all" : undefined}>
                 {step}
               </li>
             ))}

@@ -55,7 +55,7 @@ export function DecideDialog({
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
-            className={approve ? undefined : "bg-destructive text-white hover:bg-destructive/90"}
+            variant={approve ? "default" : "destructive-solid"}
           >
             {approve ? "Approve and run" : "Reject"}
           </AlertDialogAction>

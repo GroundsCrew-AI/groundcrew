@@ -25,6 +25,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     // Font variables live on <html> because `font-sans` is applied there.
     <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable}`}>
       <body>
+        <a
+          href="#main"
+          className="sr-only rounded-md bg-primary px-3 py-2 text-primary-foreground focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50"
+        >
+          Skip to content
+        </a>
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -11,7 +11,13 @@ read does not close an incident.
 
 A round is *waiting*, not failing, while a service's rollout is IN_PROGRESS (more than one
 deployment) or, after a fix PR merged, no deployment has started since the merge: the checks
-then describe the old tasks, so the UI shows "waiting for rollout" until the deadline."""
+then describe the old tasks, so the UI shows "waiting for rollout" until the deadline.
+
+Kubernetes Deployments (`k8s_checks`): `rollout` passes when the rollout is complete and every
+desired pod is ready (waiting while pods are still being replaced, or after a fix PR merged
+until a revision created since the merge exists); `health` fails on any pod that crashes, cannot
+start, or fails its readiness probe now (pods being deleted are left out); `errors` reads the
+pods' logs again when a log spike opened the incident."""
 
 import re
 import time
@@ -19,9 +25,12 @@ from datetime import datetime
 from typing import Any
 
 from app.connectors.aws import AwsReader, error_text
+from app.connectors.kubernetes import KubeReader
 from app.db.models import Resource
 from app.incidents import rules
 from app.pipeline.events import VerifyCheck, VerifyResult
+from app.telemetry import k8s
+from app.telemetry.evidence import parse_time
 
 
 def rollout_wait(
@@ -251,3 +260,68 @@ def run_checks(
         duration_ms=int((time.monotonic() - started) * 1000),
         waiting="; ".join(waits) or None,
     )
+
+
+async def k8s_checks(
+    reader: KubeReader,
+    deployment: Resource,
+    *,
+    since: datetime,
+    now: datetime,
+    check_logs: bool,
+    waits: list[str],
+    deploy_after: datetime | None = None,
+) -> list[VerifyCheck]:
+    """One Deployment's recovery checks; appends to `waits` while its rollout is going."""
+    name = deployment.name
+    namespace = str(deployment.config.get("namespace") or deployment.region or "default")
+    workload = await k8s.fetch_workload(reader, namespace, name)
+    if workload is None:
+        return [VerifyCheck(name="rollout", ok=False, detail=f"{name}: deployment not found")]
+    going = k8s.rolling_out(workload.deployment)
+    if going:
+        waits.append(f"{name} {going}")
+    if deploy_after is not None:
+        newest = max(
+            (
+                parse_time((rs.get("metadata") or {}).get("creationTimestamp"))
+                for rs in workload.replicasets
+            ),
+            default=None,
+            key=lambda at: at.timestamp() if at else 0.0,
+        )
+        if newest is None or newest < deploy_after:
+            waits.append(f"{name}: no new revision since the fix PR merged")
+    ready, desired = k8s.readiness(workload.deployment)
+    failed = k8s.rollout_failed(workload.deployment)
+    rollout_ok = failed is None and ready >= desired
+    detail = f"{name}: {ready}/{desired} pods ready, revision {k8s.revision(workload.deployment)}"
+    if failed is not None:
+        detail += f"; rollout failed: {failed.get('message') or 'progress deadline exceeded'}"
+    out = [VerifyCheck(name="rollout", ok=rollout_ok, detail=detail)]
+    live = [p for p in workload.pods if not (p.get("metadata") or {}).get("deletionTimestamp")]
+    problems = k8s.pod_problems(live, now, now - since)
+    out.append(
+        VerifyCheck(
+            name="health",
+            ok=not problems,
+            detail=f"{name}: "
+            + (
+                "; ".join(p.text() for p in problems[:3])
+                if problems
+                else "every pod running and ready"
+            ),
+        )
+    )
+    if check_logs:
+        window = rules.RECENT + rules.BASELINE
+        logs = await k8s.fetch_logs(reader, workload, int(window.total_seconds()))
+        spike = rules.log_signal(deployment.id, name, logs, now)
+        out.append(
+            VerifyCheck(
+                name="errors",
+                ok=spike is None,
+                detail=f"{name} logs: " + (spike.detail if spike else "error rate back to normal"),
+            )
+        )
+    return out

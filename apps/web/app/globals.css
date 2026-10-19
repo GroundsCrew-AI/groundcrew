@@ -27,6 +27,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -61,7 +62,8 @@
 /*
  * Groundcrew tokens. Neutral grays with one accent (--primary, taxiway blue) used only for
  * primary actions, the active nav item, and focus rings. Status colors are for status only.
- * Dark is the default theme; light is the same system inverted.
+ * Dark is the default theme; light is the same system inverted. Every text token (subtle,
+ * status, tier) is at least 4.5:1 on the backgrounds and on its own .tint fill.
  */
 :root {
   --radius: 0.5rem;
@@ -78,24 +80,25 @@
   --secondary-foreground: #16171b;
   --muted: #f3f4f6;
   --muted-foreground: #626672;
-  --subtle: #8a8e99;
+  --subtle: #696d78;
   --accent: #eef0f3;
   --accent-foreground: #16171b;
-  --destructive: #c93b37;
+  --destructive: #b13330;
+  --destructive-foreground: #ffffff;
   --border: #e4e6ea;
   --input: #d9dce2;
   --ring: #3755d8;
   --rail: #dcdfe5;
 
   --status-running: #3755d8;
-  --status-waiting: #a46a06;
-  --status-ok: #1d8a4b;
-  --status-failed: #c93b37;
-  --status-neutral: #6b6f7a;
+  --status-waiting: #865705;
+  --status-ok: #17703d;
+  --status-failed: #b13330;
+  --status-neutral: #5e626b;
 
-  --tier-nano: #23807d;
+  --tier-nano: #1e6d6a;
   --tier-super: #6a55b5;
-  --tier-ultra: #a0602b;
+  --tier-ultra: #8d5426;
 
   --chart-1: #3755d8;
   --chart-2: #23807d;
@@ -126,20 +129,21 @@
   --secondary-foreground: #e7e8eb;
   --muted: #191a1f;
   --muted-foreground: #8e929c;
-  --subtle: #676b75;
+  --subtle: #83878f;
   --accent: #1e2026;
   --accent-foreground: #e7e8eb;
   --destructive: #ef6662;
+  --destructive-foreground: #16171b;
   --border: #23252b;
   --input: #2c2e35;
   --ring: #6d8bff;
   --rail: #2a2c33;
 
-  --status-running: #6d8bff;
+  --status-running: #7592ff;
   --status-waiting: #e2a63c;
   --status-ok: #52b67d;
   --status-failed: #ef6662;
-  --status-neutral: #8e929c;
+  --status-neutral: #959aa3;
 
   --tier-nano: #62b5b2;
   --tier-super: #a593dd;

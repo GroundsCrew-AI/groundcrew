@@ -20,7 +20,7 @@ export function UserAvatar({
   return (
     <Avatar className={cn("size-5", className)}>
       {src && <AvatarImage src={src} alt="" />}
-      <AvatarFallback className="text-[9px]">{initials}</AvatarFallback>
+      <AvatarFallback className="text-[11px]">{initials}</AvatarFallback>
     </Avatar>
   );
 }

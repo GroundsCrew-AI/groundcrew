@@ -101,7 +101,7 @@ export function CoverageBadge({ coverage }: { coverage: string }) {
   const meta = COVERAGE[coverage] ?? COVERAGE.observed!;
   return (
     <span
-      className="tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11.5px] font-medium whitespace-nowrap"
+      className="tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[12px] font-medium whitespace-nowrap"
       style={{ "--tint": meta.color } as CSSProperties}
       title={meta.hint}
     >
@@ -121,7 +121,7 @@ export function ConfidenceTag({ confidence }: { confidence: string }) {
   const meta = CONFIDENCE[confidence] ?? CONFIDENCE.low!;
   return (
     <span
-      className="tint inline-flex h-[18px] items-center rounded px-1.5 text-[10.5px] font-medium"
+      className="tint inline-flex h-[18px] items-center rounded px-1.5 text-[11px] font-medium"
       style={{ "--tint": meta.color } as CSSProperties}
       title={`${meta.label} confidence`}
     >

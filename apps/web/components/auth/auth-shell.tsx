@@ -19,12 +19,12 @@ export function AuthShell({
     <div className="grid min-h-dvh lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
       <section className="flex flex-col px-6 py-6 sm:px-12">
         <Logo />
-        <div className="my-auto w-full max-w-sm py-12">
+        <main id="main" tabIndex={-1} className="my-auto w-full max-w-sm py-12 outline-none">
           <h1 className="text-[22px] leading-tight font-semibold tracking-tight">{title}</h1>
           {description && <p className="mt-2 text-[14px] text-muted-foreground">{description}</p>}
           <div className="mt-7">{children}</div>
           {footer && <div className="mt-6 text-[13px] text-muted-foreground">{footer}</div>}
-        </div>
+        </main>
         <p className="text-[12px] text-subtle">Built with NVIDIA Nemotron on Nebius Token Factory.</p>
       </section>
       <section aria-hidden="true" className="hidden border-l bg-card lg:flex lg:items-center lg:justify-center">

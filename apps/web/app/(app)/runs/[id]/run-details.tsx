@@ -39,7 +39,7 @@ export function RunDetails({ run, steps }: { run: RunDetail; steps: Step[] }) {
         <div className="flex items-center justify-between gap-2 pb-2">
           <dt className="text-muted-foreground">Run ID</dt>
           <dd className="flex min-w-0 items-center gap-1">
-            <span className="truncate font-mono text-[11.5px]" title={run.id}>
+            <span className="truncate font-mono text-[12px]" title={run.id}>
               {run.id.slice(0, 8)}
             </span>
             <Button variant="ghost" size="icon-xs" onClick={copyId} aria-label="Copy run ID">
@@ -64,7 +64,7 @@ export function RunDetails({ run, steps }: { run: RunDetail; steps: Step[] }) {
           <p className="text-muted-foreground">Models</p>
           <ul className="mt-1.5 space-y-1">
             {models.map((model) => (
-              <li key={model} className="truncate font-mono text-[11.5px]" title={model ?? undefined}>
+              <li key={model} className="truncate font-mono text-[12px]" title={model ?? undefined}>
                 {model}
               </li>
             ))}

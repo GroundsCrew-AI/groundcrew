@@ -10,7 +10,8 @@
 3. Return lines per source, the merged timeline, and the change markers the readers saw.
 
 Read-only throughout: AWS through `CredentialsProvider.aws_session()` (the guarded read-only
-session), GitHub through the App's GET-only client, Vercel through its read-only client.
+session), GitHub through the App's GET-only client, Vercel through its read-only client,
+Kubernetes Deployments through a `KubeReader` on the connection's kubeconfig.
 """
 
 import asyncio
@@ -28,11 +29,12 @@ from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader, error_text
 from app.connectors.credentials import ConnectionCredentialsProvider
 from app.connectors.github import GitHubApp, get_github_app
+from app.connectors.kubernetes import KubeReader
 from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Edge, Resource
 from app.db.session import SessionFactory
 from app.graph.roles import role_of
-from app.telemetry import cloudwatch_logs, ecs, github, rds, secrets, vercel
+from app.telemetry import cloudwatch_logs, ecs, github, k8s, rds, secrets, vercel
 from app.telemetry.evidence import Line, ReaderOutput, line, render
 from app.telemetry.timeline import timeline
 
@@ -48,6 +50,7 @@ class EvidenceClients(Protocol):
     def github(self) -> GitHubApp: ...
     def vercel(self, connection_id: uuid.UUID) -> VercelClient: ...
     def installation_id(self, connection_id: uuid.UUID) -> int: ...
+    def kube(self, connection_id: uuid.UUID) -> KubeReader: ...
 
 
 class ConnectionClients:
@@ -88,6 +91,15 @@ class ConnectionClients:
         return VercelClient(
             decrypt(conn.secret_encrypted), conn.config.get("team_id"), self.settings
         )
+
+    def kube(self, connection_id: uuid.UUID) -> KubeReader:
+        from app.connectors import kubernetes
+        from app.security.crypto import decrypt
+
+        conn = self._conn(connection_id)
+        if conn.kind != "k8s" or not conn.secret_encrypted:
+            raise LookupError(f"{conn.name} has no kubeconfig.")
+        return kubernetes.live_reader(decrypt(conn.secret_encrypted))
 
     def close(self) -> None:
         self._credentials.close()
@@ -257,6 +269,24 @@ def plan_readers(
                 return await vercel.read_project(clients.vercel(conn), pid, name, since, until)
 
             job = vc
+        elif r.type == "k8s:deployment":
+            key = f"k8s:{r.name}"
+            ns, conn = str(r.config.get("namespace") or r.region or "default"), r.connection_id
+
+            async def kd(
+                ns: str = ns, conn: uuid.UUID | None = conn, name: str = r.name
+            ) -> ReaderOutput:
+                if conn is None:
+                    raise LookupError(f"{name} has no Kubernetes connection.")
+                reader = await asyncio.to_thread(clients.kube, conn)
+                try:
+                    return await k8s.read_workload(reader, ns, name, since, until)
+                finally:
+                    close = getattr(reader, "close", None)
+                    if close is not None:
+                        close()
+
+            job = kd
         if key is None or job is None:
             notes.append(f"no reader for {r.type} {r.name}")
             continue

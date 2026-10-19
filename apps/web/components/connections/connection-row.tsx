@@ -10,6 +10,7 @@ import type { Connection } from "@/lib/discovery";
 import { formatRelative } from "@/lib/format";
 
 import { AwsOperateDialog, isOperate } from "./aws-operate-dialog";
+import { K8sOperateDialog } from "./k8s-operate-dialog";
 import { AwsTierDialog } from "./aws-tier-dialog";
 import { RemoveConnection } from "./remove-connection";
 
@@ -74,6 +75,7 @@ export function ConnectionRow({
   const [tierOpen, setTierOpen] = useState(false);
   const [operateOpen, setOperateOpen] = useState(false);
   const awsConnected = connection.kind === "aws" && connection.status === "connected";
+  const k8sConnected = connection.kind === "k8s" && connection.status === "connected";
   const ownerOnly = { disabled: !canManage, "aria-describedby": canManage ? undefined : reasonId };
   return (
     <li className="flex flex-wrap items-center gap-3 bg-background px-4 py-3.5 sm:flex-nowrap">
@@ -82,22 +84,22 @@ export function ConnectionRow({
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="truncate font-medium">{connection.name}</h3>
           <span
-            className="tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11.5px] font-medium"
+            className="tint inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[12px] font-medium"
             style={{ "--tint": status.color } as CSSProperties}
           >
             <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
             {status.label}
           </span>
           {connection.kind === "aws" && connection.tier && (
-            <span className="rounded-full border px-2 text-[11.5px] text-muted-foreground">
+            <span className="rounded-full border px-2 text-[12px] text-muted-foreground">
               {connection.tier === "deploy" ? "Deploy" : "Observe"}
             </span>
           )}
-          {connection.kind === "aws" && isOperate(connection) && (
+          {(connection.kind === "aws" || connection.kind === "k8s") && isOperate(connection) && (
             <span className="rounded-full border px-2 text-[11.5px] text-muted-foreground">Emergency fixes</span>
           )}
         </div>
-        <p className="truncate font-mono text-[11.5px] text-muted-foreground" title={detail(connection)}>
+        <p className="truncate font-mono text-[12px] text-muted-foreground" title={detail(connection)}>
           {detail(connection)}
         </p>
         <p className={last?.status === "failed" ? "text-[12px] text-[var(--status-failed)]" : "text-[12px] text-subtle"}>
@@ -137,7 +139,7 @@ export function ConnectionRow({
             {connection.tier === "deploy" ? "Turn off deploys" : "Enable deploys"}
           </Button>
         )}
-        {awsConnected && (
+        {(awsConnected || k8sConnected) && (
           <Button size="sm" variant="ghost" onClick={() => setOperateOpen(true)} {...ownerOnly}>
             {isOperate(connection) ? "Turn off emergency fixes" : "Enable emergency fixes"}
           </Button>
@@ -147,6 +149,9 @@ export function ConnectionRow({
       {awsConnected && tierOpen && <AwsTierDialog connection={connection} open onOpenChange={setTierOpen} />}
       {awsConnected && operateOpen && (
         <AwsOperateDialog connection={connection} open onOpenChange={setOperateOpen} />
+      )}
+      {k8sConnected && operateOpen && (
+        <K8sOperateDialog connection={connection} open onOpenChange={setOperateOpen} />
       )}
     </li>
   );

@@ -49,11 +49,13 @@ Severity = Literal["critical", "high", "medium", "low"]
 DetectedBy = Literal["watcher", "user"]
 # Detector rules (M2). user_report: POST /incidents from a person.
 DetectorRule = Literal[
-    "health_check",  # api health failures (ECS container health or an HTTP check)
+    "health_check",  # api health failures (ECS container health, k8s readiness, HTTP check)
     "ecs_deployment_failed",
     "ecs_tasks_stopped",  # tasks stopped non-zero (exit 137 / OOM included)
     "log_error_spike",
     "rds_cpu_latency",
+    "k8s_rollout_failed",  # a Deployment passed its progress deadline
+    "k8s_pods_crashing",  # CrashLoopBackOff, image pull errors, OOMKilled / non-zero exits
     "user_report",
     "other",
 ]

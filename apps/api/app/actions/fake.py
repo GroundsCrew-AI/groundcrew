@@ -3,7 +3,8 @@ does Medic until the Operate-tier implementation lands (docs/phase5-interfaces.m
 
 State is a dict a test sets up: task definition per service, version stages per secret. Plans
 read it; `execute` consumes the token exactly like the real one (single use, same run, action,
-and plan hash) and then changes the dict.
+and plan hash) and then changes the dict. Kubernetes actions go to `kube` (the real
+K8sEmergencyActions on a FixtureKubeReader) when a test passes one.
 """
 
 import uuid
@@ -13,10 +14,12 @@ from datetime import UTC, datetime
 from app.actions.base import (
     ECS_ROLLBACK_SERVICE,
     FORCE_REDEPLOY,
+    K8S_ACTIONS,
     SECRET_ROLLBACK_VERSION,
     ActionPlan,
     ActionResult,
     EmergencyActionError,
+    K8sActions,
 )
 from app.db.session import SessionFactory
 from app.policy.actions import ApprovedAction, consume_approved_action
@@ -46,12 +49,29 @@ class FakeEmergencyActions:
         *,
         services: dict[str, FakeService] | None = None,
         secrets: dict[str, FakeSecret] | None = None,
+        kube: K8sActions | None = None,
     ) -> None:
         self.session_factory = session_factory
         # "cluster/service" -> state; secret ARN -> state
         self.services = services or {}
         self.secrets = secrets or {}
+        self.kube = kube
         self.executed: list[ActionPlan] = []
+
+    def _kube(self) -> K8sActions:
+        if self.kube is None:
+            raise EmergencyActionError("No Kubernetes cluster in this test.")
+        return self.kube
+
+    async def plan_k8s_rollout_undo(
+        self, connection_id: uuid.UUID, namespace: str, deployment: str
+    ) -> ActionPlan:
+        return await self._kube().plan_k8s_rollout_undo(connection_id, namespace, deployment)
+
+    async def plan_k8s_rollout_restart(
+        self, connection_id: uuid.UUID, namespace: str, deployment: str
+    ) -> ActionPlan:
+        return await self._kube().plan_k8s_rollout_restart(connection_id, namespace, deployment)
 
     def _service(self, cluster: str, service: str) -> FakeService:
         try:
@@ -125,6 +145,11 @@ class FakeEmergencyActions:
     async def execute(
         self, plan: ActionPlan, token: ApprovedAction, *, run_id: uuid.UUID
     ) -> ActionResult:
+        if plan.action in K8S_ACTIONS:
+            done = await self._kube().execute(plan, token, run_id=run_id)
+            if done.ok:
+                self.executed.append(plan)
+            return done
         started = datetime.now(UTC)
         await consume_approved_action(
             self.session_factory,
