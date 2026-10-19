@@ -33,11 +33,11 @@ export function DeployStatePill({ state, className }: { state: DeployState; clas
   );
 }
 
-const GRID = "sm:grid-cols-[112px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_64px_64px_80px]";
+const GRID = "lg:grid-cols-[112px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_64px_64px_80px]";
 
 export function DeployListHeader() {
   return (
-    <div aria-hidden="true" className={cn("hidden gap-x-4 border-b px-4 py-2 text-[12px] text-subtle sm:grid", GRID)}>
+    <div aria-hidden="true" className={cn("hidden gap-x-4 border-b px-4 py-2 text-[12px] text-subtle lg:grid", GRID)}>
       <span>Status</span>
       <span>Source</span>
       <span>Target</span>
@@ -74,16 +74,16 @@ export function DeployList({ deploys, now = Date.now() }: { deploys: DeploySumma
                 {d.source.repo}
                 {d.source.ref && <span className="text-muted-foreground">@{d.source.ref}</span>}
               </span>
-              <span className="hidden min-w-0 truncate text-muted-foreground sm:block">
+              <span className="hidden min-w-0 truncate text-muted-foreground lg:block">
                 {d.target.name} <span className="text-subtle">({targetLabel(d.target.kind)})</span>
               </span>
-              <span className="hidden min-w-0 truncate font-mono text-[12px] text-muted-foreground sm:block">
+              <span className="hidden min-w-0 truncate font-mono text-[12px] text-muted-foreground lg:block">
                 {d.live_url ?? ""}
               </span>
-              <span className="tabular hidden text-right text-[12px] text-muted-foreground sm:block">
+              <span className="tabular hidden text-right text-[12px] text-muted-foreground lg:block">
                 {duration !== null ? formatDuration(duration) : ""}
               </span>
-              <span className="tabular hidden text-right font-mono text-[12px] text-muted-foreground sm:block">
+              <span className="tabular hidden text-right font-mono text-[12px] text-muted-foreground lg:block">
                 {formatCost(d.cost_usd) ?? ""}
               </span>
               <time dateTime={d.created_at} title={formatTimestamp(d.created_at)} className="text-right text-[12px] text-muted-foreground">

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 
 import { RunDiscoveryButton } from "@/components/connections/run-discovery-button";
 import { MapCanvas } from "@/components/map/map-canvas";
@@ -16,18 +16,25 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useGraph } from "@/lib/discovery";
 import { formatRelative } from "@/lib/format";
 import { DEFAULT_FILTERS, type MapFilters as Filters, visibleGraph } from "@/lib/graph";
+import { useSearchParam } from "@/lib/use-search-param";
 import { useWorkspace } from "@/lib/workspace";
 
 export default function MapPage() {
+  // The open resource lives in the URL (useSearchParams).
+  return (
+    <Suspense>
+      <MapView />
+    </Suspense>
+  );
+}
+
+function MapView() {
   const { workspace, error: workspaceError, refetch } = useWorkspace();
   const [includeStale, setIncludeStale] = useState(false);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
-  const [selected, setSelected] = useState<string | null>(null);
-  // /map?resource=<id> (from "View on Map" on a deploy) opens that resource's panel.
-  useEffect(() => {
-    const resource = new URLSearchParams(window.location.search).get("resource");
-    if (resource) setSelected(resource);
-  }, []);
+  // /map?resource=<id> opens that resource's panel ("View on Map" on a deploy or an incident links
+  // there). Each resource opened adds a history entry, so Back closes the panel or steps back.
+  const [selected, setSelected] = useSearchParam("resource");
   const graph = useGraph(workspace?.id, includeStale);
   const data = graph.data;
   const providers = useMemo(() => [...new Set((data?.nodes ?? []).map((n) => n.provider))].sort(), [data]);

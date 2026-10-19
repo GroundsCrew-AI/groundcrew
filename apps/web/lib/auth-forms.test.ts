@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { safeNext, signInMessage, signInPageNotice } from "./auth-forms";
+import { failureField, fieldError, safeNext, signInMessage, signInPageNotice } from "./auth-forms";
 import { enabledOAuthProviders } from "./auth-providers";
 
 describe("safeNext", () => {
@@ -35,5 +35,16 @@ describe("enabledOAuthProviders", () => {
     expect(enabledOAuthProviders({ AUTH_GOOGLE_ID: "id" }).google).toBe(false);
     expect(enabledOAuthProviders({ AUTH_GOOGLE_ID: "id", AUTH_GOOGLE_SECRET: "s" }).google).toBe(true);
     expect(enabledOAuthProviders({ GITHUB_APP_CLIENT_ID: "id", GITHUB_APP_CLIENT_SECRET: "s" }).github).toBe(true);
+  });
+});
+
+describe("field errors", () => {
+  it("puts a refused password under the password field and the rest under the form", () => {
+    expect(failureField("weak_password")).toBe("password");
+    expect(failureField("rate_limited")).toBeUndefined();
+    const state = { error: "Too short.", field: "password" as const };
+    expect(fieldError(state, "password")).toBe("Too short.");
+    expect(fieldError(state, "email")).toBeUndefined();
+    expect(fieldError({ error: "Try again." }, "password")).toBeUndefined();
   });
 });

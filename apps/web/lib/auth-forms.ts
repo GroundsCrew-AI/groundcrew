@@ -3,10 +3,22 @@ export type FormState = {
   error?: string;
   /** The API's or Auth.js's code (invalid, unverified, locked, rate_limited, invalid_link, ...). */
   code?: string;
+  /** The field `error` is about, shown under that field instead of under the form. */
+  field?: "email" | "password";
   email?: string;
   name?: string;
   done?: boolean;
 };
+
+/** The field an API failure belongs under: a password the API turned down (too short, too common). */
+export function failureField(code: string | undefined): FormState["field"] {
+  return code === "weak_password" ? "password" : undefined;
+}
+
+/** The error to show under `field`, if the last attempt failed because of it. */
+export function fieldError(state: FormState, field: NonNullable<FormState["field"]>): string | undefined {
+  return state.field === field ? state.error : undefined;
+}
 
 /** A same-site path to go to after sign-in; anything else becomes "/". */
 export function safeNext(next: string | null | undefined): string {

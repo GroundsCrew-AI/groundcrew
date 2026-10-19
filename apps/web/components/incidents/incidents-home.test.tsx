@@ -49,19 +49,29 @@ describe("IncidentsHome", () => {
     const push = vi.spyOn(window.history, "pushState");
     const { rerender } = render(<IncidentsHome />);
     expect(useIncidents).toHaveBeenLastCalledWith("ws-1", {});
-    await userEvent.click(screen.getByRole("tab", { name: "Fix pending" }));
+    await userEvent.click(screen.getByRole("button", { name: "Fix pending" }));
     expect(push).toHaveBeenLastCalledWith(null, "", "/incidents?pending_fix=true");
     rerender(<IncidentsHome />);
     expect(useIncidents).toHaveBeenLastCalledWith("ws-1", { pending_fix: true });
-    expect(screen.getByRole("tab", { name: "Fix pending" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Fix pending" })).toHaveAttribute("aria-pressed", "true");
     push.mockRestore();
+  });
+
+  it("offers the statuses as a group of toggle buttons, not tabs without panels", () => {
+    render(<IncidentsHome />);
+    const group = screen.getByRole("group", { name: "Filter incidents by status" });
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    const pressed = within(group)
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("aria-pressed") === "true");
+    expect(pressed.map((b) => b.textContent)).toEqual(["All"]);
   });
 
   it("opens on the filters in the URL (from the overview link, a reload, or back/forward)", () => {
     at("/incidents?status=merged&severity=high&window=7d");
     const { rerender } = render(<IncidentsHome />);
     expect(useIncidents).toHaveBeenLastCalledWith("ws-1", { status: "merged", severity: "high", window: "7d" });
-    expect(screen.getByRole("tab", { name: "Merged" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Merged" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("combobox", { name: "Severity" })).toHaveTextContent("High");
     expect(screen.getByRole("combobox", { name: "Opened" })).toHaveTextContent("Last 7 days");
 

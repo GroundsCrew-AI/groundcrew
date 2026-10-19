@@ -5,7 +5,7 @@ import { AuthError, CredentialsSignin } from "next-auth";
 import { signIn, signOut } from "@/auth";
 import { type AuthUser, authApi } from "@/lib/auth-api";
 import { enabledOAuthProviders } from "@/lib/auth-providers";
-import { type FormState, safeNext, signInMessage } from "@/lib/auth-forms";
+import { failureField, type FormState, safeNext, signInMessage } from "@/lib/auth-forms";
 import { testAuthEnabled } from "@/lib/test-auth";
 
 function field(formData: FormData, name: string): string {
@@ -19,7 +19,9 @@ async function passwordSignIn(email: string, password: string, next: string): Pr
     await signIn("password", { email, password, redirectTo: next });
   } catch (error) {
     if (error instanceof CredentialsSignin) {
-      return { error: signInMessage(error.code), code: error.code, email };
+      // A wrong password is said under the password field; the other refusals are about the account.
+      const under = error.code === "invalid" ? ("password" as const) : undefined;
+      return { error: signInMessage(error.code), code: error.code, field: under, email };
     }
     if (error instanceof AuthError) return { error: signInMessage("error"), email };
     throw error; // the redirect after a successful sign-in
@@ -47,12 +49,12 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
   const name = field(formData, "name").trim();
   const password = field(formData, "password");
   if (password !== field(formData, "confirm")) {
-    return { error: "The two passwords are different.", email, name };
+    return { error: "The two passwords are different.", field: "password", email, name };
   }
   const result = await authApi<{ status: string }>("sign-up", {
     body: { email, password, name: name || null },
   });
-  if (!result.ok) return { error: result.detail, code: result.code, email, name };
+  if (!result.ok) return { error: result.detail, code: result.code, field: failureField(result.code), email, name };
   return { done: true, email };
 }
 
@@ -68,7 +70,8 @@ export async function verifyEmailAction(_prev: FormState, formData: FormData): P
   const token = field(formData, "token");
   const password = field(formData, "password");
   const result = await authApi<AuthUser>("verify-email", { body: { token, password } });
-  if (!result.ok) return { error: result.detail, code: result.code };
+  // "invalid" here is the wrong password for the link's account.
+  if (!result.ok) return { error: result.detail, code: result.code, field: result.code === "invalid" ? "password" : undefined };
   if (!result.data.email) return { done: true };
   return passwordSignIn(result.data.email, password, "/");
 }
@@ -84,9 +87,9 @@ export async function forgotPasswordAction(_prev: FormState, formData: FormData)
 export async function resetPasswordAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const token = field(formData, "token");
   const password = field(formData, "password");
-  if (password !== field(formData, "confirm")) return { error: "The two passwords are different." };
+  if (password !== field(formData, "confirm")) return { error: "The two passwords are different.", field: "password" };
   const result = await authApi<AuthUser>("reset-password", { body: { token, password } });
-  if (!result.ok) return { error: result.detail, code: result.code };
+  if (!result.ok) return { error: result.detail, code: result.code, field: failureField(result.code) };
   if (!result.data.email) return { done: true };
   return passwordSignIn(result.data.email, password, "/");
 }
