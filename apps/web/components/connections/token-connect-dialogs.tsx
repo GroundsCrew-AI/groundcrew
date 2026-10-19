@@ -265,7 +265,7 @@ export function KubernetesConnectDialog({ open, onOpenChange }: DialogProps) {
       }
     >
       <Field id="k8s-name" label="Name">
-        <Input id="k8s-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="kind groundcrew" />
+        <Input id="k8s-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="production-cluster" />
       </Field>
       <Field id="k8s-file" label="Kubeconfig file" hint={fileName ? `Loaded ${fileName}` : "Or paste it below."}>
         <Input
