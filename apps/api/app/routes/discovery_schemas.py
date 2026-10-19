@@ -19,6 +19,7 @@ from app.db.models import Connection, Edge, Resource
 from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
 from app.graph.roles import role_of
 from app.security.redact import redact_json
+from app.targets.k8s_deploy import deploy_settings
 
 
 class ConnectionKind(StrEnum):
@@ -46,6 +47,19 @@ class LastDiscovery(BaseModel):
     stale: int | None = None
     truncated: bool = False
     notes: list[str] = Field(default_factory=list)
+
+
+class K8sDeploySettingsOut(BaseModel):
+    registry: str
+    username: str | None
+    # True when a registry token is saved; the token itself is never returned.
+    token_saved: bool
+    pull_secret: bool
+    ingress_class: str
+    app_domain: str | None
+    tls: bool
+    tls_cluster_issuer: str | None
+    public_url_base: str | None
 
 
 class ConnectionOut(BaseModel):
@@ -80,6 +94,8 @@ class ConnectionOut(BaseModel):
     regions_chosen: bool = False
     # Kubernetes: namespaces the kubeconfig could list when it was verified.
     namespaces: int | None = None
+    # Kubernetes: where deploys go (registry, ingress, domain). Null: the local kind defaults.
+    deploy_settings: K8sDeploySettingsOut | None = None
     error: str | None = None
     resource_count: int = 0
     last_discovery: LastDiscovery | None = None
@@ -89,6 +105,7 @@ class ConnectionOut(BaseModel):
     def build(cls, conn: Connection, resource_count: int = 0) -> "ConnectionOut":
         c = conn.config or {}
         last = LastDiscovery.model_validate(conn.last_discovery) if conn.last_discovery else None
+        deploy = deploy_settings(conn)
         return cls(
             id=conn.id,
             workspace_id=conn.workspace_id,
@@ -115,6 +132,7 @@ class ConnectionOut(BaseModel):
             regions=connection_regions(c, get_settings()) if conn.kind == "aws" else None,
             regions_chosen=conn.kind == "aws" and bool(c.get("regions")),
             namespaces=c.get("namespaces"),
+            deploy_settings=K8sDeploySettingsOut(**deploy.public()) if deploy else None,
             error=c.get("last_error"),
             resource_count=resource_count,
             last_discovery=last,
@@ -189,6 +207,30 @@ class K8sOperateIn(BaseModel):
     """Turn approved emergency fixes (rollout undo, restart) on or off for a cluster."""
 
     enabled: bool
+
+
+class K8sDeploySettingsIn(BaseModel):
+    """Where a real cluster's deploys go (app.targets.k8s_deploy). Without these a cluster
+    deploys like the local kind cluster."""
+
+    # Image repository prefix without a scheme: ghcr.io/acme, docker.io/acme,
+    # 123456789012.dkr.ecr.us-east-1.amazonaws.com. Images are <registry>/<app>:<tag>.
+    registry: str = Field(min_length=3, max_length=255)
+    # Push credentials. No username clears them. token null keeps the saved one (same
+    # username); the token is stored encrypted and never returned.
+    username: str | None = Field(default=None, max_length=200)
+    token: str | None = Field(default=None, max_length=4000)
+    # Also create an imagePullSecret from the same credentials in gc-<app>.
+    pull_secret: bool = False
+    ingress_class: str = Field(default="nginx", max_length=253)
+    # The app answers at <app>.<app_domain>.
+    app_domain: str | None = Field(default=None, max_length=253)
+    tls: bool = False
+    # cert-manager.io/cluster-issuer annotation on the Ingress (needs tls).
+    tls_cluster_issuer: str | None = Field(default=None, max_length=253)
+    # Where verify sends requests (with the app's Host header), e.g. the ingress load
+    # balancer. Default: the app's own URL.
+    public_url_base: str | None = Field(default=None, max_length=500)
 
 
 class GitHubRepoOut(BaseModel):
