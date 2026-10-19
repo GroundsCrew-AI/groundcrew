@@ -993,6 +993,16 @@
             ],
             "title": "Deploy Role Arn"
           },
+          "deploy_settings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/K8sDeploySettingsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "error": {
             "anyOf": [
               {
@@ -4479,6 +4489,179 @@
           "created_at"
         ],
         "title": "InviteOut",
+        "type": "object"
+      },
+      "K8sDeploySettingsIn": {
+        "description": "Where a real cluster's deploys go (app.targets.k8s_deploy). Without these a cluster\ndeploys like the local kind cluster.",
+        "properties": {
+          "app_domain": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Domain"
+          },
+          "ingress_class": {
+            "default": "nginx",
+            "maxLength": 253,
+            "title": "Ingress Class",
+            "type": "string"
+          },
+          "public_url_base": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Url Base"
+          },
+          "pull_secret": {
+            "default": false,
+            "title": "Pull Secret",
+            "type": "boolean"
+          },
+          "registry": {
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Registry",
+            "type": "string"
+          },
+          "tls": {
+            "default": false,
+            "title": "Tls",
+            "type": "boolean"
+          },
+          "tls_cluster_issuer": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls Cluster Issuer"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "registry"
+        ],
+        "title": "K8sDeploySettingsIn",
+        "type": "object"
+      },
+      "K8sDeploySettingsOut": {
+        "properties": {
+          "app_domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Domain"
+          },
+          "ingress_class": {
+            "title": "Ingress Class",
+            "type": "string"
+          },
+          "public_url_base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Url Base"
+          },
+          "pull_secret": {
+            "title": "Pull Secret",
+            "type": "boolean"
+          },
+          "registry": {
+            "title": "Registry",
+            "type": "string"
+          },
+          "tls": {
+            "title": "Tls",
+            "type": "boolean"
+          },
+          "tls_cluster_issuer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls Cluster Issuer"
+          },
+          "token_saved": {
+            "title": "Token Saved",
+            "type": "boolean"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "registry",
+          "username",
+          "token_saved",
+          "pull_secret",
+          "ingress_class",
+          "app_domain",
+          "tls",
+          "tls_cluster_issuer",
+          "public_url_base"
+        ],
+        "title": "K8sDeploySettingsOut",
         "type": "object"
       },
       "K8sOperateIn": {
@@ -9617,6 +9800,134 @@
           }
         },
         "summary": "Discover Connection",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/k8s/deploy-settings": {
+      "delete": {
+        "description": "Forget the deploy settings (and the saved registry token): back to the local kind\ndefaults.",
+        "operationId": "k8s_clear_deploy_settings_connections__connection_id__k8s_deploy_settings_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "K8S Clear Deploy Settings",
+        "tags": [
+          "connections"
+        ]
+      },
+      "put": {
+        "description": "Where this cluster's deploys go: the image registry (push credentials optional, the\ntoken stored encrypted and never returned), an optional imagePullSecret, the Ingress class,\napp domain, and TLS. A cluster without them deploys like the local kind cluster.",
+        "operationId": "k8s_set_deploy_settings_connections__connection_id__k8s_deploy_settings_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/K8sDeploySettingsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "K8S Set Deploy Settings",
         "tags": [
           "connections"
         ]

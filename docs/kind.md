@@ -158,6 +158,78 @@ Runs as the ServiceAccount and stops on the first surprise:
 As a test: `RUN_LIVE_TESTS=1 uv run --project apps/api pytest apps/api/tests/test_kind_live.py`.
 The offline checks of the same manifests run in CI (`tests/test_kind_manifests.py`).
 
+## Real clusters (EKS, GKE, AKS, ...)
+
+The Kubernetes target deploys to any cluster, not only kind. What changes is configured **per
+connection** under **Deploy settings** on the Connections page (owners only). A connection
+without deploy settings deploys exactly like the local kind cluster: images go to
+`GC_KIND_REGISTRY` (`localhost:5001`), the Ingress is class `nginx` at
+`<app>.<GC_KIND_APP_DOMAIN>`, and verify goes through `GC_KIND_INGRESS_URL` with a Host header. A
+real cluster cannot pull from `localhost:5001`, so the deploy's preflight fails on a cluster
+whose API server is not the kind node (`*-control-plane`) or loopback until deploy settings are
+set.
+
+### 1. Give Groundcrew its deployer account (Kubernetes 1.30 or later)
+
+The same manifests as kind work on any cluster >= 1.30 (the admission policy needs
+ValidatingAdmissionPolicy GA):
+
+```bash
+kubectl apply -f infra/kind/rbac.yaml
+kubectl apply -f infra/kind/admission-policy.yaml
+```
+
+That creates `groundcrew-system`, the `groundcrew-deployer` ServiceAccount and its token Secret,
+`gc-namespace-admin`, and the policy that keeps every write inside `gc-*` (see the table above).
+Build a kubeconfig from the token, with the CA inline (Groundcrew refuses exec plugins, file
+paths, and private API server addresses):
+
+```bash
+SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+CA=$(kubectl -n groundcrew-system get secret groundcrew-deployer-token -o jsonpath='{.data.ca\.crt}')
+TOKEN=$(kubectl -n groundcrew-system get secret groundcrew-deployer-token -o jsonpath='{.data.token}' | base64 -d)
+cat > groundcrew-deployer.kubeconfig <<EOF
+apiVersion: v1
+kind: Config
+clusters: [{name: prod, cluster: {server: $SERVER, certificate-authority-data: $CA}}]
+users: [{name: groundcrew-deployer, user: {token: $TOKEN}}]
+contexts: [{name: prod, context: {cluster: prod, user: groundcrew-deployer}}]
+current-context: prod
+EOF
+chmod 600 groundcrew-deployer.kubeconfig
+```
+
+Add it on the Connections page (Add connection, Kubernetes). The cluster also needs an ingress
+controller (ingress-nginx, Traefik, the AWS Load Balancer Controller with class `alb`, ...) and,
+for TLS, cert-manager.
+
+### 2. Set the deploy settings
+
+On the cluster's row, **Deploy settings**:
+
+| Field | Meaning |
+|---|---|
+| Registry | Image repository prefix without a scheme: `ghcr.io/acme`, `docker.io/acme`, `123456789012.dkr.ecr.us-east-1.amazonaws.com`. Images are pushed as `<registry>/<app>:<tag>`. Private or loopback hosts are refused unless `K8S_ALLOW_PRIVATE_SERVERS` is on (default on in `APP_ENV=dev`), the same rule as kubeconfig servers. |
+| Username, Token | Optional push credentials (a GitHub token with `write:packages`, a Docker Hub access token, ...). The token is stored encrypted with `SECRETS_KEY` and never returned; the page shows "Saved". Leaving the token empty keeps the saved one; clearing the username removes both. |
+| imagePullSecret | Also create a `kubernetes.io/dockerconfigjson` Secret `<app>-registry` in `gc-<app>` from the same credentials and reference it in the Deployment (for private images the nodes cannot pull otherwise). |
+| Ingress class | `ingressClassName` of the app's Ingress (default `nginx`). |
+| App domain | The app answers at `<app>.<app domain>`. Point a wildcard DNS record `*.<app domain>` at the ingress controller. |
+| HTTPS | Adds a `tls` section (`secretName: <app>-tls`) to the Ingress; the app URL becomes `https://`. |
+
+Two more fields are API-only (`PUT /connections/{id}/k8s/deploy-settings`, docs/api-changes.md):
+`tls_cluster_issuer` (adds `cert-manager.io/cluster-issuer: <issuer>` to the Ingress) and
+`public_url_base` (verify sends its requests there, with the app's Host header, e.g. the load
+balancer's address before DNS exists; default: the app's own URL). **Use kind defaults** (or
+`DELETE` on the same path) forgets the settings and the token.
+
+The plan card shows the image name, the push login's username, the pull secret (masked), the
+Ingress class, and the URL before anything is approved. If the settings change after a plan was
+approved, apply refuses it and the deploy must be planned again.
+
+ECR: the registry's push token from `aws ecr get-login-password` expires after 12 hours, and
+Groundcrew does not create the `<app>` repository on this path; create it first. EKS nodes in
+the same account pull from ECR with their node role, so no imagePullSecret is needed there.
+
 ## Troubleshooting
 
 **`port 80 on this machine is already in use`.** Something listens on 80, 443, or 5001

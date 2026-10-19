@@ -97,6 +97,38 @@ export function useK8sSetOperate(workspaceId: string | undefined) {
   });
 }
 
+export type K8sDeploySettingsIn = Schemas["K8sDeploySettingsIn"];
+
+/** Where a real cluster's deploys go (registry, credentials, ingress, domain, TLS). The token
+ * is write-only: null keeps the saved one. */
+export function useK8sSetDeploySettings(workspaceId: string | undefined) {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async ({ connectionId, body }: { connectionId: string; body: K8sDeploySettingsIn }) =>
+      unwrap(
+        await api.PUT("/connections/{connection_id}/k8s/deploy-settings", {
+          params: { path: { connection_id: connectionId } },
+          body,
+        }),
+      ),
+    onSettled: () => workspaceId && invalidate(workspaceId),
+  });
+}
+
+/** Forget a cluster's deploy settings: it deploys like the local kind cluster again. */
+export function useK8sClearDeploySettings(workspaceId: string | undefined) {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async (connectionId: string) =>
+      unwrap(
+        await api.DELETE("/connections/{connection_id}/k8s/deploy-settings", {
+          params: { path: { connection_id: connectionId } },
+        }),
+      ),
+    onSettled: () => workspaceId && invalidate(workspaceId),
+  });
+}
+
 export function useAwsComplete(workspaceId: string | undefined) {
   const invalidate = useInvalidateWorkspace();
   return useMutation({

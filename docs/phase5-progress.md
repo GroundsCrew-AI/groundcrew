@@ -644,3 +644,23 @@ Root cause was right (b11275e, migration at deploy start); three gaps:
   app/db/models.py, app/db/migrations/versions/20261013_a4f2c7e9b1d6_incident_is_test.py,
   app/agents/medic/{memory,agent}.py, app/incidents/{store,views}.py,
   app/routes/{incidents,incident_schemas}.py; web report-dialog.tsx, incident-list.tsx.
+
+## Kubernetes deploys to real clusters (2026-10-19)
+
+The k8s target only worked for the local kind cluster (images to `localhost:5001`, Ingress class
+nginx at `<app>.localhost`). Now each k8s connection can carry deploy settings
+(`app/targets/k8s_deploy.py`, stored in `connection.config["deploy"]`, the registry token
+Fernet-encrypted): registry, optional push credentials (`PushTarget` with a `RegistryLogin`),
+an optional imagePullSecret in `gc-<app>`, ingress class, app domain, TLS (+ cert-manager
+issuer), and the verify URL. Without settings nothing changes; preflight fails on a non-kind
+cluster without settings, and apply refuses a plan whose settings changed after approval.
+How to set up a cluster: docs/kind.md, Real clusters. API: docs/api-changes.md.
+- Tests: tests/test_k8s_deploy_settings.py (33: endpoint validation, encryption, owner-only,
+  plan with registry/host/class/pull secret/TLS, push login, verify URL, preflight, kind default);
+  web k8s-deploy-settings-dialog.test.tsx (3).
+- Files (teammate-owned app/targets/ changed with the user's OK, marked *):
+  app/targets/k8s.py*, app/targets/__init__.py*, app/targets/k8s_deploy.py* (new),
+  app/connectors/kubernetes.py (`is_private_host`), app/routes/{connections,discovery_schemas}.py;
+  web lib/discovery.ts, lib/api/{openapi.json,schema.d.ts},
+  components/connections/{connection-row,k8s-deploy-settings-dialog}.tsx; docs/kind.md,
+  docs/api-changes.md.

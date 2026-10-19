@@ -3,7 +3,11 @@
 Apply order (docs/kind.md, docs/phase4-infra.md):
 
     push image -> Namespace gc-<app> -> RoleBinding to gc-namespace-admin -> Secret
-    -> Deployment (readiness probe) -> Service -> Ingress <app>.<GC_KIND_APP_DOMAIN>
+    -> [imagePullSecret] -> Deployment (readiness probe) -> Service -> Ingress <app>.<domain>
+
+Where images go, the Ingress class, host and TLS, and the verify URL come from the
+connection's deploy settings (app.targets.k8s_deploy); without them the target deploys to the
+local kind cluster exactly as before (GC_KIND_REGISTRY, nginx, <app>.<GC_KIND_APP_DOMAIN>).
 
 The deployer may create namespaces and RoleBindings (never update them), and gets
 gc-namespace-admin inside the namespace through the RoleBinding it creates there; the
@@ -38,7 +42,7 @@ from app.policy.actions import (
     ApprovedAction,
     consume_approved_action,
 )
-from app.sandbox.base import Sandbox
+from app.sandbox.base import PushTarget, Sandbox
 from app.sandbox.registry import kind_target
 from app.security.redact import redact
 from app.targets.base import (
@@ -48,6 +52,7 @@ from app.targets.base import (
     DeploySpec,
     Health,
     LogLine,
+    PlanMismatchError,
     TargetError,
     TargetPlan,
     check_spec_matches,
@@ -55,6 +60,7 @@ from app.targets.base import (
     env_views,
     secret_values,
 )
+from app.targets.k8s_deploy import CERT_MANAGER_ISSUER, K8sDeploySettings, is_local_kind
 
 FIELD_MANAGER = "groundcrew"
 ROLE_BINDING = "groundcrew-deployer"
@@ -267,11 +273,17 @@ class K8sTarget:
         http: httpx.AsyncClient | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         session_factory: SessionFactory | None = None,
+        deploy: K8sDeploySettings | None = None,
+        server: str | None = None,
     ) -> None:
         self.settings = settings
         self.credentials = credentials
         self.connection_id = connection_id
         self.cluster = cluster
+        # The connection's deploy settings; None deploys like the local kind cluster.
+        self.deploy = deploy
+        # The API server URL from the connection (preflight tells kind from a real cluster).
+        self.server = server
         self._api = api
         self._http = http
         self._sleep = sleep
@@ -298,8 +310,45 @@ class K8sTarget:
             "app": name,
             "namespace": namespace(self.settings, app),
             "secret": f"{name}-env",
-            "host": f"{name}.{self.settings.gc_kind_app_domain}",
+            "pull_secret": f"{name}-registry",
+            "tls_secret": f"{name}-tls",
+            "host": f"{name}.{self._domain}",
         }
+
+    @property
+    def _domain(self) -> str:
+        if self.deploy is not None and self.deploy.app_domain:
+            return self.deploy.app_domain
+        return self.settings.gc_kind_app_domain
+
+    @property
+    def _tls(self) -> bool:
+        return self.deploy is not None and self.deploy.tls
+
+    def _app_url(self, host: str) -> str:
+        return f"{'https' if self._tls else 'http'}://{host}"
+
+    def _image(self, app: str, tag: str) -> str:
+        if self.deploy is None:
+            return kind_target(self.settings, app, tag).image
+        return self.deploy.image(app, tag)
+
+    def _push_target(self, app: str, tag: str) -> PushTarget:
+        """kind: GC_KIND_REGISTRY, no login. Otherwise the connection's registry, with its
+        login when credentials are saved (decrypted only here)."""
+        if self.deploy is None:
+            return kind_target(self.settings, app, tag)
+        return self.deploy.push_target(app, tag)
+
+    def _ingress_base(self) -> str | None:
+        """Where verify sends its requests (always with the app's Host header); None means
+        the app's own URL."""
+        if self.deploy is not None:
+            if self.deploy.public_url_base:
+                return self.deploy.public_url_base
+            if self.deploy.app_domain:
+                return None
+        return self.settings.gc_kind_ingress_url.rstrip("/")
 
     def _labels(self, run_id: uuid.UUID, app: str) -> dict[str, str]:
         return {**k8s_labels(run_id), APP_LABEL: slug(app), MANAGED_LABEL: "groundcrew"}
@@ -334,9 +383,13 @@ class K8sTarget:
     # --- plan -----------------------------------------------------------------------------
 
     def _manifests(
-        self, spec_like: TargetPlan, secrets: dict[str, str] | None
+        self,
+        spec_like: TargetPlan,
+        secrets: dict[str, str] | None,
+        pull_secret: str | None = None,
     ) -> list[dict[str, Any]]:
-        """The objects apply creates, in order. `secrets` None renders them masked."""
+        """The objects apply creates, in order. `secrets` None renders them masked, and so
+        does `pull_secret` (the imagePullSecret's .dockerconfigjson) None."""
         n = self._names(spec_like.app)
         labels = self._labels(spec_like.run_id, spec_like.app)
         ns = n["namespace"]
@@ -391,6 +444,26 @@ class K8sTarget:
                     "stringData": data,
                 }
             )
+        pod_extra: dict[str, Any] = {}
+        if self.deploy is not None and self.deploy.uses_pull_secret:
+            objects.append(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": meta(n["pull_secret"]),
+                    "type": "kubernetes.io/dockerconfigjson",
+                    "stringData": {".dockerconfigjson": pull_secret or MASK},
+                }
+            )
+            pod_extra["imagePullSecrets"] = [{"name": n["pull_secret"]}]
+        ingress_meta = meta(n["app"])
+        ingress_extra: dict[str, Any] = {}
+        if self._tls:
+            ingress_extra["tls"] = [{"hosts": [n["host"]], "secretName": n["tls_secret"]}]
+            issuer = self.deploy.tls_cluster_issuer if self.deploy is not None else None
+            if issuer:
+                ingress_meta = {**ingress_meta, "annotations": {CERT_MANAGER_ISSUER: issuer}}
+        ingress_class = self.deploy.ingress_class if self.deploy is not None else "nginx"
         objects += [
             {
                 "apiVersion": "apps/v1",
@@ -426,6 +499,7 @@ class K8sTarget:
                                     },
                                 }
                             ],
+                            **pod_extra,
                         },
                     },
                 },
@@ -442,9 +516,10 @@ class K8sTarget:
             {
                 "apiVersion": "networking.k8s.io/v1",
                 "kind": "Ingress",
-                "metadata": meta(n["app"]),
+                "metadata": ingress_meta,
                 "spec": {
-                    "ingressClassName": "nginx",
+                    "ingressClassName": ingress_class,
+                    **ingress_extra,
                     "rules": [
                         {
                             "host": n["host"],
@@ -468,20 +543,23 @@ class K8sTarget:
 
     async def plan(self, spec: DeploySpec) -> TargetPlan:
         n = self._names(spec.app)
-        image = kind_target(self.settings, n["app"], spec.tag).image
+        image = self._image(n["app"], spec.tag)
         # Inside a namespace that does not exist yet everything is new; the deployer could not
         # look anyway (it reads Secrets only through the RoleBinding apply creates there).
         ns = await self.api.get("namespaces", n["namespace"])
-        existing: dict[str, dict[str, Any] | None] = {"namespaces": ns}
+        existing: dict[tuple[str, str], dict[str, Any] | None] = {
+            ("namespaces", n["namespace"]): ns
+        }
         for kind, name in (
             ("rolebindings", ROLE_BINDING),
             ("secrets", n["secret"]),
+            ("secrets", n["pull_secret"]),
             ("deployments", n["app"]),
             ("services", n["app"]),
             ("ingresses", n["app"]),
         ):
-            existing[kind] = await self.api.get(kind, name, n["namespace"]) if ns else None
-        deployment = existing["deployments"]
+            existing[(kind, name)] = await self.api.get(kind, name, n["namespace"]) if ns else None
+        deployment = existing[("deployments", n["app"])]
         previous = ((deployment or {}).get("metadata") or {}).get("annotations", {}).get(REVISION)
         plan = TargetPlan(
             target="k8s",
@@ -501,7 +579,7 @@ class K8sTarget:
             steps=[],
             rendered="",
             rendered_format="yaml",
-            expected_url=f"http://{n['host']}",
+            expected_url=self._app_url(n["host"]),
             previous_revision=str(previous) if previous else None,
         )
         objects = self._manifests(plan, None)
@@ -513,26 +591,30 @@ class K8sTarget:
             "Service": "services",
             "Ingress": "ingresses",
         }
+        login = f", login as {self.deploy.username}" if self.deploy and self.deploy.username else ""
         steps = [
             ApplyStep(
                 kind="image",
                 name=image,
                 action="push",
-                detail=f"{spec.source_image_id[:19]} from the sandbox",
+                detail=f"{spec.source_image_id[:19]} from the sandbox{login}",
             )
         ]
         for obj in objects:
             kind = kind_of[obj["kind"]]
-            found = existing[kind] is not None
+            found = existing.get((kind, obj["metadata"]["name"])) is not None
             create_only = kind in ("namespaces", "rolebindings")
             probe = plan.health_path or f"tcp/{plan.port}"
             action = ("unchanged" if create_only else "update") if found else "create"
+            ingress = f"{plan.expected_url}, class {obj.get('spec', {}).get('ingressClassName')}"
             detail = {
                 "rolebindings": f"{NAMESPACE_ADMIN} for {DEPLOYER_SA[1]}",
                 "deployments": f"{plan.replicas} replica, {CPU} / {MEMORY}, readiness {probe}",
                 "services": f"port 80 -> {plan.port}",
-                "ingresses": plan.expected_url,
+                "ingresses": ingress + (", TLS" if self._tls else ""),
             }.get(kind)
+            if obj.get("type") == "kubernetes.io/dockerconfigjson" and self.deploy is not None:
+                detail = f"imagePullSecret for {self.deploy.registry_host}"
             steps.append(
                 ApplyStep(
                     kind=obj["kind"], name=obj["metadata"]["name"], action=action, detail=detail
@@ -545,6 +627,7 @@ class K8sTarget:
     async def preflight(self, plan: TargetPlan) -> list[PreflightCheck]:
         """Read-only: the plan's own checks, then whether the names belong to Groundcrew."""
         checks = common_checks(plan)
+        checks.append(self._registry_check())
         n = self._names(plan.app)
         ns = await self.api.get("namespaces", n["namespace"])
 
@@ -600,6 +683,41 @@ class K8sTarget:
                 )
         return checks
 
+    def _registry_check(self) -> PreflightCheck:
+        """A real cluster cannot pull from the local kind registry: without deploy settings,
+        only the local kind cluster may be deployed to."""
+        if self.deploy is None:
+            if is_local_kind(self.server):
+                return PreflightCheck(
+                    name="other",
+                    status="pass",
+                    detail=f"Local kind cluster: images go to {self.settings.gc_kind_registry}",
+                )
+            return PreflightCheck(
+                name="other",
+                status="fail",
+                detail=f"This cluster ({self.server}) is not the local kind cluster and has no "
+                "deploy settings, so it could not pull the image from "
+                f"{self.settings.gc_kind_registry}. An owner sets a registry and app domain "
+                "under Deploy settings on the Connections page (docs/kind.md, Real clusters).",
+            )
+        d = self.deploy
+        parts = [
+            f"Images go to {d.registry}"
+            + (f" (login as {d.username})" if d.has_credentials else " (no login)"),
+            f"ingress class {d.ingress_class}",
+        ]
+        if d.uses_pull_secret:
+            parts.append("pulled with an imagePullSecret")
+        if d.app_domain is None and not is_local_kind(self.server):
+            return PreflightCheck(
+                name="other",
+                status="warn",
+                detail=", ".join(parts) + ". No app domain is set, so the app answers at "
+                f"<app>.{self.settings.gc_kind_app_domain} and verify may not reach it.",
+            )
+        return PreflightCheck(name="other", status="pass", detail=", ".join(parts))
+
     # --- apply ----------------------------------------------------------------------------
 
     async def _write(self, kind: str, body: dict[str, Any], ns: str) -> dict[str, Any]:
@@ -627,10 +745,23 @@ class K8sTarget:
         check_spec_matches(plan, spec)
         n = self._names(plan.app)
         ns = n["namespace"]
+        # The connection's deploy settings may have changed since the plan was approved.
+        if self._image(n["app"], spec.tag) != plan.image or (
+            yaml.safe_dump_all(self._manifests(plan, None), sort_keys=False) != plan.rendered
+        ):
+            raise PlanMismatchError(
+                "The cluster's deploy settings changed after this plan was approved; plan the "
+                "deploy again."
+            )
         # 1. Push: the first thing that leaves the sandbox, only now that the plan is approved.
-        await sandbox.push(spec.source_image, kind_target(self.settings, n["app"], spec.tag))
+        await sandbox.push(spec.source_image, self._push_target(n["app"], spec.tag))
         # Plain values are in the plan already (check_spec_matches); secrets come from the spec.
-        rendered = self._manifests(plan, secret_values(spec))
+        pull = (
+            self.deploy.dockerconfigjson()
+            if self.deploy is not None and self.deploy.uses_pull_secret
+            else None
+        )
+        rendered = self._manifests(plan, secret_values(spec), pull)
         for obj in rendered:
             kind = {"Namespace": "namespaces", "RoleBinding": "rolebindings"}.get(obj["kind"])
             name = obj["metadata"]["name"]
@@ -760,8 +891,9 @@ class K8sTarget:
         )
 
     async def _http_checks(self, deployment: Deployment, deadline: float) -> list[VerifyCheck]:
-        host = f"{slug(deployment.app)}.{self.settings.gc_kind_app_domain}"
-        base = self.settings.gc_kind_ingress_url.rstrip("/")
+        host = f"{slug(deployment.app)}.{self._domain}"
+        app_url = self._app_url(host)
+        base = self._ingress_base() or app_url
         client = self._http or httpx.AsyncClient(timeout=5.0)
         out: list[VerifyCheck] = []
         try:
@@ -790,7 +922,7 @@ class K8sTarget:
                         name=name,
                         ok=code is not None and code < 400,
                         detail=last,
-                        url=f"http://{host}{path}",
+                        url=f"{app_url}{path}",
                         status_code=code,
                         latency_ms=latency,
                     )
@@ -937,7 +1069,7 @@ class K8sTarget:
             image=image,
             revision=revision,
             previous_revision=plan.previous_revision,
-            live_url=f"http://{n['host']}",
+            live_url=self._app_url(n["host"]),
             status="rolled_back",
             external_id=f"k8s:{self.cluster}:{n['namespace']}/deployments/{n['app']}",
         )

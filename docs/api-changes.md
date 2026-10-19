@@ -233,3 +233,23 @@ All additive.
   `ConnectionOut.capabilities` is now set for Kubernetes connections too (`observe`, `operate`).
 - `infra/k8s-readonly-rbac.yaml` adds `events`, `replicasets`, and `pods/log` (get): re-apply it
   on clusters connected before.
+
+## Kubernetes deploys to real clusters (2026-10-19)
+
+All additive.
+- `PUT /connections/{connection_id}/k8s/deploy-settings` (owner, connected k8s only):
+  `K8sDeploySettingsIn` `{registry, username?, token?, pull_secret, ingress_class, app_domain?,
+  tls, tls_cluster_issuer?, public_url_base?}`. `registry` is `host[:port][/path]` without a
+  scheme; `app_domain` and `ingress_class` are DNS names; private or loopback registries, app
+  domains, and `public_url_base` hosts are refused unless `K8S_ALLOW_PRIVATE_SERVERS` (default
+  on in `APP_ENV=dev`). `token: null` keeps the saved token for the same username; no username
+  clears the credentials; `pull_secret` and a token need a username; `tls` needs `app_domain`;
+  `tls_cluster_issuer` needs `tls`. 422 with the reason otherwise. Returns `ConnectionOut`.
+- `DELETE /connections/{connection_id}/k8s/deploy-settings` (owner): forget them (back to the
+  local kind defaults). Returns `ConnectionOut`.
+- `ConnectionOut.deploy_settings` (`K8sDeploySettingsOut` or null): the settings without the
+  token; `token_saved` says whether one is stored. Null for kind defaults and other kinds.
+- Deploy plans to such a cluster: `DeployPlan.image` is `<registry>/<app>:<tag>`, an extra
+  `Secret <app>-registry` step (imagePullSecret, value masked), and `expected_url` is
+  `https://<app>.<app_domain>` with TLS. Preflight has a new `other` check: it fails on a cluster
+  that is not the local kind cluster and has no deploy settings.
