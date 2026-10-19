@@ -142,8 +142,9 @@ export function useUpdateWorkspace(workspaceId: string) {
       client.setQueryData<Me>(meKey, (me) =>
         withWorkspace(me, { id: detail.id, name: detail.name, role: detail.role }),
       );
-      // The daily spend cap shows in the summary.
+      // The daily spend cap shows in the summary; incident watch in the overview's checklist.
       void client.invalidateQueries({ queryKey: ["summary", workspaceId] });
+      void client.invalidateQueries({ queryKey: ["workspace-config", workspaceId] });
     },
   });
 }

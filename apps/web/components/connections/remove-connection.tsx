@@ -28,14 +28,29 @@ import { type Connection, type ConnectionDeleted, useDeleteConnection } from "@/
 
 /** Remove a connection and what Groundcrew stored for it, then show what the customer still
  * has to remove on their side (the AWS stack, the GitHub App, the Vercel token). */
-export function RemoveConnection({ connection }: { connection: Connection }) {
+export function RemoveConnection({
+  connection,
+  disabled = false,
+  describedBy,
+}: {
+  connection: Connection;
+  /** Members cannot remove connections; the reason is the element `describedBy` points at. */
+  disabled?: boolean;
+  describedBy?: string;
+}) {
   const remove = useDeleteConnection();
   const [done, setDone] = useState<ConnectionDeleted | null>(null);
   return (
     <>
       <AlertDialog>
         <AlertDialogTrigger asChild>
-          <Button size="icon-sm" variant="ghost" aria-label={`Remove ${connection.name}`}>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`Remove ${connection.name}`}
+            disabled={disabled}
+            aria-describedby={describedBy}
+          >
             <Trash2 />
           </Button>
         </AlertDialogTrigger>

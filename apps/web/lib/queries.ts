@@ -14,19 +14,44 @@ export const keys = {
   runs: (ws: string) => ["runs", ws] as const,
   run: (id: string) => ["run", id] as const,
   approvals: (ws: string, tab: "pending" | "decided") => ["approvals", ws, tab] as const,
+  config: (ws: string) => ["workspace-config", ws] as const,
 };
 
+/**
+ * Counts for the overview and the sidebar badges. Every page has the sidebar, so this polls
+ * gently; like every polling query it pauses while the tab is hidden (TanStack's default
+ * refetchIntervalInBackground: false) and catches up on focus. Deciding an approval or starting
+ * a run invalidates it straight away.
+ */
 export function useSummary(workspaceId: string | undefined) {
   return useQuery({
     queryKey: keys.summary(workspaceId ?? ""),
     enabled: Boolean(workspaceId),
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
     queryFn: async () =>
       unwrap(
         await api.GET("/workspaces/{workspace_id}/summary", {
           params: { path: { workspace_id: workspaceId! } },
         }),
       ),
+  });
+}
+
+/**
+ * The workspace's own settings (incident watch, emergency approvers, spend cap). Every member
+ * can read them; only owners change them, in Settings.
+ */
+export function useWorkspaceConfig(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: keys.config(workspaceId ?? ""),
+    enabled: Boolean(workspaceId),
+    staleTime: 60_000,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/workspaces/{workspace_id}", {
+          params: { path: { workspace_id: workspaceId! } },
+        }),
+      ).settings,
   });
 }
 

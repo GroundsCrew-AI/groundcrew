@@ -9,6 +9,7 @@ import { type Connection, downloadAwsTemplate, useAwsSetTier, useAwsTemplateUrl 
 import { useWorkspace } from "@/lib/workspace";
 
 import { DEPLOY_CREATES } from "./aws-connect-dialog";
+import { cloudFormationStacksUrl } from "./aws-console";
 import { CopyField } from "./copy-field";
 
 /**
@@ -30,8 +31,7 @@ export function AwsTierDialog({
   const enabling = connection.tier !== "deploy";
   const template = useAwsTemplateUrl(open && enabling);
   const templateUrl = template.data?.url;
-  const region = "us-east-2";
-  const stacks = `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks`;
+  const stacks = cloudFormationStacksUrl(connection.region);
 
   function close(next: boolean) {
     onOpenChange(next);
@@ -68,7 +68,16 @@ export function AwsTierDialog({
               <a href={stacks} target="_blank" rel="noreferrer" className="underline underline-offset-2">
                 CloudFormation stacks
               </a>{" "}
-              in account <span className="font-mono">{connection.account}</span>, select{" "}
+              in account <span className="font-mono">{connection.account}</span>
+              {connection.region ? (
+                <>
+                  {" "}
+                  (<span className="font-mono">{connection.region}</span>)
+                </>
+              ) : (
+                " in the region where you created the stack"
+              )}
+              , select{" "}
               <span className="font-mono">groundcrew-read-only</span>, and click <span className="font-medium">Update</span>.
             </li>
             <li className="space-y-2">

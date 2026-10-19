@@ -1,11 +1,12 @@
 "use client";
 
+import { Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AwsConnectDialog, openPendingTab } from "@/components/connections/aws-connect-dialog";
-import { ConnectionRow } from "@/components/connections/connection-row";
+import { ConnectionRow, OWNER_ONLY_REASON } from "@/components/connections/connection-row";
 import { GitHubConnectDialog } from "@/components/connections/github-connect-dialog";
 import { RunDiscoveryButton } from "@/components/connections/run-discovery-button";
 import {
@@ -38,6 +39,8 @@ const PROVIDERS: Provider[] = [
   { kind: "vm", name: "VM", access: "SSH key, encrypted at rest. Read commands only.", action: "Connect", later: true },
 ];
 
+const OWNER_ONLY_ID = "connections-owner-only";
+
 export default function ConnectionsPage() {
   const router = useRouter();
   const { workspace, error: workspaceError, refetch } = useWorkspace();
@@ -48,6 +51,13 @@ export default function ConnectionsPage() {
   const awsTab = useRef<Window | null>(null);
   const error = workspaceError ?? connections.error;
   const items = connections.data ?? [];
+  // Connections are workspace infrastructure: members see them and can refresh discovery, but
+  // only owners add, change, or remove them (the API enforces it as well).
+  const canManage = workspace?.role === "owner";
+  const ownerOnly = {
+    disabled: !workspace || !canManage,
+    "aria-describedby": workspace && !canManage ? OWNER_ONLY_ID : undefined,
+  };
 
   function onRefresh(connection: Connection) {
     refresh.mutate(connection, {
@@ -79,6 +89,18 @@ export default function ConnectionsPage() {
           </p>
         </div>
 
+        {workspace && !canManage && (
+          <p
+            id={OWNER_ONLY_ID}
+            className="flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[12.5px] text-muted-foreground"
+          >
+            <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              {OWNER_ONLY_REASON} You can still refresh discovery. Ask an owner of {workspace.name} for changes.
+            </span>
+          </p>
+        )}
+
         {error ? (
           <ErrorState error={error} onRetry={() => (workspaceError ? refetch() : void connections.refetch())} />
         ) : connections.isLoading || !workspace ? (
@@ -98,6 +120,8 @@ export default function ConnectionsPage() {
                     connection={connection}
                     onRefresh={onRefresh}
                     refreshing={refresh.isPending && refresh.variables?.id === connection.id}
+                    canManage={canManage}
+                    reasonId={OWNER_ONLY_ID}
                     onResume={(conn) => {
                       setAwsTier(conn.tier ?? "observe");
                       openDialog("aws");
@@ -121,16 +145,19 @@ export default function ConnectionsPage() {
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="font-medium">{provider.name}</h3>
                     {provider.preview && <span className="text-[11.5px] text-subtle">Preview</span>}
-                    {provider.later && <span className="text-[11.5px] text-subtle">Later</span>}
+                    {provider.later && <span className="text-[11.5px] text-subtle">Not available yet</span>}
                   </div>
                   <p className="mt-0.5 text-[12.5px] text-muted-foreground">{provider.access}</p>
                   {provider.kind === "aws" && (
-                    <fieldset className="mt-3 flex gap-1 rounded-md border p-0.5 text-[12px]">
+                    <fieldset
+                      disabled={!canManage}
+                      className="mt-3 flex gap-1 rounded-md border p-0.5 text-[12px] disabled:opacity-50"
+                    >
                       <legend className="sr-only">AWS access</legend>
                       {(["observe", "deploy"] as const).map((tier) => (
                         <label
                           key={tier}
-                          className={`flex-1 cursor-pointer rounded px-2 py-1 text-center ${awsTier === tier ? "bg-muted font-medium" : "text-muted-foreground"}`}
+                          className={`flex-1 cursor-pointer rounded px-2 py-1 text-center has-[:disabled]:cursor-not-allowed ${awsTier === tier ? "bg-muted font-medium" : "text-muted-foreground"}`}
                         >
                           <input
                             type="radio"
@@ -150,7 +177,7 @@ export default function ConnectionsPage() {
                       size="sm"
                       variant="outline"
                       className="mt-3"
-                      disabled={!workspace}
+                      {...ownerOnly}
                       onClick={() => openDialog(provider.kind as ConnectionKind)}
                     >
                       {provider.action}

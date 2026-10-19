@@ -94,13 +94,36 @@ export function fixLabel(action: string): string {
   return ACTIONS[action] ?? action.replaceAll("_", " ");
 }
 
+/** Opened within this long before now. */
+export type IncidentWindow = "24h" | "7d" | "30d";
+
 export type IncidentFilters = {
   status?: IncidentStatus;
   severity?: Severity;
   resource?: string;
   /** Only incidents whose permanent fix PR is not deployed yet. */
   pending_fix?: boolean;
+  /**
+   * Sent as `since`, worked out at fetch time: the query key keeps "7d" rather than a timestamp,
+   * so polling keeps the same list and the window moves with the clock.
+   */
+  window?: IncidentWindow;
 };
+
+const WINDOW_MS: Record<IncidentWindow, number> = {
+  "24h": 24 * 3_600_000,
+  "7d": 7 * 24 * 3_600_000,
+  "30d": 30 * 24 * 3_600_000,
+};
+
+export function isIncidentWindow(value: string | null | undefined): value is IncidentWindow {
+  return Boolean(value && Object.hasOwn(WINDOW_MS, value));
+}
+
+/** The API's `since` for a time window, as of `now`. */
+export function sinceFor(window: IncidentWindow | null | undefined, now: number): string | undefined {
+  return window ? new Date(now - WINDOW_MS[window]).toISOString() : undefined;
+}
 
 export const incidentKeys = {
   list: (ws: string, filters: IncidentFilters) => ["incidents", ws, filters] as const,
@@ -113,14 +136,17 @@ export function useIncidents(workspaceId: string | undefined, filters: IncidentF
     enabled: Boolean(workspaceId),
     initialPageParam: null as string | null,
     refetchInterval: 10_000,
-    queryFn: async ({ pageParam }) =>
-      unwrap(
+    queryFn: async ({ pageParam }) => {
+      const { window, ...query } = filters;
+      const since = sinceFor(window, Date.now());
+      return unwrap(
         await api.GET("/incidents", {
           params: {
-            query: { workspace_id: workspaceId!, limit, cursor: pageParam ?? undefined, ...filters },
+            query: { workspace_id: workspaceId!, limit, cursor: pageParam ?? undefined, since, ...query },
           },
         }),
-      ),
+      );
+    },
     getNextPageParam: (last) => last.next_cursor,
   });
 }
@@ -194,6 +220,8 @@ export function useReportIncident() {
     mutationFn: async (body: IncidentCreate) => unwrap(await api.POST("/incidents", { body })),
     onSuccess: (_created, body) => {
       void client.invalidateQueries({ queryKey: ["incidents", body.workspace_id] });
+      // The sidebar badge and the overview count open incidents.
+      void client.invalidateQueries({ queryKey: ["summary", body.workspace_id] });
     },
   });
 }

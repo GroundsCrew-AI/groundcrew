@@ -86,8 +86,9 @@ export default function MapPage() {
               )
             }
           >
-            Connect AWS, GitHub, or Vercel, then run discovery. Groundcrew reads each connection and
-            works out how the pieces talk to each other, with evidence for every line it draws.
+            Connect a cloud account, a cluster, or GitHub, then run discovery. Groundcrew reads each
+            connection and works out how the pieces talk to each other, with evidence for every line it
+            draws.
           </EmptyState>
         </PageBody>
       ) : (

@@ -18,19 +18,36 @@ vi.mock("@/lib/discovery", () => ({
 describe("AwsOperateDialog", () => {
   beforeEach(() => mutate.mockReset());
 
-  it("explains the stack update with this account's ARNs and verifies the operate role", async () => {
-    const conn = connection({ capabilities: ["observe"] });
+  it("explains the stack update with this account's ARNs in its region and verifies the operate role", async () => {
+    const conn = connection({ capabilities: ["observe"], region: "eu-west-1" });
     expect(isOperate(conn)).toBe(false);
     render(<AwsOperateDialog connection={conn} open onOpenChange={vi.fn()} />);
     expect(screen.getByText("Turn on emergency fixes")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "CloudFormation stacks" })).toHaveAttribute(
+      "href",
+      "https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks",
+    );
     expect(screen.getByText("EnableOperate")).toBeInTheDocument();
-    expect(screen.getByText("arn:aws:ecs:us-east-2:881050425883:service/CLUSTER/*")).toBeInTheDocument();
-    expect(screen.getByText("arn:aws:secretsmanager:us-east-2:881050425883:secret:PREFIX/*")).toBeInTheDocument();
+    expect(screen.getByText("arn:aws:ecs:eu-west-1:881050425883:service/CLUSTER/*")).toBeInTheDocument();
+    expect(screen.getByText("arn:aws:secretsmanager:eu-west-1:881050425883:secret:PREFIX/*")).toBeInTheDocument();
+    expect(screen.getByText(/replace CLUSTER and PREFIX\)/)).toBeInTheDocument();
     expect(screen.getByText("OperatePassRoleArns")).toBeInTheDocument();
-    expect(screen.getByText("arn:aws:iam::881050425883:role/checkout-*")).toBeInTheDocument();
+    // A pattern for the customer's own task roles, not a demo app's.
+    expect(screen.getByText("arn:aws:iam::881050425883:role/YOUR-APP-*")).toBeInTheDocument();
+    expect(screen.queryByText(/checkout|:us-east-2:/)).not.toBeInTheDocument();
     expect(screen.getByText(/only after a person approves each fix/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Verify" }));
     expect(mutate).toHaveBeenCalledWith({ connectionId: conn.id, enabled: true }, expect.anything());
+  });
+
+  it("uses a REGION placeholder when the connection's region is not known yet", () => {
+    render(<AwsOperateDialog connection={connection({ capabilities: ["observe"], region: null })} open onOpenChange={vi.fn()} />);
+    expect(screen.getByText("arn:aws:ecs:REGION:881050425883:service/CLUSTER/*")).toBeInTheDocument();
+    expect(screen.getByText(/replace CLUSTER, PREFIX, and REGION\)/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "CloudFormation stacks" })).toHaveAttribute(
+      "href",
+      "https://console.aws.amazon.com/cloudformation/home#/stacks",
+    );
   });
 
   it("turns emergency fixes off", async () => {

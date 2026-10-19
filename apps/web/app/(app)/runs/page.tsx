@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { NewRunDialog } from "@/components/runs/new-run-dialog";
 import { RunList, RunListHeader } from "@/components/runs/run-list";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
@@ -31,12 +33,14 @@ export default function RunsPage() {
               illustration={<RunsIllustration />}
               title="No runs yet"
               action={
-                <NewRunDialog
-                  trigger={<Button size="sm">Start a test run</Button>}
-                />
+                <Button size="sm" asChild>
+                  <Link href="/connections">Go to Connections</Link>
+                </Button>
               }
             >
-              A run is one agent working on one goal. Every step it takes shows up here as it happens.
+              A run is one agent working on one goal: discovering your infrastructure, deploying an app, or
+              investigating an incident. Every step shows up here as it happens. Connect an account and run
+              discovery to start the first one.
             </EmptyState>
           </div>
         ) : (

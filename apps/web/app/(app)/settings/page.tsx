@@ -183,7 +183,7 @@ function NewWorkspaceButton() {
         <Plus aria-hidden="true" />
         New workspace
       </Button>
-      <CreateWorkspaceDialog open={open} onOpenChange={setOpen} />
+      {open && <CreateWorkspaceDialog open onOpenChange={setOpen} />}
     </>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { toast } from "sonner";
@@ -25,12 +25,15 @@ const AGENTS = [
   {
     id: "echo_ops",
     name: "Echo Ops",
-    hint: "Test agent on Nemotron Nano with fake tools. Restarting a service needs your approval.",
+    hint: "A test agent with simulated tools: nothing in your accounts changes. Restarting a service still asks for your approval.",
   },
 ];
 const DEFAULT_GOAL = "List the services and restart the one named api.";
 
-/** Dev helper until the real agents land: start a run and open its timeline. */
+/**
+ * Start a test run and open its timeline: a way to see how runs, steps, and approvals work
+ * without touching anything real. The real agents start from Connections, Deploy, and Incidents.
+ */
 export function NewRunDialog({ trigger }: { trigger?: ReactNode }) {
   const router = useRouter();
   const { workspace } = useWorkspace();
@@ -60,9 +63,9 @@ export function NewRunDialog({ trigger }: { trigger?: ReactNode }) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {trigger ?? (
-          <Button size="sm" disabled={!workspace}>
-            <Plus aria-hidden="true" />
-            New run
+          <Button size="sm" variant="outline" disabled={!workspace}>
+            <FlaskConical aria-hidden="true" />
+            Test run
           </Button>
         )}
       </DialogTrigger>
