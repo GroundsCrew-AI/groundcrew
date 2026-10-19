@@ -4,7 +4,7 @@ import GitHub, { type GitHubProfile } from "next-auth/providers/github";
 import Google, { type GoogleProfile } from "next-auth/providers/google";
 
 import { type AuthUser, authApi, type OAuthProfile } from "@/lib/auth-api";
-import { enabledOAuthProviders } from "@/lib/auth-providers";
+import { enabledOAuthProviders, signedInUserId } from "@/lib/auth-providers";
 import { TEST_USER, testAuthEnabled } from "@/lib/test-auth";
 
 /**
@@ -137,8 +137,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     jwt({ token, user, account }) {
       // `user` and `account` are only present right after sign-in; nothing a client sends
       // (session updates) changes who the token is for or when they signed in.
-      if (account && user?.id) {
-        token.uid = user.id;
+      const uid = signedInUserId(user, account);
+      if (uid) {
+        token.uid = uid;
         token.authAt = Math.floor(Date.now() / 1000);
         token.name = user.name;
         token.email = user.email;
