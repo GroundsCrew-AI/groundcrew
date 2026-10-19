@@ -57,7 +57,8 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: >-
       true: also create the groundcrew-operate role, so Groundcrew can run approved emergency
-      fixes (ECS rollback or restart, secret version rollback) on the resources listed below.
+      fixes (ECS rollback or restart, secret version rollback, Lambda alias rollback, EC2
+      reboot) on the resources listed below.
       Independent of Tier. Every action still needs a person's approval in Groundcrew.
   OperateServiceArns:
     Type: CommaDelimitedList
@@ -82,18 +83,35 @@ Parameters:
       (arn:aws:iam::ACCOUNT:role/checkout-*). Passed to ecs-tasks.amazonaws.com only, never a
       groundcrew-* role. The default matches nothing: rollbacks of services whose revisions have
       roles then stop at the plan. Used only with EnableOperate=true.
+  OperateFunctionArns:
+    Type: CommaDelimitedList
+    Default: "arn:aws:lambda:*:*:function:none"
+    Description: >-
+      Lambda functions whose aliases the operate role may point back at an earlier published
+      version, as ARNs ending in * so their aliases match
+      (arn:aws:lambda:REGION:ACCOUNT:function:checkout-*). Used only with EnableOperate=true.
+  OperateInstanceArns:
+    Type: CommaDelimitedList
+    Default: "arn:aws:ec2:*:*:instance/none"
+    Description: >-
+      EC2 instances the operate role may reboot when their status checks fail, as ARNs
+      (arn:aws:ec2:REGION:ACCOUNT:instance/i-0abc..., or instance/* for all). Used only with
+      EnableOperate=true.
 
 Rules:
-  # The defaults above match nothing; turning operate on needs real ARNs in both lists.
+  # The defaults above match nothing; turning operate on needs real ARNs in at least one list
+  # (an ECS-only, Lambda-only, or EC2-only app lists only what it has).
   # Rules only allow Ref and the Fn::Equals/Not/And/Or/Contains/EachMember*/RefAll/ValueOf*
   # functions (test_rules_use_only_supported_functions).
-  OperateNeedsServicesAndSecrets:
+  OperateNeedsSomethingToActOn:
     RuleCondition: !Equals [!Ref EnableOperate, "true"]
     Assertions:
-      - Assert: !Not [!Contains [!Ref OperateServiceArns, "arn:aws:ecs:*:*:service/none/none"]]
-        AssertDescription: With EnableOperate=true, list the ECS services Groundcrew may update in OperateServiceArns.
-      - Assert: !Not [!Contains [!Ref OperateSecretArns, "arn:aws:secretsmanager:*:*:secret:none"]]
-        AssertDescription: With EnableOperate=true, list the secrets Groundcrew may roll back in OperateSecretArns.
+      - Assert: !Or
+          - !Not [!Contains [!Ref OperateServiceArns, "arn:aws:ecs:*:*:service/none/none"]]
+          - !Not [!Contains [!Ref OperateSecretArns, "arn:aws:secretsmanager:*:*:secret:none"]]
+          - !Not [!Contains [!Ref OperateFunctionArns, "arn:aws:lambda:*:*:function:none"]]
+          - !Not [!Contains [!Ref OperateInstanceArns, "arn:aws:ec2:*:*:instance/none"]]
+        AssertDescription: With EnableOperate=true, list what Groundcrew may act on in OperateServiceArns, OperateSecretArns, OperateFunctionArns, or OperateInstanceArns.
 
 Conditions:
   CreateIndex: !Equals [!Ref CreateResourceExplorerIndex, "true"]
@@ -137,6 +155,11 @@ Resources:
                   - lambda:ListFunctions
                   - lambda:GetFunctionConfiguration
                   - lambda:ListTags
+                  - lambda:ListVersionsByFunction
+                  - lambda:ListAliases
+                  - lambda:GetAlias
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
                 Resource: "*"
               - Sid: ImagesAndDatabases
                 Effect: Allow
@@ -524,7 +547,7 @@ Resources:
     Condition: IsOperate
     Properties:
       RoleName: groundcrew-operate
-      Description: Groundcrew approved emergency fixes on the listed services and secrets (no secret values)
+      Description: Groundcrew approved emergency fixes on the listed services, secrets, functions, and instances (no secret values)
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -561,6 +584,22 @@ Resources:
                   - secretsmanager:UpdateSecretVersionStage
                   - secretsmanager:DescribeSecret
                 Resource: !Ref OperateSecretArns
+              - Sid: LambdaRollBackAliasesOfListedFunctions
+                Effect: Allow
+                Action:
+                  - lambda:GetAlias
+                  - lambda:ListVersionsByFunction
+                  - lambda:UpdateAlias
+                Resource: !Ref OperateFunctionArns
+              - Sid: Ec2RebootListedInstances
+                Effect: Allow
+                Action: ec2:RebootInstances
+                Resource: !Ref OperateInstanceArns
+              # Read only, and with no resource-level permissions.
+              - Sid: Ec2ReadInstanceStatus
+                Effect: Allow
+                Action: ec2:DescribeInstanceStatus
+                Resource: "*"
               - Sid: PassListedRolesToEcsTasksForRollback
                 Effect: Allow
                 Action: iam:PassRole

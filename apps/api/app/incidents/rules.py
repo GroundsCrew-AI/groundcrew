@@ -11,6 +11,9 @@ the watcher runs them every INCIDENT_WATCH_INTERVAL_SECONDS and dedupes into ope
 | ecs_tasks_stopped | tasks stopped with a non-zero exit code (137 / OutOfMemoryError included) |
 | log_error_spike | error lines in the last 5 minutes at 3x the rate of the 25 before, at least 5 |
 | rds_cpu_latency | slow queries (below); else CPU 2x and >= 40 %, read latency 2x and >= 20 ms |
+| lambda_errors | 5+ errors in 5 minutes, 5 %+ of invocations, 3x the rate before (down at 90 %) |
+| lambda_throttles | at least 10 throttles in the last 5 minutes, 10 % of its requests, 3x before |
+| ec2_status_check | an instance's system or instance status check is impaired (down) |
 
 Slow queries: 2 minutes in a row with database CPU > 15 % and, in the request logs of a service
 that `reads` the database, a path's p50 at 3x its baseline and >= 20 ms (health checks ignored;
@@ -373,3 +376,198 @@ def fetch_rds(
         ]
 
     return points("cpu", 1.0), points("lat", 1000.0)
+
+
+# --- Lambda -----------------------------------------------------------------------------------
+
+LAMBDA_MIN_ERRORS = 5
+LAMBDA_ERROR_SHARE = 0.05
+LAMBDA_MIN_THROTTLES = 10
+LAMBDA_THROTTLE_SHARE = 0.1
+Points = list[tuple[datetime, float]]
+
+
+def _split_sum(points: Points, now: datetime) -> tuple[float, float, float]:
+    """(sum in the last RECENT, sum in the BASELINE before it, baseline minutes)."""
+    recent = sum(v for t, v in points if now - RECENT <= t <= now)
+    before = sum(v for t, v in points if now - RECENT - BASELINE <= t < now - RECENT)
+    return recent, before, BASELINE.total_seconds() / 60
+
+
+def lambda_signals(
+    resource_id: Any, name: str, metrics: dict[str, Points], now: datetime
+) -> list[Signal]:
+    """Errors and throttles of one function from its per-minute CloudWatch sums."""
+    out: list[Signal] = []
+    errors, errors_before, _ = _split_sum(metrics.get("errors", []), now)
+    calls, calls_before, _ = _split_sum(metrics.get("invocations", []), now)
+    throttles, throttles_before, _ = _split_sum(metrics.get("throttles", []), now)
+    rate = errors / calls if calls else 0.0
+    rate_before = errors_before / calls_before if calls_before else 0.0
+    if (
+        errors >= LAMBDA_MIN_ERRORS
+        and rate >= LAMBDA_ERROR_SHARE
+        and rate >= ERROR_RATE_FACTOR * rate_before + 0.01
+    ):
+        first = min(
+            (t for t, v in metrics.get("errors", []) if v > 0 and t >= now - RECENT), default=now
+        )
+        down = rate >= DOWN_ERROR_SHARE and calls >= DOWN_MIN_LINES
+        out.append(
+            Signal(
+                rule="lambda_errors",
+                resource_id=resource_id,
+                resource_name=name,
+                detail=(
+                    f"{errors:.0f} errors in {calls:.0f} invocations in the last 5 minutes "
+                    f"({rate:.0%}, before {rate_before:.0%})"
+                    + ("; nearly every invocation fails" if down else "")
+                ),
+                at=first,
+                down=down,
+            )
+        )
+    requests = calls + throttles
+    share = throttles / requests if requests else 0.0
+    share_before = (
+        throttles_before / (calls_before + throttles_before)
+        if calls_before + throttles_before
+        else 0.0
+    )
+    if (
+        throttles >= LAMBDA_MIN_THROTTLES
+        and share >= LAMBDA_THROTTLE_SHARE
+        and share >= ERROR_RATE_FACTOR * share_before + 0.01
+    ):
+        first = min(
+            (t for t, v in metrics.get("throttles", []) if v > 0 and t >= now - RECENT),
+            default=now,
+        )
+        out.append(
+            Signal(
+                rule="lambda_throttles",
+                resource_id=resource_id,
+                resource_name=name,
+                detail=(
+                    f"{throttles:.0f} throttled requests in the last 5 minutes ({share:.0%} of "
+                    f"requests, before {share_before:.0%}): concurrency limit reached"
+                ),
+                at=first,
+                down=share >= DOWN_ERROR_SHARE,
+            )
+        )
+    return out
+
+
+def fetch_lambda(
+    reader: AwsReader, region: str | None, function: str, now: datetime
+) -> dict[str, Points]:
+    """Blocking (boto3). Per-minute sums of Errors, Invocations, and Throttles."""
+
+    def query(metric_id: str, metric: str) -> dict[str, Any]:
+        return {
+            "Id": metric_id,
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/Lambda",
+                    "MetricName": metric,
+                    "Dimensions": [{"Name": "FunctionName", "Value": function}],
+                },
+                "Period": 60,
+                "Stat": "Sum",
+            },
+        }
+
+    results = reader.call(
+        "cloudwatch",
+        region,
+        "GetMetricData",
+        MetricDataQueries=[
+            query("errors", "Errors"),
+            query("invocations", "Invocations"),
+            query("throttles", "Throttles"),
+        ],
+        StartTime=now - RECENT - BASELINE,
+        EndTime=now,
+    ).get("MetricDataResults", [])
+    return {
+        str(r.get("Id")): [
+            (t, float(v))
+            for t, v in zip(r.get("Timestamps", []), r.get("Values", []), strict=False)
+            if isinstance(t, datetime)
+        ]
+        for r in results
+    }
+
+
+def lambda_check(
+    reader: AwsReader,
+    region: str | None,
+    resource_id: Any,
+    function: str,
+    log_group: str | None,
+    now: datetime,
+) -> list[Signal]:
+    """Blocking (boto3). Metrics, then the function's log group (the same error-spike rule)."""
+    out = lambda_signals(resource_id, function, fetch_lambda(reader, region, function, now), now)
+    if log_group:
+        spike = log_signal(resource_id, function, fetch_logs(reader, region, log_group, now), now)
+        if spike is not None:
+            out.append(spike)
+    return out
+
+
+# --- EC2 --------------------------------------------------------------------------------------
+
+
+def instance_id(external_id: str) -> str:
+    """i-0abc from arn:aws:ec2:REGION:ACCOUNT:instance/i-0abc (or the id itself)."""
+    return external_id.rsplit("/", 1)[-1]
+
+
+def ec2_signal(
+    resource_id: Any, name: str, status: dict[str, Any] | None, now: datetime
+) -> Signal | None:
+    """A failed system or instance status check (DescribeInstanceStatus). Down: the instance
+    cannot serve until AWS or a reboot fixes it."""
+    if not status:
+        return None
+    failed: list[str] = []
+    since: list[datetime] = []
+    for key, label in (("SystemStatus", "system"), ("InstanceStatus", "instance")):
+        check = status.get(key) or {}
+        if check.get("Status") == "impaired":
+            details = [
+                f"{d.get('Name')} {d.get('Status')}"
+                for d in check.get("Details", [])
+                if d.get("Status") != "passed"
+            ]
+            failed.append(f"{label} status impaired ({', '.join(details) or 'no details'})")
+            since += [t for d in check.get("Details", []) if (t := to_time(d.get("ImpairedSince")))]
+    if not failed:
+        return None
+    state = (status.get("InstanceState") or {}).get("Name") or "?"
+    events = [str(e.get("Description") or e.get("Code")) for e in status.get("Events", [])]
+    return Signal(
+        rule="ec2_status_check",
+        resource_id=resource_id,
+        resource_name=name,
+        detail=(
+            f"{'; '.join(failed)}; state {state}"
+            + (f"; scheduled: {', '.join(events)}" if events else "")
+        )[:500],
+        at=min(since, default=now),
+        down=True,
+    )
+
+
+def fetch_ec2_status(reader: AwsReader, region: str | None, instance: str) -> dict[str, Any] | None:
+    """Blocking (boto3). The instance's status entry, stopped instances included."""
+    found = reader.call(
+        "ec2",
+        region,
+        "DescribeInstanceStatus",
+        InstanceIds=[instance],
+        IncludeAllInstances=True,
+    ).get("InstanceStatuses", [])
+    return found[0] if found else None

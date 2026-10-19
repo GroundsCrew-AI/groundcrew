@@ -68,6 +68,8 @@ class EmergencyActions(Protocol):
     async def plan_ecs_rollback_service(self, connection_id, cluster, service) -> ActionPlan
     async def plan_secret_rollback_version(self, connection_id, secret_arn) -> ActionPlan
     async def plan_force_redeploy(self, connection_id, cluster, service) -> ActionPlan
+    async def plan_lambda_rollback_alias(self, connection_id, function_arn) -> ActionPlan
+    async def plan_ec2_reboot_instance(self, connection_id, instance_arn) -> ActionPlan
     async def plan_k8s_rollout_undo(self, connection_id, namespace, deployment) -> ActionPlan
     async def plan_k8s_rollout_restart(self, connection_id, namespace, deployment) -> ActionPlan
     async def execute(self, plan: ActionPlan, token: ApprovedAction, *, run_id) -> ActionResult
@@ -81,6 +83,8 @@ execute to the implementation for its action (`app/actions/k8s.py` for the k8s o
 | `ecs_rollback_service` | `DescribeServices`, `ListTaskDefinitions` (family) | task definition ARN now -> previous revision's ARN | `UpdateService(taskDefinition=desired)` |
 | `secret_rollback_version` | `DescribeSecret` (`VersionIdsToStages`) | version id holding `AWSCURRENT` -> the one holding `AWSPREVIOUS` | `UpdateSecretVersionStage(AWSCURRENT, MoveToVersionId=desired, RemoveFromVersionId=current)`. Never reads the value |
 | `force_redeploy` | `DescribeServices` | primary deployment id -> null | `UpdateService(forceNewDeployment=True)` |
+| `lambda_rollback_alias` | `ListAliases` (read-only role), `ListVersionsByFunction` | `<function ARN>:<version>` the alias is on -> the previous published version | `UpdateAlias(FunctionVersion=previous, RoutingConfig={})`; the alias: on the newest version, live / prod / production first |
+| `ec2_reboot_instance` | `DescribeInstanceStatus` | `<id> running, system .., instance ..` -> null | `RebootInstances`; refused unless running with an impaired check, and if that changed since the plan |
 | `k8s_rollout_undo` | Deployment, its ReplicaSets; SelfSubjectAccessReview (patch deployments) | `<ns>/<name> revision <n>` -> the previous revision | JSON patch `replace /spec/template` with the previous ReplicaSet's template (no `pod-template-hash`) |
 | `k8s_rollout_restart` | Deployment; access review | `<ns>/<name> revision <n>` -> null | JSON patch `add /spec/template/metadata/annotations` (`kubectl.kubernetes.io/restartedAt`) |
 
@@ -173,6 +177,8 @@ level and is bound to plan hash and run (no behaviour change for targets):
 | `ecs_rollback_service` | emergency | `ActionPlan` |
 | `secret_rollback_version` | emergency | `ActionPlan` |
 | `force_redeploy` | emergency | `ActionPlan` |
+| `lambda_rollback_alias` | emergency | `ActionPlan` |
+| `ec2_reboot_instance` | emergency | `ActionPlan` |
 | `k8s_rollout_undo` | emergency | `ActionPlan` |
 | `k8s_rollout_restart` | emergency | `ActionPlan` |
 
@@ -192,7 +198,7 @@ class RootCause(BaseModel):
     triggering_change: TriggeringChange | None   # {kind: commit|secret_change|deploy|config|other, ref, at, description, evidence_ids}
     affected_resources: list[str]
     confidence: Literal["high", "medium", "low", "other"]
-    fix_options: list[FixOption]                 # {kind: pull_request|ecs_rollback_service|secret_rollback_version|force_redeploy|k8s_rollout_undo|k8s_rollout_restart|other, description, target}
+    fix_options: list[FixOption]                 # {kind: pull_request|ecs_rollback_service|secret_rollback_version|force_redeploy|lambda_rollback_alias|ec2_reboot_instance|k8s_rollout_undo|k8s_rollout_restart|other, description, target}
 ```
 
 After the call Medic removes every id that is not in the incident's evidence items, then drops
@@ -239,7 +245,7 @@ group of related resources: reporting resources an open incident covers returns 
 | `id`, `workspace_id`, `run_id` | `run_id`: the latest Medic run for it |
 | `title`, `status`, `severity` | status `open`, `investigating`, `waiting_approval`, `applying`, `verifying`, `resolved`, `failed`, `merged` (a newer incident on a related resource took it over; listed by default, `?status=merged` for only these); severity `critical`, `high`, `medium`, `low` |
 | `merged_into`, `merged_into_title`, `merged_from` | the incident that took this one over (status `merged`) and its title, and the incidents this one took over |
-| `detected_by`, `detector_rule` | `watcher` or `user`; the rule that fired first: `health_check`, `ecs_deployment_failed`, `ecs_tasks_stopped`, `log_error_spike`, `rds_cpu_latency`, `k8s_rollout_failed`, `k8s_pods_crashing`, `user_report`, `other` |
+| `detected_by`, `detector_rule` | `watcher` or `user`; the rule that fired first: `health_check`, `ecs_deployment_failed`, `ecs_tasks_stopped`, `log_error_spike`, `rds_cpu_latency`, `k8s_rollout_failed`, `k8s_pods_crashing`, `lambda_errors`, `lambda_throttles`, `ec2_status_check`, `user_report`, `other` |
 | `opened_at`, `resolved_at`, `window` | `window` = `{start, end}`; `end` is null while open |
 | `affected_resource_ids`, `affected_resources` | ids for Map deep links; `{id, name, type, provider}` for labels |
 | `root_cause_summary`, `triggering_change` | once diagnosed |

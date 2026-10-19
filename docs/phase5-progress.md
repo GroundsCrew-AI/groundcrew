@@ -526,6 +526,31 @@ secret ARN and refuse one outside the list.
   app/routes/{connections,discovery_schemas}.py, tests/test_actions_aws.py; web
   components/connections/{connection-row,aws-regions-dialog}.tsx, lib/discovery.ts.
 
+## Lambda and EC2 incidents (2026-10-19)
+
+Discovered, never watched or fixed before. Now:
+- Detect (`incidents/rules.py`, watcher): `lambda_errors` and `lambda_throttles` from per-minute
+  CloudWatch sums, the function's log group through `log_signal`; `ec2_status_check` from
+  DescribeInstanceStatus (down).
+- Evidence (`telemetry/aws_compute.py`): function config, each published version and each
+  $LATEST code update in the window as a `deploy` marker, aliases, per-minute errors, and log
+  lines; instance state, status checks, scheduled events, CPU.
+- Fix: `lambda_rollback_alias` (when callers use an alias on a published version; $LATEST has
+  nothing to roll back, the PR path stays) through the usual change rules (a direct revert when
+  the alias is still on the version the deploy published), and `ec2_reboot_instance` for every
+  impaired instance whatever started it (`fixes._reboots`).
+- Verify: errors and throttles back to normal; instance running with checks passing (waits while
+  they are initializing after the reboot).
+- Template: new read-only actions and OperateFunctionArns / OperateInstanceArns (see
+  docs/api-changes.md); both copies updated, observe snapshot regenerated (only the new actions).
+  Publishing the template (make publish-connect-template) is an AWS write: not done.
+- Tests: tests/test_aws_compute_incidents.py (11), template tests updated.
+- Files (Ahmed's code marked *): app/incidents/{rules,watcher,store}.py*,
+  app/telemetry/{aws_compute (new),collect}.py*, app/agents/medic/{agent,diagnose,events,fixes,
+  schemas,verify}.py*, app/actions/{aws,base,fake}.py, app/connectors/aws.py,
+  app/policy/actions.py, infra/aws-connect.yaml (+ templates copy); web lib/incidents.ts,
+  components/connections/aws-operate-dialog.tsx.
+
 ## How to resume
 
 ```bash

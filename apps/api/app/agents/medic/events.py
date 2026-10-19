@@ -56,6 +56,9 @@ DetectorRule = Literal[
     "rds_cpu_latency",
     "k8s_rollout_failed",  # a Deployment passed its progress deadline
     "k8s_pods_crashing",  # CrashLoopBackOff, image pull errors, OOMKilled / non-zero exits
+    "lambda_errors",  # a function's error rate (CloudWatch Errors / Invocations)
+    "lambda_throttles",  # a function hit its concurrency limit
+    "ec2_status_check",  # an instance's system or instance status check is impaired
     "user_report",
     "other",
 ]

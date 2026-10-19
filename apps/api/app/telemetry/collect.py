@@ -34,7 +34,7 @@ from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Edge, Resource
 from app.db.session import SessionFactory
 from app.graph.roles import role_of
-from app.telemetry import cloudwatch_logs, ecs, github, k8s, rds, secrets, vercel
+from app.telemetry import aws_compute, cloudwatch_logs, ecs, github, k8s, rds, secrets, vercel
 from app.telemetry.evidence import Line, ReaderOutput, line, render
 from app.telemetry.timeline import timeline
 
@@ -235,6 +235,31 @@ def plan_readers(
             job = aws_job(
                 r,
                 partial(rds.read_db, region=region, db_identifier=r.name, since=since, until=until),
+            )
+        elif r.type == "lambda:function":
+            key = f"lambda:{r.name}"
+            job = aws_job(
+                r,
+                partial(
+                    aws_compute.read_function,
+                    region=region,
+                    function=r.name,
+                    log_group=str(r.config.get("log_group") or f"/aws/lambda/{r.name}"),
+                    since=since,
+                    until=until,
+                ),
+            )
+        elif r.type == "ec2:instance":
+            key = f"ec2:{r.name}"
+            job = aws_job(
+                r,
+                partial(
+                    aws_compute.read_instance,
+                    region=region,
+                    instance=r.external_id.rsplit("/", 1)[-1],
+                    since=since,
+                    until=until,
+                ),
             )
         elif r.type == "secretsmanager:secret":
             key = f"secrets:{r.name}"

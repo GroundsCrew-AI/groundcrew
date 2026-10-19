@@ -318,6 +318,11 @@ def test_operate_role_scopes_and_trust() -> None:
         "ecs:DescribeTaskDefinition": ("*", None),
         "secretsmanager:UpdateSecretVersionStage": ({"Ref": "OperateSecretArns"}, None),
         "secretsmanager:DescribeSecret": ({"Ref": "OperateSecretArns"}, None),
+        "lambda:GetAlias": ({"Ref": "OperateFunctionArns"}, None),
+        "lambda:ListVersionsByFunction": ({"Ref": "OperateFunctionArns"}, None),
+        "lambda:UpdateAlias": ({"Ref": "OperateFunctionArns"}, None),
+        "ec2:RebootInstances": ({"Ref": "OperateInstanceArns"}, None),
+        "ec2:DescribeInstanceStatus": ("*", None),
         "iam:PassRole": (
             {"Ref": "OperatePassRoleArns"},
             {"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}},
@@ -359,13 +364,18 @@ def test_api_template_copy_matches_infra() -> None:
     ).read_text()
 
 
-def test_operate_needs_real_scopes() -> None:
-    rule = TEMPLATE["Rules"]["OperateNeedsServicesAndSecrets"]
+def test_operate_needs_real_scopes_in_at_least_one_list() -> None:
+    rule = TEMPLATE["Rules"]["OperateNeedsSomethingToActOn"]
     assert rule["RuleCondition"] == {"Fn::Equals": [{"Ref": "EnableOperate"}, "true"]}
-    defaults = {
-        TEMPLATE["Parameters"][p]["Default"] for p in ("OperateServiceArns", "OperateSecretArns")
-    }
-    asserted = {a["Assert"]["Fn::Not"][0]["Fn::Contains"][1] for a in rule["Assertions"]}
+    lists = (
+        "OperateServiceArns",
+        "OperateSecretArns",
+        "OperateFunctionArns",
+        "OperateInstanceArns",
+    )
+    defaults = {TEMPLATE["Parameters"][p]["Default"] for p in lists}
+    (assertion,) = rule["Assertions"]
+    asserted = {a["Fn::Not"][0]["Fn::Contains"][1] for a in assertion["Assert"]["Fn::Or"]}
     assert asserted == defaults
 
 

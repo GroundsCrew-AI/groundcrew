@@ -12,9 +12,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from app.actions.base import (
+    EC2_REBOOT_INSTANCE,
     ECS_ROLLBACK_SERVICE,
     FORCE_REDEPLOY,
     K8S_ACTIONS,
+    LAMBDA_ROLLBACK_ALIAS,
     SECRET_ROLLBACK_VERSION,
     ActionPlan,
     ActionResult,
@@ -42,6 +44,25 @@ class FakeSecret:
         return next((v for v, stages in self.versions.items() if stage in stages), None)
 
 
+@dataclass
+class FakeFunction:
+    # Published versions, oldest first; the alias (`alias`) points at `at`.
+    versions: list[str]
+    at: str
+    alias: str = "live"
+
+
+@dataclass
+class FakeInstance:
+    state: str = "running"
+    impaired: bool = True
+    reboots: int = 0
+
+    def summary(self, instance: str) -> str:
+        check = "impaired" if self.impaired else "ok"
+        return f"{instance} {self.state}, system {check}, instance ok"
+
+
 class FakeEmergencyActions:
     def __init__(
         self,
@@ -50,13 +71,67 @@ class FakeEmergencyActions:
         services: dict[str, FakeService] | None = None,
         secrets: dict[str, FakeSecret] | None = None,
         kube: K8sActions | None = None,
+        functions: dict[str, FakeFunction] | None = None,
+        instances: dict[str, FakeInstance] | None = None,
     ) -> None:
         self.session_factory = session_factory
         # "cluster/service" -> state; secret ARN -> state
         self.services = services or {}
         self.secrets = secrets or {}
         self.kube = kube
+        # function ARN -> state; instance ARN -> state
+        self.functions = functions or {}
+        self.instances = instances or {}
         self.executed: list[ActionPlan] = []
+
+    def _function(self, arn: str) -> FakeFunction:
+        try:
+            return self.functions[arn]
+        except KeyError:
+            raise EmergencyActionError(f"Function {arn} not found.") from None
+
+    def _instance(self, arn: str) -> FakeInstance:
+        try:
+            return self.instances[arn]
+        except KeyError:
+            raise EmergencyActionError(f"Instance {arn} not found.") from None
+
+    async def plan_lambda_rollback_alias(
+        self, connection_id: uuid.UUID, function_arn: str
+    ) -> ActionPlan:
+        fn = self._function(function_arn)
+        older = [v for v in fn.versions if int(v) < int(fn.at)]
+        if not older:
+            raise EmergencyActionError("No earlier version.")
+        name = function_arn.rsplit(":", 1)[-1]
+        return ActionPlan(
+            action=LAMBDA_ROLLBACK_ALIAS,
+            connection_id=connection_id,
+            target=f"{name}:{fn.alias}",
+            params={"function_arn": function_arn, "alias": fn.alias},
+            current=f"{function_arn}:{fn.at}",
+            desired=f"{function_arn}:{older[-1]}",
+            summary=f"Point {name}:{fn.alias} back at version {older[-1]} (now {fn.at})",
+            planned_at=datetime.now(UTC),
+        )
+
+    async def plan_ec2_reboot_instance(
+        self, connection_id: uuid.UUID, instance_arn: str
+    ) -> ActionPlan:
+        instance = instance_arn.rsplit("/", 1)[-1]
+        state = self._instance(instance_arn)
+        if state.state != "running" or not state.impaired:
+            raise EmergencyActionError(f"No reboot: {state.summary(instance)}.")
+        return ActionPlan(
+            action=EC2_REBOOT_INSTANCE,
+            connection_id=connection_id,
+            target=instance,
+            params={"instance_arn": instance_arn},
+            current=state.summary(instance),
+            desired=None,
+            summary=f"Reboot {instance}",
+            planned_at=datetime.now(UTC),
+        )
 
     def _kube(self) -> K8sActions:
         if self.kube is None:
@@ -137,6 +212,12 @@ class FakeEmergencyActions:
         )
 
     def _now_state(self, plan: ActionPlan) -> str | None:
+        if plan.action == LAMBDA_ROLLBACK_ALIAS:
+            arn = plan.params["function_arn"]
+            return f"{arn}:{self._function(arn).at}"
+        if plan.action == EC2_REBOOT_INSTANCE:
+            arn = plan.params["instance_arn"]
+            return self._instance(arn).summary(arn.rsplit("/", 1)[-1])
         if plan.action == SECRET_ROLLBACK_VERSION:
             return self._secret(plan.params["secret_arn"]).holding("AWSCURRENT")
         state = self._service(plan.params["cluster"], plan.params["service"])
@@ -168,7 +249,14 @@ class FakeEmergencyActions:
                 finished_at=datetime.now(UTC),
             )
         details: dict[str, str] = {}
-        if plan.action == SECRET_ROLLBACK_VERSION and plan.current and plan.desired:
+        if plan.action == LAMBDA_ROLLBACK_ALIAS and plan.desired:
+            fn = self._function(plan.params["function_arn"])
+            fn.at = plan.desired.rsplit(":", 1)[-1]
+            details = {"alias": fn.alias, "version": fn.at}
+        elif plan.action == EC2_REBOOT_INSTANCE:
+            self._instance(plan.params["instance_arn"]).reboots += 1
+            details = {"instance": plan.target}
+        elif plan.action == SECRET_ROLLBACK_VERSION and plan.current and plan.desired:
             secret = self._secret(plan.params["secret_arn"])
             secret.versions[plan.current] = ["AWSPREVIOUS"]
             secret.versions[plan.desired] = ["AWSCURRENT"]

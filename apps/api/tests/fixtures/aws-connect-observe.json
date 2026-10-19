@@ -54,7 +54,12 @@
                       "ecs:DescribeTasks",
                       "lambda:ListFunctions",
                       "lambda:GetFunctionConfiguration",
-                      "lambda:ListTags"
+                      "lambda:ListTags",
+                      "lambda:ListVersionsByFunction",
+                      "lambda:ListAliases",
+                      "lambda:GetAlias",
+                      "ec2:DescribeInstances",
+                      "ec2:DescribeInstanceStatus"
                     ],
                     "Effect": "Allow",
                     "Resource": "*",
@@ -218,7 +223,12 @@
                       "ecs:DescribeTasks",
                       "lambda:ListFunctions",
                       "lambda:GetFunctionConfiguration",
-                      "lambda:ListTags"
+                      "lambda:ListTags",
+                      "lambda:ListVersionsByFunction",
+                      "lambda:ListAliases",
+                      "lambda:GetAlias",
+                      "ec2:DescribeInstances",
+                      "ec2:DescribeInstanceStatus"
                     ],
                     "Effect": "Allow",
                     "Resource": "*",

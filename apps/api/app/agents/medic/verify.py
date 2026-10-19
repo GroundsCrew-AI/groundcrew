@@ -213,12 +213,64 @@ def run_checks(
     check_logs: bool,
     deploy_after: datetime | None = None,
     waiting: list[str] | None = None,
+    functions: list[Resource] | None = None,
+    instances: list[Resource] | None = None,
 ) -> VerifyResult:
     """Blocking (boto3). `readers` is keyed by connection id (str). `deploy_after`: a fix PR
-    merged then; `waiting`: reasons known before the round (a fix PR not merged yet)."""
+    merged then; `waiting`: reasons known before the round (a fix PR not merged yet).
+    `functions` (Lambda): errors and throttles back to normal; `instances` (EC2): running and
+    both status checks passing."""
     started = time.monotonic()
     checks: list[VerifyCheck] = []
     waits = list(waiting or [])
+    for fn in functions or []:
+        reader = readers.get(str(fn.connection_id))
+        if reader is None:
+            continue
+        try:
+            found = rules.lambda_signals(
+                fn.id, fn.name, rules.fetch_lambda(reader, fn.region, fn.name, now), now
+            )
+        except Exception as exc:  # one unreadable function must not stop the round
+            detail = f"{fn.name}: could not read metrics ({error_text(exc)[:120]})"
+            checks.append(VerifyCheck(name="errors", ok=False, detail=detail))
+            continue
+        checks.append(
+            VerifyCheck(
+                name="errors",
+                ok=not found,
+                detail=f"{fn.name}: "
+                + ("; ".join(s.detail for s in found) or "errors and throttles back to normal"),
+            )
+        )
+    for inst in instances or []:
+        reader = readers.get(str(inst.connection_id))
+        if reader is None:
+            continue
+        try:
+            status = rules.fetch_ec2_status(
+                reader, inst.region, rules.instance_id(inst.external_id)
+            )
+        except Exception as exc:
+            detail = f"{inst.name}: could not read status ({error_text(exc)[:120]})"
+            checks.append(VerifyCheck(name="health", ok=False, detail=detail))
+            continue
+        state = ((status or {}).get("InstanceState") or {}).get("Name")
+        impaired = rules.ec2_signal(inst.id, inst.name, status, now)
+        initializing = any(
+            ((status or {}).get(k) or {}).get("Status") == "initializing"
+            for k in ("SystemStatus", "InstanceStatus")
+        )
+        if initializing:
+            waits.append(f"{inst.name} status checks initializing after the reboot")
+        checks.append(
+            VerifyCheck(
+                name="health",
+                ok=state == "running" and impaired is None and not initializing,
+                detail=f"{inst.name}: "
+                + (impaired.detail if impaired else f"{state}, status checks passing"),
+            )
+        )
     for svc in services:
         reader = readers.get(str(svc.connection_id))
         if reader is None:

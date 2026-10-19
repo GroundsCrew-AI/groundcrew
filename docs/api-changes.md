@@ -245,3 +245,17 @@ All additive; connections without a choice behave as before.
   connection's regions.
 - The read-only role is global, so no stack update is needed. The Resource Explorer index exists
   only in the stack's region; elsewhere discovery reads ECS, RDS, Lambda, and the rest directly.
+
+## Lambda and EC2 incidents (2026-10-19)
+
+All additive.
+- `DetectorRule`: `lambda_errors` (5+ errors in 5 minutes, 5 %+ of invocations, 3x the rate
+  before; down at 90 %), `lambda_throttles`, `ec2_status_check` (a system or instance status
+  check impaired; down). The function's log group feeds `log_error_spike` too.
+- `EmergencyActionName` / `FixOptionKind`: `lambda_rollback_alias`, `ec2_reboot_instance`.
+- Connect template: the read-only role adds `lambda:ListVersionsByFunction`,
+  `lambda:ListAliases`, `lambda:GetAlias`, `ec2:DescribeInstances`,
+  `ec2:DescribeInstanceStatus`. EnableOperate adds `OperateFunctionArns` (GetAlias,
+  ListVersionsByFunction, UpdateAlias) and `OperateInstanceArns` (RebootInstances); the rule now
+  needs real ARNs in at least one Operate* list instead of both services and secrets. Existing
+  stacks keep working; update them with the new template to get these.

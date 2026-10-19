@@ -24,6 +24,8 @@ FixOptionKind = Literal[
     "ecs_rollback_service",
     "secret_rollback_version",
     "force_redeploy",
+    "lambda_rollback_alias",
+    "ec2_reboot_instance",
     "k8s_rollout_undo",
     "k8s_rollout_restart",
     "other",

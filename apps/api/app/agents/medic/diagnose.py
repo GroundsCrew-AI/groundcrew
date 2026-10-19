@@ -37,7 +37,9 @@ Rules:
   to normal show recovery, and if they are not in the evidence, the outage is ongoing.
 - `fix_options` lists fixes in order: an emergency action when production is down now
   (ecs_rollback_service to the previous task definition, secret_rollback_version to the
-  previous secret version, force_redeploy so tasks re-read config; on Kubernetes,
+  previous secret version, force_redeploy so tasks re-read config; lambda_rollback_alias to
+  a function's previous published version; ec2_reboot_instance for a failed status check; on
+  Kubernetes,
   k8s_rollout_undo to the Deployment's previous revision, k8s_rollout_restart so pods re-read
   ConfigMaps and Secrets), and a pull_request that
   fixes the cause in the repository when the cause is in code, a task definition, or a migration.

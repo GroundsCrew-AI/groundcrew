@@ -1109,7 +1109,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "k8s_rollout_undo" | "k8s_rollout_restart";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart";
             /**
              * Connection Id
              * Format: uuid
@@ -1142,7 +1142,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "k8s_rollout_undo" | "k8s_rollout_restart";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart";
             /** Details */
             details?: {
                 [key: string]: string;
@@ -2151,7 +2151,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "k8s_rollout_undo" | "k8s_rollout_restart" | "other";
+            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "other";
             /**
              * Target
              * @default null
@@ -2446,7 +2446,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
@@ -2570,7 +2570,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
             /**
              * Incident Id
              * Format: uuid
@@ -2665,7 +2665,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** First Signal At */
@@ -3114,7 +3114,7 @@ export interface components {
              * Action
              * @default null
              */
-            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "k8s_rollout_undo" | "k8s_rollout_restart") | null;
+            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart") | null;
             /**
              * Approval Id
              * @default null
@@ -3700,7 +3700,7 @@ export interface components {
              * Rule
              * @enum {string}
              */
-            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "user_report" | "other";
+            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
         };
         /** StageFinished */
         StageFinished: {
