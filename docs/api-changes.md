@@ -279,3 +279,22 @@ All additive.
   `Secret <app>-registry` step (imagePullSecret, value masked), and `expected_url` is
   `https://<app>.<app_domain>` with TLS. Preflight has a new `other` check: it fails on a cluster
   that is not the local kind cluster and has no deploy settings.
+
+## Load balancers, Aurora, slow requests (2026-10-20)
+
+All additive.
+- `DetectorRule`: `alb_5xx` (10+ 5xx in 5 minutes, 5 %+ of requests, 3x the share before;
+  down at 90 %), `alb_unhealthy_targets` (2+ minutes; down when a group has no healthy target),
+  `alb_latency` (p95 at least 1 s and 3x its baseline, 2+ minutes).
+- Discovery: Application Load Balancers with their target groups and registered targets
+  (`elasticloadbalancing:loadbalancer/app` config `dimension`, `target_groups[]`), and Aurora
+  clusters (`rds:cluster`). New edges: a balancer `calls` the ECS services, EC2 instances, and
+  Lambda functions its target groups route to; Aurora clusters get `reads` (security groups) and
+  `calls` (endpoint in env) edges like DB instances.
+- Medic: a failing balancer's just-deployed services (a deploy marker in the window) are
+  rollback targets.
+- Request latency is read from pino-http, lograge, nginx JSON, morgan, gin, and nginx / Apache
+  access lines with a request time (`[SLOW]` minutes and the slow-query rule). ALB access logs
+  live in S3, which Groundcrew never reads; the balancer's TargetResponseTime covers them.
+- Connect template: the read-only role adds `elasticloadbalancing:DescribeLoadBalancers`,
+  `DescribeTargetGroups`, `DescribeTargetHealth`.
