@@ -502,7 +502,9 @@ def _config_cluster(now: datetime) -> FixtureKubeReader:
 async def test_configmap_and_secret_changes_are_markers_from_metadata_only() -> None:
     now = _now()
     reader = _config_cluster(now)
-    out = await k8s.read_workload(reader, NS, "web", now - timedelta(minutes=30), now)
+    out = await k8s.read_workload(
+        reader, NS, "web", now - timedelta(minutes=30), now, configmaps_enabled=True
+    )
     markers = {c.kind: c for c in out.changes if c.kind != "deploy"}
     assert set(markers) == {"config", "secret_change"}
     assert markers["config"].ref == "shop/configmap/web-config@1234"
@@ -536,10 +538,23 @@ async def test_without_secrets_rights_secret_changes_are_skipped_with_a_note() -
 
     base = _config_cluster(now)
     reader = NoSecrets(base.items, base.logs)
-    out = await k8s.read_workload(reader, NS, "web", now - timedelta(minutes=30), now)
+    out = await k8s.read_workload(
+        reader, NS, "web", now - timedelta(minutes=30), now, configmaps_enabled=True
+    )
     assert {c.kind for c in out.changes} == {"deploy", "config"}
     text = "\n".join(entry.message for entry in out.lines)
     assert "Secret changes not checked: The kubeconfig's identity may not list secrets" in text
+
+
+async def test_configmap_changes_are_opt_in_and_say_so_when_off() -> None:
+    now = _now()
+    reader = _config_cluster(now)
+    out = await k8s.read_workload(reader, NS, "web", now - timedelta(minutes=30), now)
+    assert {c.kind for c in out.changes} == {"deploy", "secret_change"}
+    assert "metadata configmaps" not in reader.calls
+    text = "\n".join(entry.message for entry in out.lines)
+    assert "ConfigMap changes not visible (opt-in)" in text
+    assert "web-config" not in text and SECRET_VALUE not in text
 
 
 class _Response:

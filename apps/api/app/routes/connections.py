@@ -45,6 +45,7 @@ from app.routes.discovery_schemas import (
     GitHubInstallationsOut,
     GitHubLinkIn,
     GitHubRepoOut,
+    K8sConfigMapChangesIn,
     K8sDeploySettingsIn,
     K8sOperateIn,
     KubernetesConnectIn,
@@ -405,6 +406,23 @@ async def aws_set_operate(
     return await _out(session, conn)
 
 
+async def _k8s_workload_namespaces(session: AsyncSession, conn: Connection) -> list[str]:
+    """The namespaces of the cluster's discovered Deployments and StatefulSets."""
+    return sorted(
+        {
+            str(r.config.get("namespace") or r.region)
+            for r in await session.scalars(
+                select(Resource).where(
+                    Resource.connection_id == conn.id,
+                    Resource.type.in_(("k8s:deployment", "k8s:statefulset")),
+                    Resource.stale.is_(False),
+                )
+            )
+            if r.config.get("namespace") or r.region
+        }
+    )
+
+
 async def _k8s_operate_namespaces(conn: Connection, namespaces: list[str]) -> list[str]:
     """The namespaces (of the cluster's discovered Deployments and StatefulSets) where the
     kubeconfig's identity may patch Deployments and list ReplicaSets, or patch StatefulSets and
@@ -447,19 +465,7 @@ async def k8s_set_operate(
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     if conn.kind != "k8s" or conn.status != "connected":
         raise _unprocessable("Only a connected Kubernetes cluster can run emergency fixes.")
-    namespaces = sorted(
-        {
-            str(r.config.get("namespace") or r.region)
-            for r in await session.scalars(
-                select(Resource).where(
-                    Resource.connection_id == conn.id,
-                    Resource.type.in_(("k8s:deployment", "k8s:statefulset")),
-                    Resource.stale.is_(False),
-                )
-            )
-            if r.config.get("namespace") or r.region
-        }
-    )
+    namespaces = await _k8s_workload_namespaces(session, conn)
     await session.commit()  # no transaction open during the cluster calls
     allowed: list[str] = []
     if body.enabled:
@@ -481,6 +487,56 @@ async def k8s_set_operate(
         "operate": bool(body.enabled),
         "operate_namespaces": allowed if body.enabled else [],
     }
+    await session.commit()
+    return await _out(session, conn)
+
+
+async def _k8s_may_list_configmaps(conn: Connection, namespaces: list[str]) -> bool:
+    """Whether the kubeconfig's identity may list ConfigMaps, cluster-wide or in a namespace of
+    a discovered Deployment or StatefulSet (a SelfSubjectAccessReview each)."""
+    from app.security.crypto import decrypt
+
+    operator = kube.live_operator(decrypt(conn.secret_encrypted or ""))
+    try:
+        for ns in [None, *namespaces]:
+            if await operator.can_i("list", "", "configmaps", ns):
+                return True
+        return False
+    finally:
+        close = getattr(operator, "close", None)
+        if close is not None:
+            close()
+
+
+@router.put("/{connection_id}/k8s/configmap-changes")
+async def k8s_set_configmap_changes(
+    connection_id: uuid.UUID, body: K8sConfigMapChangesIn, user: CurrentUser, session: SessionDep
+) -> ConnectionOut:
+    """Opt in to (or out of) ConfigMap changes as incident causes (owner only). Off by default:
+    the `list configmaps` right Groundcrew needs for it would also let a client read ConfigMap
+    contents, although Groundcrew only ever asks for metadata (names, resourceVersion, change
+    times). On: checks the kubeconfig's identity may list ConfigMaps (the optional rule in
+    infra/k8s-readonly-rbac.yaml); nothing changes if it may not. Off: incidents note that
+    ConfigMap changes are not visible."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "k8s" or conn.status != "connected":
+        raise _unprocessable("Only a connected Kubernetes cluster can detect ConfigMap changes.")
+    namespaces = await _k8s_workload_namespaces(session, conn)
+    await session.commit()  # no transaction open during the cluster calls
+    if body.enabled:
+        try:
+            allowed = await _k8s_may_list_configmaps(conn, namespaces)
+        except ConnectorError as exc:
+            raise _unprocessable(str(exc)) from None
+        if not allowed:
+            raise _unprocessable(
+                "This kubeconfig's identity may not list ConfigMaps"
+                + (f" in {', '.join(namespaces)}" if namespaces else "")
+                + ". Apply the optional ConfigMap rule in infra/k8s-readonly-rbac.yaml (or a "
+                "Role with list on configmaps in your app's namespace), then try again."
+            )
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    conn.config = {**conn.config, kube.CONFIGMAP_CHANGES_KEY: bool(body.enabled)}
     await session.commit()
     return await _out(session, conn)
 

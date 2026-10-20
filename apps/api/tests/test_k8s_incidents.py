@@ -34,7 +34,7 @@ from app.llm.fake import FakeLLM, reply
 from app.pipeline.resume import resume_run_job
 from app.policy.engine import Decision
 from app.telemetry import k8s
-from app.telemetry.collect import Evidence
+from app.telemetry.collect import ConnectionClients, Evidence
 from app.telemetry.evidence import line
 from tests.test_connections_api import (  # noqa: F401 (fixtures)
     KUBECONFIG,
@@ -453,3 +453,37 @@ async def test_turning_on_emergency_fixes_checks_the_kubeconfigs_rights(
     async with session_factory() as session:
         conn = await session.scalar(select(Connection).where(Connection.id == uuid.UUID(conn_id)))
         assert conn is not None and conn.config["operate"] is False
+
+
+async def test_configmap_changes_are_opt_in_and_check_the_kubeconfigs_rights(
+    client: httpx.AsyncClient,  # noqa: F811
+    alice: Member,  # noqa: F811
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_kube(monkeypatch)
+    made = await client.post(
+        "/connections/k8s",
+        json={"workspace_id": str(alice.workspace_id), "kubeconfig": KUBECONFIG},
+        headers=alice.headers,
+    )
+    assert made.json()["configmap_changes"] is False
+    conn_id = made.json()["id"]
+    operator = cluster(_now())
+    operator.allowed = set()
+    monkeypatch.setattr(kube, "live_operator", lambda text: operator)
+    url = f"/connections/{conn_id}/k8s/configmap-changes"
+    refused = await client.put(url, json={"enabled": True}, headers=alice.headers)
+    assert refused.status_code == 422
+    assert "may not list ConfigMaps" in refused.json()["detail"]
+    operator.allowed = {("list", "configmaps")}
+    on = await client.put(url, json={"enabled": True}, headers=alice.headers)
+    assert on.status_code == 200, on.text
+    assert on.json()["configmap_changes"] is True
+    async with session_factory() as session:
+        conn = await session.scalar(select(Connection).where(Connection.id == uuid.UUID(conn_id)))
+        assert conn is not None
+        clients = ConnectionClients([conn])
+        assert clients.kube_configmaps(conn.id) is True
+    off = await client.put(url, json={"enabled": False}, headers=alice.headers)
+    assert off.json()["configmap_changes"] is False

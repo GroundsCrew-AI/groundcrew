@@ -91,7 +91,8 @@ execute to the implementation for its action (`app/actions/k8s.py` for the k8s o
 Kubernetes `params`: a Deployment's are `{namespace, deployment}` (unchanged, so existing plans
 and plan hashes stay valid); a StatefulSet's are `{namespace, statefulset, kind: "statefulset"}`
 (`app.actions.base.k8s_params` / `k8s_workload`). A Kubernetes ConfigMap or Secret change
-(change marker ref `<ns>/configmap/<name>@<resourceVersion>` or `<ns>/secret/<name>@<rv>`)
+(change marker ref `<ns>/configmap/<name>@<resourceVersion>`, only when the connection opted
+in with `configmap_changes`, or `<ns>/secret/<name>@<rv>`)
 gets no emergency action: Groundcrew never reads their values, so it cannot restore them, and a
 restart would reload the broken ones. Medic adds a note instead ("ConfigMap shop/web-config
 changed at <time>; restore it, then Groundcrew can restart web.").

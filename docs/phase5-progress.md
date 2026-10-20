@@ -717,6 +717,9 @@ ConfigMap or Secret change (no new revision) shows up as a cause.
   (`KubeReader.list_metadata`; a response that is not a PartialObjectMetadataList is refused);
   one whose newest managedFields time is in the window is a `config` / `secret_change` marker,
   ref `<ns>/configmap/<name>@<resourceVersion>`. Missing rights: skipped with a note line.
+  ConfigMaps are opt-in per connection (`config.configmap_changes`, the "Detect ConfigMap
+  changes" toggle, `PUT /connections/{id}/k8s/configmap-changes`, rights checked on enable);
+  off, a workload using ConfigMaps gets "ConfigMap changes not visible (opt-in)" in evidence.
 - Fix: `k8s_rollout_undo` / `k8s_rollout_restart` take `kind` (deployment | statefulset); a
   StatefulSet's undo patches `/spec/template` with the previous ControllerRevision's
   `data.spec.template` (its `$patch` marker dropped). Deployment params and plan hashes are
@@ -726,10 +729,10 @@ ConfigMap or Secret change (no new revision) shows up as a cause.
   is unchanged (Kubernetes markers never select it).
 - Verify: rollout complete (currentRevision == updateRevision, readyReplicas == replicas) and
   pods healthy; waits while the StatefulSet rolls out.
-- RBAC: readonly adds controllerrevisions and list configmaps (metadata only), with an optional
-  commented-out secrets block; operate adds patch statefulsets, get/list controllerrevisions.
-- Tests: tests/test_k8s_statefulsets.py (14: detect, stuck vs fresh rollout, watcher, evidence,
-  undo plan + rights, params/hash compatibility, `$patch` dropped, verify, Medic end to end,
+- RBAC: readonly adds controllerrevisions, with optional commented-out configmaps and secrets
+  blocks (metadata only; `list` grants read access to contents, hence opt-in); operate adds patch statefulsets, get/list controllerrevisions.
+- Tests: tests/test_k8s_statefulsets.py (15: detect, stuck vs fresh rollout, watcher, evidence,
+  ConfigMap opt-in note, undo plan + rights, params/hash compatibility, `$patch` dropped, verify, Medic end to end,
   ConfigMap/Secret markers without values, missing secrets rights, live reader Accept header,
   refusing a response with data, restore note instead of a rollback). Existing Deployment tests
   unchanged.

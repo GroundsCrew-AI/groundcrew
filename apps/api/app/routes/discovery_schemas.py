@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.config import get_settings
 from app.connectors.aws import AWS_REGION, MAX_CONNECTION_REGIONS, connection_regions
 from app.connectors.credentials import capabilities
+from app.connectors.kubernetes import CONFIGMAP_CHANGES_KEY
 from app.db.models import Connection, Edge, Resource
 from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
 from app.graph.roles import role_of
@@ -96,6 +97,8 @@ class ConnectionOut(BaseModel):
     namespaces: int | None = None
     # Kubernetes: where deploys go (registry, ingress, domain). Null: the local kind defaults.
     deploy_settings: K8sDeploySettingsOut | None = None
+    # Kubernetes: the owner opted in to ConfigMap changes as incident causes. Null: not k8s.
+    configmap_changes: bool | None = None
     error: str | None = None
     resource_count: int = 0
     last_discovery: LastDiscovery | None = None
@@ -133,6 +136,7 @@ class ConnectionOut(BaseModel):
             regions_chosen=conn.kind == "aws" and bool(c.get("regions")),
             namespaces=c.get("namespaces"),
             deploy_settings=K8sDeploySettingsOut(**deploy.public()) if deploy else None,
+            configmap_changes=bool(c.get(CONFIGMAP_CHANGES_KEY)) if conn.kind == "k8s" else None,
             error=c.get("last_error"),
             resource_count=resource_count,
             last_discovery=last,
@@ -205,6 +209,12 @@ class AwsOperateIn(BaseModel):
 
 class K8sOperateIn(BaseModel):
     """Turn approved emergency fixes (rollout undo, restart) on or off for a cluster."""
+
+    enabled: bool
+
+
+class K8sConfigMapChangesIn(BaseModel):
+    """Opt in to (or out of) ConfigMap changes as incident causes for a cluster."""
 
     enabled: bool
 

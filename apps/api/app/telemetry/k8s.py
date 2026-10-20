@@ -430,10 +430,20 @@ def changed_at(item: dict[str, Any]) -> datetime | None:
     return max(known) if known else parse_time(meta.get("creationTimestamp"))
 
 
-async def fetch_config(reader: KubeReader, workload: Workload) -> Workload:
+# The note when a workload uses ConfigMaps but the connection has not opted in.
+CONFIGMAPS_OFF_NOTE = (
+    'ConfigMap changes not visible (opt-in): turn on "Detect ConfigMap changes" on the '
+    "Kubernetes connection, with the optional ConfigMap rule in infra/k8s-readonly-rbac.yaml"
+)
+
+
+async def fetch_config(
+    reader: KubeReader, workload: Workload, *, configmaps_enabled: bool = False
+) -> Workload:
     """Fills the workload's `configmaps` and `secrets`: the metadata of the ones its pod template
-    uses (`list_metadata`: names, resourceVersion, managedFields times; never data). When the
-    kubeconfig may not list them (the optional secrets-metadata rule in
+    uses (`list_metadata`: names, resourceVersion, managedFields times; never data). ConfigMaps
+    are read only when the connection opted in (`configmap_changes`); otherwise a note says
+    they are not visible. When the kubeconfig may not list them (the optional rules in
     infra/k8s-readonly-rbac.yaml), they are skipped with a note."""
     configmaps, secrets = config_refs(workload.template)
     for kind, label, names, into in (
@@ -441,6 +451,9 @@ async def fetch_config(reader: KubeReader, workload: Workload) -> Workload:
         ("secrets", "Secret", secrets, workload.secrets),
     ):
         if not names:
+            continue
+        if kind == "configmaps" and not configmaps_enabled:
+            workload.config_notes.append(CONFIGMAPS_OFF_NOTE)
             continue
         try:
             items = await reader.list_metadata(kind, workload.namespace)
@@ -601,11 +614,13 @@ async def read_workload(
     since: datetime,
     until: datetime,
     kind: str = DEPLOYMENT,
+    *,
+    configmaps_enabled: bool = False,
 ) -> ReaderOutput:
     workload = await fetch_workload(reader, namespace, name, kind)
     if workload is None:
         return ReaderOutput(lines=[line(until, SOURCE, name, f"{kind} not found")])
-    await fetch_config(reader, workload)
+    await fetch_config(reader, workload, configmaps_enabled=configmaps_enabled)
     seconds = max(60, int((until - since).total_seconds()) + 60)
     logs = await fetch_logs(reader, workload, seconds)
     return describe(workload, logs, since, until)

@@ -492,6 +492,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/k8s/configmap-changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * K8S Set Configmap Changes
+         * @description Opt in to (or out of) ConfigMap changes as incident causes (owner only). Off by default:
+         *     the `list configmaps` right Groundcrew needs for it would also let a client read ConfigMap
+         *     contents, although Groundcrew only ever asks for metadata (names, resourceVersion, change
+         *     times). On: checks the kubeconfig's identity may list ConfigMaps (the optional rule in
+         *     infra/k8s-readonly-rbac.yaml); nothing changes if it may not. Off: incidents note that
+         *     ConfigMap changes are not visible.
+         */
+        put: operations["k8s_set_configmap_changes_connections__connection_id__k8s_configmap_changes_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/k8s/deploy-settings": {
         parameters: {
             query?: never;
@@ -1540,6 +1565,8 @@ export interface components {
             account?: string | null;
             /** Capabilities */
             capabilities?: ("observe" | "deploy" | "operate")[] | null;
+            /** Configmap Changes */
+            configmap_changes?: boolean | null;
             /**
              * Created At
              * Format: date-time
@@ -2824,6 +2851,14 @@ export interface components {
              */
             id: string;
             role: components["schemas"]["WorkspaceRole"];
+        };
+        /**
+         * K8sConfigMapChangesIn
+         * @description Opt in to (or out of) ConfigMap changes as incident causes for a cluster.
+         */
+        K8sConfigMapChangesIn: {
+            /** Enabled */
+            enabled: boolean;
         };
         /**
          * K8sDeploySettingsIn
@@ -5006,6 +5041,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    k8s_set_configmap_changes_connections__connection_id__k8s_configmap_changes_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["K8sConfigMapChangesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
                 };
             };
             /** @description Validation Error */

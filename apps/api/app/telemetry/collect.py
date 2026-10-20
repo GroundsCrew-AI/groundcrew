@@ -29,7 +29,7 @@ from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader, connection_regions, error_text
 from app.connectors.credentials import ConnectionCredentialsProvider
 from app.connectors.github import GitHubApp, get_github_app
-from app.connectors.kubernetes import KubeReader
+from app.connectors.kubernetes import CONFIGMAP_CHANGES_KEY, KubeReader
 from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Edge, Resource
 from app.db.session import SessionFactory
@@ -51,6 +51,7 @@ class EvidenceClients(Protocol):
     def vercel(self, connection_id: uuid.UUID) -> VercelClient: ...
     def installation_id(self, connection_id: uuid.UUID) -> int: ...
     def kube(self, connection_id: uuid.UUID) -> KubeReader: ...
+    def kube_configmaps(self, connection_id: uuid.UUID) -> bool: ...
 
 
 class ConnectionClients:
@@ -104,6 +105,10 @@ class ConnectionClients:
         if conn.kind != "k8s" or not conn.secret_encrypted:
             raise LookupError(f"{conn.name} has no kubeconfig.")
         return kubernetes.live_reader(decrypt(conn.secret_encrypted))
+
+    def kube_configmaps(self, connection_id: uuid.UUID) -> bool:
+        """Whether the cluster's owner opted in to ConfigMap changes as causes."""
+        return bool(self._conn(connection_id).config.get(CONFIGMAP_CHANGES_KEY))
 
     def close(self) -> None:
         self._credentials.close()
@@ -317,7 +322,15 @@ def plan_readers(
                     raise LookupError(f"{name} has no Kubernetes connection.")
                 reader = await asyncio.to_thread(clients.kube, conn)
                 try:
-                    return await k8s.read_workload(reader, ns, name, since, until, kind)
+                    return await k8s.read_workload(
+                        reader,
+                        ns,
+                        name,
+                        since,
+                        until,
+                        kind,
+                        configmaps_enabled=clients.kube_configmaps(conn),
+                    )
                 finally:
                     close = getattr(reader, "close", None)
                     if close is not None:

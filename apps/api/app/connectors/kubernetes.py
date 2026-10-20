@@ -13,8 +13,9 @@ objects are never listed. Pod and template env values are dropped except endpoin
 Incidents (app/incidents/k8s_rules.py, app/telemetry/k8s.py) also read ReplicaSets (a
 Deployment's revisions), ControllerRevisions (a StatefulSet's), Warning events, pod status
 (container states, restarts, readiness; never the pod spec's env), and pod logs. ConfigMaps
-and Secrets are read as metadata only (`list_metadata`: a PartialObjectMetadataList, asked for
-with the Accept header METADATA_ACCEPT), so no value in them ever reaches Groundcrew.
+(only when the connection opted in: CONFIGMAP_CHANGES_KEY) and Secrets are read as metadata only
+(`list_metadata`: a PartialObjectMetadataList, asked for with the Accept header
+METADATA_ACCEPT), so no value in them ever reaches Groundcrew.
 `LiveKubeOperator` adds the one write Medic's approved emergency fixes make: patching a
 Deployment's or StatefulSet's pod template (rollout undo, restart).
 """
@@ -49,6 +50,10 @@ K8S_READ_KINDS: frozenset[str] = frozenset(
 )
 # Kinds read only as metadata (`list_metadata`), never with `list`: their data holds values.
 K8S_METADATA_KINDS: frozenset[str] = frozenset({"configmaps", "secrets"})
+
+# Connection config flag: the owner opted in to ConfigMap changes as incident causes (and
+# applied the optional ConfigMap rule in infra/k8s-readonly-rbac.yaml). Off by default.
+CONFIGMAP_CHANGES_KEY = "configmap_changes"
 # Asks the API server for metadata only (names, resourceVersion, managedFields): the response
 # is a PartialObjectMetadataList, which has no `data` at all.
 METADATA_ACCEPT = "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1"
