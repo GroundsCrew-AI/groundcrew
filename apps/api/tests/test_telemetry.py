@@ -200,6 +200,9 @@ class FixtureClients:
     def kube(self, connection_id: uuid.UUID) -> KubeReader:
         raise LookupError("no cluster in this test")
 
+    def kube_configmaps(self, connection_id: uuid.UUID) -> bool:
+        return False
+
 
 async def _graph(sf: SessionFactory, workspace_id: uuid.UUID) -> dict[str, uuid.UUID]:
     """The checkout demo's api with its neighbors, as discovery stores them."""

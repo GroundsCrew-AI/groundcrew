@@ -1315,17 +1315,22 @@ class MedicRunner:
         )
 
     def _k8s_targets(self, graph: fx.Graph, state: MedicState) -> list[Resource]:
-        """Kubernetes Deployments that are affected or that an applied fix acted on."""
+        """Kubernetes Deployments and StatefulSets that are affected or that an applied fix
+        acted on."""
         ids = set(graph.affected)
         acted = {
-            (r.fix.plan.params.get("deployment") or "")
+            (
+                f"k8s:{r.fix.plan.params.get('kind') or 'deployment'}",
+                r.fix.plan.params.get(r.fix.plan.params.get("kind") or "deployment") or "",
+            )
             for r in state.fixes
             if r.status == "applied" and r.fix.plan is not None
         }
         return [
             r
             for r in graph.resources.values()
-            if r.type == "k8s:deployment" and (r.id in ids or r.name in acted)
+            if r.type in ("k8s:deployment", "k8s:statefulset")
+            and (r.id in ids or (r.type, r.name) in acted)
         ]
 
     def _verify_targets(

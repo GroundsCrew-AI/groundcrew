@@ -70,8 +70,8 @@ class EmergencyActions(Protocol):
     async def plan_force_redeploy(self, connection_id, cluster, service) -> ActionPlan
     async def plan_lambda_rollback_alias(self, connection_id, function_arn) -> ActionPlan
     async def plan_ec2_reboot_instance(self, connection_id, instance_arn) -> ActionPlan
-    async def plan_k8s_rollout_undo(self, connection_id, namespace, deployment) -> ActionPlan
-    async def plan_k8s_rollout_restart(self, connection_id, namespace, deployment) -> ActionPlan
+    async def plan_k8s_rollout_undo(self, connection_id, namespace, name, kind="deployment") -> ActionPlan
+    async def plan_k8s_rollout_restart(self, connection_id, namespace, name, kind="deployment") -> ActionPlan
     async def execute(self, plan: ActionPlan, token: ApprovedAction, *, run_id) -> ActionResult
 ```
 
@@ -85,8 +85,17 @@ execute to the implementation for its action (`app/actions/k8s.py` for the k8s o
 | `force_redeploy` | `DescribeServices` | primary deployment id -> null | `UpdateService(forceNewDeployment=True)` |
 | `lambda_rollback_alias` | `ListAliases` (read-only role), `ListVersionsByFunction` | `<function ARN>:<version>` the alias is on -> the previous published version | `UpdateAlias(FunctionVersion=previous, RoutingConfig={})`; the alias: on the newest version, live / prod / production first |
 | `ec2_reboot_instance` | `DescribeInstanceStatus` | `<id> running, system .., instance ..` -> null | `RebootInstances`; refused unless running with an impaired check, and if that changed since the plan |
-| `k8s_rollout_undo` | Deployment, its ReplicaSets; SelfSubjectAccessReview (patch deployments) | `<ns>/<name> revision <n>` -> the previous revision | JSON patch `replace /spec/template` with the previous ReplicaSet's template (no `pod-template-hash`) |
-| `k8s_rollout_restart` | Deployment; access review | `<ns>/<name> revision <n>` -> null | JSON patch `add /spec/template/metadata/annotations` (`kubectl.kubernetes.io/restartedAt`) |
+| `k8s_rollout_undo` | Deployment and its ReplicaSets, or StatefulSet and its ControllerRevisions; SelfSubjectAccessReview (patch deployments; patch statefulsets + list controllerrevisions) | `<ns>/<name> revision <n>` (a StatefulSet: its updateRevision's `.revision`) -> the previous revision | JSON patch `replace /spec/template` with the previous ReplicaSet's template (no `pod-template-hash`) or the previous ControllerRevision's `data.spec.template` (no `$patch`), like `kubectl rollout undo sts` |
+| `k8s_rollout_restart` | Deployment or StatefulSet; access review | `<ns>/<name> revision <n>` -> null | JSON patch `add /spec/template/metadata/annotations` (`kubectl.kubernetes.io/restartedAt`) |
+
+Kubernetes `params`: a Deployment's are `{namespace, deployment}` (unchanged, so existing plans
+and plan hashes stay valid); a StatefulSet's are `{namespace, statefulset, kind: "statefulset"}`
+(`app.actions.base.k8s_params` / `k8s_workload`). A Kubernetes ConfigMap or Secret change
+(change marker ref `<ns>/configmap/<name>@<resourceVersion>`, only when the connection opted
+in with `configmap_changes`, or `<ns>/secret/<name>@<rv>`)
+gets no emergency action: Groundcrew never reads their values, so it cannot restore them, and a
+restart would reload the broken ones. Medic adds a note instead ("ConfigMap shop/web-config
+changed at <time>; restore it, then Groundcrew can restart web.").
 
 Rules for `execute`:
 

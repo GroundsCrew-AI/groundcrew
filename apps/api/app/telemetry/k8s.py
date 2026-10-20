@@ -1,27 +1,37 @@
-"""Kubernetes reader: a Deployment, its revisions, pods, Warning events, and pod logs.
+"""Kubernetes reader: a Deployment or StatefulSet, its revisions, pods, Warning events, pod
+logs, and the ConfigMaps and Secrets its pods use (metadata only).
 
 Read live (pods restart and events expire within the hour), through a `KubeReader`:
 
-- the Deployment's conditions and replica counts (Progressing=False with
-  ProgressDeadlineExceeded is a failed rollout);
-- its ReplicaSets, one per revision (annotation deployment.kubernetes.io/revision): each one
-  created in the window is a `deploy` change marker, ref "<namespace>/<name> revision <n>";
+- the workload's conditions and replica counts (a Deployment's Progressing=False with
+  ProgressDeadlineExceeded is a failed rollout; a StatefulSet whose currentRevision is not its
+  updateRevision, with pods failing STUCK_AFTER after the new revision appeared, is stuck);
+- its revisions: a Deployment's ReplicaSets (annotation deployment.kubernetes.io/revision), a
+  StatefulSet's ControllerRevisions (`.revision`). Each one created in the window is a `deploy`
+  change marker, ref "<namespace>/<name> revision <n>";
 - its pods' container states: CrashLoopBackOff, image pull errors, OOMKilled or non-zero
   exits (last state), restarts, readiness;
-- Warning events on the Deployment, its ReplicaSets, and its pods;
+- Warning events on the workload, its revisions, and its pods;
 - the pods' recent log lines (timestamps from the kubelet), for the error-spike rule and the
-  evidence.
+  evidence;
+- the ConfigMaps and Secrets its pod template uses (envFrom, env valueFrom, volumes), read as
+  metadata only (`KubeReader.list_metadata`: no value ever reaches Groundcrew). One changed in
+  the window (its last managedFields time) is a `config` (ConfigMap) or `secret_change`
+  (Secret) change marker, ref "<namespace>/configmap/<name>@<resourceVersion>".
 
 Shared by the watcher's rules (app/incidents/k8s_rules.py), the evidence collector, Medic's
 verify, and the rollout actions (app/actions/k8s.py).
 """
 
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
 from app.agents.medic.events import ChangeMarker
+from app.agents.medic.schemas import ChangeKind
 from app.connectors.kubernetes import KubeReader
+from app.discovery.types import ConnectorError
 from app.telemetry.evidence import ReaderOutput, line, parse_time
 
 SOURCE = "k8s"
@@ -42,32 +52,93 @@ BROKEN_WAITING = frozenset(
 )
 MAX_LOG_PODS = 5
 MAX_LOG_LINES_PER_POD = 1_000
+# A StatefulSet rollout whose pods still fail this long after its new revision appeared is stuck
+# (StatefulSets have no progress deadline).
+STUCK_AFTER = timedelta(minutes=5)
+
+DEPLOYMENT = "deployment"
+STATEFULSET = "statefulset"
+# Workload kind -> (the kind listed, its revisions' kind, the revisions' owner kind).
+KINDS: dict[str, tuple[str, str, str]] = {
+    DEPLOYMENT: ("deployments", "replicasets", "Deployment"),
+    STATEFULSET: ("statefulsets", "controllerrevisions", "StatefulSet"),
+}
+# Graph resource type -> workload kind.
+RESOURCE_KINDS: dict[str, str] = {"k8s:deployment": DEPLOYMENT, "k8s:statefulset": STATEFULSET}
+
+
+def check_workload_kind(kind: str) -> str:
+    if kind not in KINDS:
+        raise ValueError(f"Not a Kubernetes workload kind: {kind}")
+    return kind
 
 
 @dataclass
 class Workload:
-    """One Deployment as read now."""
+    """One Deployment or StatefulSet as read now. `revisions` are its ReplicaSets or
+    ControllerRevisions, oldest first. `configmaps` and `secrets` (metadata only) are filled by
+    `fetch_config`; `config_notes` say what could not be read."""
 
-    deployment: dict[str, Any]
-    replicasets: list[dict[str, Any]] = field(default_factory=list)
+    obj: dict[str, Any]
+    revisions: list[dict[str, Any]] = field(default_factory=list)
     pods: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
+    kind: str = DEPLOYMENT
+    configmaps: list[dict[str, Any]] = field(default_factory=list)
+    secrets: list[dict[str, Any]] = field(default_factory=list)
+    config_notes: list[str] = field(default_factory=list)
 
     @property
     def name(self) -> str:
-        return str((self.deployment.get("metadata") or {}).get("name") or "deployment")
+        return str((self.obj.get("metadata") or {}).get("name") or self.kind)
 
     @property
     def namespace(self) -> str:
-        return str((self.deployment.get("metadata") or {}).get("namespace") or "default")
+        return str((self.obj.get("metadata") or {}).get("namespace") or "default")
+
+    @property
+    def label(self) -> str:
+        """ "Deployment" or "StatefulSet"."""
+        return KINDS[self.kind][2]
+
+    @property
+    def template(self) -> dict[str, Any]:
+        return dict((self.obj.get("spec") or {}).get("template") or {})
 
 
 def revision(obj: dict[str, Any]) -> int | None:
+    """A ReplicaSet's (or Deployment's) revision annotation, or a ControllerRevision's
+    `.revision`."""
     value = ((obj.get("metadata") or {}).get("annotations") or {}).get(REVISION)
+    if value is None:
+        value = obj.get("revision")
     try:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def current_revision(workload: Workload) -> int | None:
+    """The revision the workload's template is: a Deployment's annotation, a StatefulSet's
+    updateRevision (the ControllerRevision it names)."""
+    if workload.kind == DEPLOYMENT:
+        return revision(workload.obj)
+    update = (workload.obj.get("status") or {}).get("updateRevision")
+    for rev in workload.revisions:
+        if (rev.get("metadata") or {}).get("name") == update:
+            return revision(rev)
+    return max((r for r in map(revision, workload.revisions) if r is not None), default=None)
+
+
+def revision_template(item: dict[str, Any]) -> dict[str, Any]:
+    """The pod template a revision holds: a ReplicaSet's spec.template, a ControllerRevision's
+    data.spec.template (without the "$patch": "replace" marker the StatefulSet controller
+    stores in it)."""
+    if "data" in item:
+        template = copy.deepcopy(((item.get("data") or {}).get("spec") or {}).get("template") or {})
+        template.pop("$patch", None)
+        return dict(template)
+    return dict((item.get("spec") or {}).get("template") or {})
 
 
 def change_ref(namespace: str, name: str, rev: int | None) -> str:
@@ -75,27 +146,35 @@ def change_ref(namespace: str, name: str, rev: int | None) -> str:
     return f"{namespace}/{name} revision {rev if rev is not None else '?'}"
 
 
+def config_ref(namespace: str, kind: str, name: str, resource_version: Any) -> str:
+    """A ConfigMap or Secret change marker's ref: "<ns>/configmap/<name>@<resourceVersion>"."""
+    return f"{namespace}/{kind}/{name}@{resource_version}"
+
+
 def images(template: dict[str, Any]) -> str:
     containers = ((template or {}).get("spec") or {}).get("containers") or []
     return ", ".join(str(c.get("image")) for c in containers) or "?"
 
 
-def owned(replicasets: list[dict[str, Any]], deployment: str) -> list[dict[str, Any]]:
-    """The Deployment's ReplicaSets, oldest revision first."""
+def owned(
+    revisions: list[dict[str, Any]], name: str, owner: str = "Deployment"
+) -> list[dict[str, Any]]:
+    """The workload's ReplicaSets (owner Deployment) or ControllerRevisions (owner
+    StatefulSet), oldest revision first."""
     mine = [
         rs
-        for rs in replicasets
+        for rs in revisions
         if any(
-            o.get("kind") == "Deployment" and o.get("name") == deployment
+            o.get("kind") == owner and o.get("name") == name
             for o in (rs.get("metadata") or {}).get("ownerReferences") or []
         )
     ]
     return sorted(mine, key=lambda rs: revision(rs) or 0)
 
 
-def readiness(deployment: dict[str, Any]) -> tuple[int, int]:
-    """(ready, desired) replicas."""
-    spec, status = deployment.get("spec") or {}, deployment.get("status") or {}
+def readiness(obj: dict[str, Any]) -> tuple[int, int]:
+    """(ready, desired) replicas of a Deployment or StatefulSet."""
+    spec, status = obj.get("spec") or {}, obj.get("status") or {}
     desired = spec.get("replicas")
     return int(status.get("readyReplicas") or 0), int(1 if desired is None else desired)
 
@@ -112,13 +191,65 @@ def rollout_failed(deployment: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def rolling_out(deployment: dict[str, Any]) -> str | None:
+def _update_started(workload: Workload) -> datetime | None:
+    """When a StatefulSet's update revision appeared (its ControllerRevision's creation)."""
+    update = (workload.obj.get("status") or {}).get("updateRevision")
+    for rev in workload.revisions:
+        meta = rev.get("metadata") or {}
+        if meta.get("name") == update:
+            return parse_time(meta.get("creationTimestamp"))
+    return None
+
+
+def statefulset_stuck(
+    workload: Workload, failing: bool, now: datetime
+) -> tuple[str, datetime] | None:
+    """A StatefulSet rollout that is not complete (currentRevision != updateRevision) while its
+    pods fail, STUCK_AFTER or more after the update revision appeared: (detail, when it began)."""
+    if workload.kind != STATEFULSET or not failing:
+        return None
+    status = workload.obj.get("status") or {}
+    current, update = status.get("currentRevision"), status.get("updateRevision")
+    if not current or not update or current == update:
+        return None
+    started = _update_started(workload)
+    if started is None or now - started < STUCK_AFTER:
+        return None
+    _, desired = readiness(workload.obj)
+    updated = int(status.get("updatedReplicas") or 0)
+    minutes = int((now - started).total_seconds() // 60)
+    return (
+        f"rollout stuck: {updated}/{desired} pods on revision {current_revision(workload)} "
+        f"after {minutes} min, pods failing",
+        started,
+    )
+
+
+def rollout_complete(workload: Workload) -> bool:
+    """A StatefulSet: currentRevision == updateRevision and every replica ready. A Deployment:
+    no failed rollout and every replica ready."""
+    ready, desired = readiness(workload.obj)
+    if workload.kind == STATEFULSET:
+        status = workload.obj.get("status") or {}
+        return status.get("currentRevision") == status.get("updateRevision") and ready >= desired
+    return rollout_failed(workload.obj) is None and ready >= desired
+
+
+def rolling_out(obj: dict[str, Any], kind: str = DEPLOYMENT) -> str | None:
     """Why the rollout is still going (verify waits), or None when it is complete."""
-    meta, status = deployment.get("metadata") or {}, deployment.get("status") or {}
+    meta, status = obj.get("metadata") or {}, obj.get("status") or {}
     if int(status.get("observedGeneration") or 0) < int(meta.get("generation") or 0):
         return "rollout not observed yet"
-    _, desired = readiness(deployment)
+    ready, desired = readiness(obj)
     updated = int(status.get("updatedReplicas") or 0)
+    if kind == STATEFULSET:
+        if status.get("updateRevision") and status.get("currentRevision") != status.get(
+            "updateRevision"
+        ):
+            return f"rollout in progress: {updated}/{desired} pods updated"
+        if ready < desired:
+            return f"rollout in progress: {ready}/{desired} pods ready"
+        return None
     available = int(status.get("availableReplicas") or 0)
     total = int(status.get("replicas") or 0)
     if updated < desired:
@@ -227,29 +358,110 @@ def parse_logs(text: str) -> list[tuple[datetime, str]]:
     return out
 
 
-def _selector(deployment: dict[str, Any]) -> str:
-    labels = ((deployment.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
+def _selector(obj: dict[str, Any]) -> str:
+    labels = ((obj.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
     return ",".join(f"{k}={v}" for k, v in sorted(labels.items()))
 
 
-async def fetch_workload(reader: KubeReader, namespace: str, name: str) -> Workload | None:
-    """The Deployment, its ReplicaSets and pods, and the namespace's Warning events about them."""
-    found = await reader.list("deployments", namespace, field_selector=f"metadata.name={name}")
+async def fetch_workload(
+    reader: KubeReader, namespace: str, name: str, kind: str = DEPLOYMENT
+) -> Workload | None:
+    """The Deployment (or StatefulSet), its ReplicaSets (or ControllerRevisions) and pods, and
+    the namespace's Warning events about them."""
+    listed, revisions_kind, owner = KINDS[check_workload_kind(kind)]
+    found = await reader.list(listed, namespace, field_selector=f"metadata.name={name}")
     if not found:
         return None
-    deployment = found[0]
-    selector = _selector(deployment)
+    obj = found[0]
+    selector = _selector(obj)
     pods = await reader.list("pods", namespace, label_selector=selector) if selector else []
-    replicasets = await reader.list("replicasets", namespace, label_selector=selector or None)
+    revisions = owned(
+        await reader.list(revisions_kind, namespace, label_selector=selector or None), name, owner
+    )
     events = await reader.list("events", namespace, field_selector="type=Warning")
     mine = {name, *(str((p.get("metadata") or {}).get("name")) for p in pods)}
-    mine |= {str((rs.get("metadata") or {}).get("name")) for rs in owned(replicasets, name)}
+    mine |= {str((rs.get("metadata") or {}).get("name")) for rs in revisions}
     return Workload(
-        deployment=deployment,
-        replicasets=owned(replicasets, name),
+        obj=obj,
+        revisions=revisions,
         pods=pods,
         events=[e for e in events if str((e.get("involvedObject") or {}).get("name")) in mine],
+        kind=kind,
     )
+
+
+def config_refs(template: dict[str, Any]) -> tuple[set[str], set[str]]:
+    """The ConfigMaps and Secrets a pod template uses, by name: containers' and init
+    containers' envFrom and env valueFrom, and volumes (projected ones included)."""
+    spec = (template or {}).get("spec") or {}
+    configmaps: set[str] = set()
+    secrets: set[str] = set()
+    for c in [*(spec.get("containers") or []), *(spec.get("initContainers") or [])]:
+        for source in c.get("envFrom") or []:
+            if (source.get("configMapRef") or {}).get("name"):
+                configmaps.add(str(source["configMapRef"]["name"]))
+            if (source.get("secretRef") or {}).get("name"):
+                secrets.add(str(source["secretRef"]["name"]))
+        for env in c.get("env") or []:
+            value_from = env.get("valueFrom") or {}
+            if (value_from.get("configMapKeyRef") or {}).get("name"):
+                configmaps.add(str(value_from["configMapKeyRef"]["name"]))
+            if (value_from.get("secretKeyRef") or {}).get("name"):
+                secrets.add(str(value_from["secretKeyRef"]["name"]))
+    for volume in spec.get("volumes") or []:
+        if (volume.get("configMap") or {}).get("name"):
+            configmaps.add(str(volume["configMap"]["name"]))
+        if (volume.get("secret") or {}).get("secretName"):
+            secrets.add(str(volume["secret"]["secretName"]))
+        for source in (volume.get("projected") or {}).get("sources") or []:
+            if (source.get("configMap") or {}).get("name"):
+                configmaps.add(str(source["configMap"]["name"]))
+            if (source.get("secret") or {}).get("name"):
+                secrets.add(str(source["secret"]["name"]))
+    return configmaps, secrets
+
+
+def changed_at(item: dict[str, Any]) -> datetime | None:
+    """When a ConfigMap or Secret last changed: its newest managedFields time, else its
+    creation time."""
+    meta = item.get("metadata") or {}
+    times = [parse_time(f.get("time")) for f in meta.get("managedFields") or []]
+    known = [t for t in times if t is not None]
+    return max(known) if known else parse_time(meta.get("creationTimestamp"))
+
+
+# The note when a workload uses ConfigMaps but the connection has not opted in.
+CONFIGMAPS_OFF_NOTE = (
+    'ConfigMap changes not visible (opt-in): turn on "Detect ConfigMap changes" on the '
+    "Kubernetes connection, with the optional ConfigMap rule in infra/k8s-readonly-rbac.yaml"
+)
+
+
+async def fetch_config(
+    reader: KubeReader, workload: Workload, *, configmaps_enabled: bool = False
+) -> Workload:
+    """Fills the workload's `configmaps` and `secrets`: the metadata of the ones its pod template
+    uses (`list_metadata`: names, resourceVersion, managedFields times; never data). ConfigMaps
+    are read only when the connection opted in (`configmap_changes`); otherwise a note says
+    they are not visible. When the kubeconfig may not list them (the optional rules in
+    infra/k8s-readonly-rbac.yaml), they are skipped with a note."""
+    configmaps, secrets = config_refs(workload.template)
+    for kind, label, names, into in (
+        ("configmaps", "ConfigMap", configmaps, workload.configmaps),
+        ("secrets", "Secret", secrets, workload.secrets),
+    ):
+        if not names:
+            continue
+        if kind == "configmaps" and not configmaps_enabled:
+            workload.config_notes.append(CONFIGMAPS_OFF_NOTE)
+            continue
+        try:
+            items = await reader.list_metadata(kind, workload.namespace)
+        except ConnectorError as exc:
+            workload.config_notes.append(f"{label} changes not checked: {exc}")
+            continue
+        into.extend(i for i in items if str((i.get("metadata") or {}).get("name")) in names)
+    return workload
 
 
 async def fetch_logs(
@@ -281,19 +493,54 @@ def _in(at: datetime | None, since: datetime, until: datetime) -> bool:
     return at is not None and since <= at <= until
 
 
+def _config_changes(
+    workload: Workload, since: datetime, until: datetime, out: ReaderOutput
+) -> None:
+    name, ns = workload.name, workload.namespace
+    sources: list[tuple[str, str, ChangeKind, list[dict[str, Any]]]] = [
+        ("configmap", "ConfigMap", "config", workload.configmaps),
+        ("secret", "Secret", "secret_change", workload.secrets),
+    ]
+    for kind, label, marker_kind, items in sources:
+        for item in items:
+            meta = item.get("metadata") or {}
+            at = changed_at(item)
+            if not _in(at, since, until) or at is None:
+                continue
+            obj, version = str(meta.get("name")), meta.get("resourceVersion") or "?"
+            out.lines.append(
+                line(
+                    at,
+                    SOURCE,
+                    name,
+                    f"{label} {obj} (used by {name}) changed, resourceVersion {version}",
+                )
+            )
+            out.changes.append(
+                ChangeMarker(
+                    kind=marker_kind,
+                    ref=config_ref(ns, kind, obj, version),
+                    at=at,
+                    label=f"{label} {ns}/{obj} changed",
+                )
+            )
+    for note in workload.config_notes:
+        out.lines.append(line(until, SOURCE, name, note))
+
+
 def describe(
     workload: Workload,
     logs: list[tuple[datetime, str]],
     since: datetime,
     until: datetime,
 ) -> ReaderOutput:
-    """Evidence lines and deploy change markers for one Deployment."""
+    """Evidence lines and change markers (deploy, config, secret_change) for one workload."""
     name, ns = workload.name, workload.namespace
     out = ReaderOutput()
-    for rs in workload.replicasets:
+    for rs in workload.revisions:
         created = parse_time((rs.get("metadata") or {}).get("creationTimestamp"))
         rev = revision(rs)
-        template = (rs.get("spec") or {}).get("template") or {}
+        template = revision_template(rs)
         if _in(created, since, until) and created is not None:
             out.lines.append(
                 line(created, SOURCE, name, f"revision {rev} rolled out: image {images(template)}")
@@ -306,7 +553,8 @@ def describe(
                     label=f"{name} revision {rev} ({images(template)})",
                 )
             )
-    failed = rollout_failed(workload.deployment)
+    _config_changes(workload, since, until, out)
+    failed = rollout_failed(workload.obj)
     if failed is not None:
         at = parse_time(failed.get("lastUpdateTime")) or parse_time(
             failed.get("lastTransitionTime")
@@ -319,6 +567,10 @@ def describe(
                 f"rollout failed: {failed.get('message') or 'progress deadline exceeded'}",
             )
         )
+    problems = pod_problems(workload.pods, until, until - since)
+    stuck = statefulset_stuck(workload, bool(problems), until)
+    if stuck is not None:
+        out.lines.append(line(max(min(stuck[1], until), since), SOURCE, name, stuck[0]))
     for e in workload.events:
         at = parse_time(e.get("lastTimestamp")) or parse_time(e.get("eventTime"))
         if not _in(at, since, until) or at is None:
@@ -335,33 +587,40 @@ def describe(
                 + f": {str(e.get('message') or '')[:300]}",
             )
         )
-    for problem in pod_problems(workload.pods, until, until - since):
+    for problem in problems:
         out.lines.append(
             line(max(min(problem.at or until, until), since), SOURCE, name, problem.text())
         )
     for at, message in logs:
         if _in(at, since, until):
             out.lines.append(line(at, f"{SOURCE}_logs", name, message))
-    ready, desired = readiness(workload.deployment)
-    current = revision(workload.deployment)
+    ready, desired = readiness(workload.obj)
     out.lines.append(
         line(
             until,
             SOURCE,
             name,
-            f"now: revision {current}, {ready}/{desired} pods ready, image "
-            f"{images((workload.deployment.get('spec') or {}).get('template') or {})}",
+            f"now: revision {current_revision(workload)}, {ready}/{desired} pods ready, image "
+            f"{images(workload.template)}",
         )
     )
     return out
 
 
 async def read_workload(
-    reader: KubeReader, namespace: str, name: str, since: datetime, until: datetime
+    reader: KubeReader,
+    namespace: str,
+    name: str,
+    since: datetime,
+    until: datetime,
+    kind: str = DEPLOYMENT,
+    *,
+    configmaps_enabled: bool = False,
 ) -> ReaderOutput:
-    workload = await fetch_workload(reader, namespace, name)
+    workload = await fetch_workload(reader, namespace, name, kind)
     if workload is None:
-        return ReaderOutput(lines=[line(until, SOURCE, name, "deployment not found")])
+        return ReaderOutput(lines=[line(until, SOURCE, name, f"{kind} not found")])
+    await fetch_config(reader, workload, configmaps_enabled=configmaps_enabled)
     seconds = max(60, int((until - since).total_seconds()) + 60)
     logs = await fetch_logs(reader, workload, seconds)
     return describe(workload, logs, since, until)

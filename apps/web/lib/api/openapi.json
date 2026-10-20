@@ -1026,6 +1026,17 @@
             ],
             "title": "Capabilities"
           },
+          "configmap_changes": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configmap Changes"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -4577,6 +4588,20 @@
           "created_at"
         ],
         "title": "InviteOut",
+        "type": "object"
+      },
+      "K8sConfigMapChangesIn": {
+        "description": "Opt in to (or out of) ConfigMap changes as incident causes for a cluster.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "K8sConfigMapChangesIn",
         "type": "object"
       },
       "K8sDeploySettingsIn": {
@@ -10044,6 +10069,76 @@
         ]
       }
     },
+    "/connections/{connection_id}/k8s/configmap-changes": {
+      "put": {
+        "description": "Opt in to (or out of) ConfigMap changes as incident causes (owner only). Off by default:\nthe `list configmaps` right Groundcrew needs for it would also let a client read ConfigMap\ncontents, although Groundcrew only ever asks for metadata (names, resourceVersion, change\ntimes). On: checks the kubeconfig's identity may list ConfigMaps (the optional rule in\ninfra/k8s-readonly-rbac.yaml); nothing changes if it may not. Off: incidents note that\nConfigMap changes are not visible.",
+        "operationId": "k8s_set_configmap_changes_connections__connection_id__k8s_configmap_changes_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/K8sConfigMapChangesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "K8S Set Configmap Changes",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
     "/connections/{connection_id}/k8s/deploy-settings": {
       "delete": {
         "description": "Forget the deploy settings (and the saved registry token): back to the local kind\ndefaults.",
@@ -10174,7 +10269,7 @@
     },
     "/connections/{connection_id}/k8s/operate": {
       "post": {
-        "description": "Turn approved emergency fixes on or off for a connected cluster. On: checks (with\nSelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list\nReplicaSets, cluster-wide or in a namespace of a discovered Deployment\n(infra/k8s-operate-rbac.yaml grants that); nothing changes if it may not. Every fix still\nneeds a person's approval.",
+        "description": "Turn approved emergency fixes on or off for a connected cluster. On: checks (with\nSelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list\nReplicaSets (or patch StatefulSets and list ControllerRevisions), cluster-wide or in a\nnamespace of a discovered Deployment or StatefulSet (infra/k8s-operate-rbac.yaml grants\nthat); nothing changes if it may not. Every fix still needs a person's approval.",
         "operationId": "k8s_set_operate_connections__connection_id__k8s_operate_post",
         "parameters": [
           {

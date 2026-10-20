@@ -10,8 +10,13 @@ Such fixes carry `degraded` so the approval card says the service is degraded, n
 - a secret change started it: `secret_rollback_version` on that secret, then `force_redeploy`
   of every ECS service that `uses` it (tasks read secrets only at start);
 - a commit or deploy started it: `ecs_rollback_service` for each crashing ECS service,
-  `k8s_rollout_undo` (the previous revision) for each crashing Kubernetes Deployment, and
-  `lambda_rollback_alias` (the previous published version) for each failing Lambda function;
+  `k8s_rollout_undo` (the previous revision) for each crashing Kubernetes Deployment or
+  StatefulSet, and `lambda_rollback_alias` (the previous published version) for each failing
+  Lambda function;
+- a Kubernetes ConfigMap or Secret change started it (ref "<ns>/configmap/<name>@<version>"):
+  no emergency action. Groundcrew never reads their data, so it cannot put the old values
+  back, and a restart alone would only reload the broken ones; a note asks the person to
+  restore it first;
 - an EC2 instance's status check failed: `ec2_reboot_instance`, whatever started it.
 
 A pull request is proposed whenever a commit started it and the repository is connected: the
@@ -76,7 +81,11 @@ CRASH_RULES = frozenset(
 # Load balancer rules: what they flag is the services behind the balancer.
 ALB_RULES = frozenset({"alb_5xx", "alb_unhealthy_targets", "alb_latency"})
 # What a rollback acts on, per resource type.
-ROLLBACK_TYPES = frozenset({"ecs:service", "k8s:deployment", "lambda:function"})
+ROLLBACK_TYPES = frozenset({"ecs:service", "k8s:deployment", "k8s:statefulset", "lambda:function"})
+# Kubernetes workloads Medic rolls back, by graph type -> the actions' `kind`.
+K8S_WORKLOADS = {"k8s:deployment": "deployment", "k8s:statefulset": "statefulset"}
+# A Kubernetes ConfigMap or Secret change marker's ref (app.telemetry.k8s.config_ref).
+_K8S_CONFIG_REF = re.compile(r"^(?P<ns>[^/]+)/(?P<kind>configmap|secret)/(?P<name>[^@]+)@")
 
 
 def is_down(signal: Signal) -> bool:
@@ -168,6 +177,47 @@ def _k8s_revision(ref: str | None) -> str:
     return " ".join(ref.rsplit(" ", 2)[-2:]) if ref and " " in ref else "-"
 
 
+def _k8s_name(plan: ActionPlan) -> str:
+    """The Deployment's or StatefulSet's name in a Kubernetes plan's params."""
+    return plan.params.get(plan.params.get("kind") or "deployment") or "-"
+
+
+def k8s_config_change(
+    root_cause: RootCause, changes: list[ChangeMarker], marker: ChangeMarker | None
+) -> ChangeMarker | None:
+    """The Kubernetes ConfigMap or Secret change that started it: the matched marker, else
+    (the model named a config or secret change without a matching ref) the newest one
+    collected."""
+    if marker is not None:
+        return marker if _K8S_CONFIG_REF.match(marker.ref) else None
+    change = root_cause.triggering_change
+    if change is None or change.kind not in ("config", "secret_change"):
+        return None
+    found = [c for c in changes if _K8S_CONFIG_REF.match(c.ref)]
+    return max(found, key=lambda c: c.at) if found else None
+
+
+def k8s_config_note(marker: ChangeMarker, graph: Graph) -> str:
+    """ "ConfigMap shop/web-config changed at <time>; restore it, then Groundcrew can restart
+    web." Groundcrew never reads the old values, so it offers no rollback of its own."""
+    found = _K8S_CONFIG_REF.match(marker.ref)
+    ns, kind, name = (found["ns"], found["kind"], found["name"]) if found else ("-", "", "-")
+    label = "ConfigMap" if kind == "configmap" else "Secret"
+    users = sorted(
+        {
+            r.name
+            for r in graph.resources.values()
+            if r.type in K8S_WORKLOADS and (r.id == marker.resource_id or r.id in graph.affected)
+        }
+    )
+    at = marker.at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        f"{label} {ns}/{name} changed at {at}; restore it, then Groundcrew can restart "
+        f"{', '.join(users) or 'the workloads that use it'}. Groundcrew never reads its values, "
+        "so it offers no rollback of its own."
+    )
+
+
 def plan_lines(plan: ActionPlan) -> list[PlanLine]:
     if plan.action == "lambda_rollback_alias":
         return [
@@ -188,7 +238,7 @@ def plan_lines(plan: ActionPlan) -> list[PlanLine]:
     if plan.action == "k8s_rollout_undo":
         return [
             PlanLine(
-                what=f"{plan.params.get('deployment')} pod template",
+                what=f"{_k8s_name(plan)} pod template",
                 before=_k8s_revision(plan.current),
                 after=_k8s_revision(plan.desired),
             )
@@ -196,7 +246,7 @@ def plan_lines(plan: ActionPlan) -> list[PlanLine]:
     if plan.action == "k8s_rollout_restart":
         return [
             PlanLine(
-                what=f"{plan.params.get('deployment')} pods",
+                what=f"{_k8s_name(plan)} pods",
                 before=_k8s_revision(plan.current),
                 after="new pods on the same template",
             )
@@ -478,6 +528,12 @@ async def _change_fixes(
     out = Proposal()
     if root_cause.false_alarm or not signals:
         return out
+    # A Kubernetes ConfigMap or Secret change: no rollback without its old values, which
+    # Groundcrew never reads; only a note on how to recover.
+    k8s_config = k8s_config_change(root_cause, changes, matched_change(root_cause, changes))
+    if k8s_config is not None:
+        out.notes.append(k8s_config_note(k8s_config, graph))
+        return out
     down = any(is_down(s) for s in signals)
     change = root_cause.triggering_change
     if not down:
@@ -494,7 +550,8 @@ async def _change_fixes(
     # fix_options only break a tie; model text alone never picks an action.
     marker = matched_change(root_cause, changes)
     kinds = {o.kind for o in root_cause.fix_options}
-    seen = {c.kind for c in changes}
+    # Kubernetes ConfigMap / Secret markers never pick the AWS secret rollback.
+    seen = {c.kind for c in changes if not _K8S_CONFIG_REF.match(c.ref)}
     if marker is not None:
         secret_case = marker.kind == "secret_change"
         rollback_case = marker.kind in ("commit", "deploy")
@@ -608,9 +665,11 @@ async def _change_fixes(
                 if conn_id is None:
                     continue
                 svc = found
-                if svc.type == "k8s:deployment":
+                if svc.type in K8S_WORKLOADS:
                     namespace = str(svc.config.get("namespace") or svc.region or "default")
-                    plan = await actions.plan_k8s_rollout_undo(conn_id, namespace, svc.name)
+                    plan = await actions.plan_k8s_rollout_undo(
+                        conn_id, namespace, svc.name, K8S_WORKLOADS[svc.type]
+                    )
                     to = _k8s_revision(plan.desired)
                 elif svc.type == "lambda:function":
                     plan = await actions.plan_lambda_rollback_alias(conn_id, svc.external_id)
