@@ -492,6 +492,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/k8s/configmap-changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * K8S Set Configmap Changes
+         * @description Opt in to (or out of) ConfigMap changes as incident causes (owner only). Off by default:
+         *     the `list configmaps` right Groundcrew needs for it would also let a client read ConfigMap
+         *     contents, although Groundcrew only ever asks for metadata (names, resourceVersion, change
+         *     times). On: checks the kubeconfig's identity may list ConfigMaps (the optional rule in
+         *     infra/k8s-readonly-rbac.yaml); nothing changes if it may not. Off: incidents note that
+         *     ConfigMap changes are not visible.
+         */
+        put: operations["k8s_set_configmap_changes_connections__connection_id__k8s_configmap_changes_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/k8s/deploy-settings": {
         parameters: {
             query?: never;
@@ -534,9 +559,9 @@ export interface paths {
          * K8S Set Operate
          * @description Turn approved emergency fixes on or off for a connected cluster. On: checks (with
          *     SelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list
-         *     ReplicaSets, cluster-wide or in a namespace of a discovered Deployment
-         *     (infra/k8s-operate-rbac.yaml grants that); nothing changes if it may not. Every fix still
-         *     needs a person's approval.
+         *     ReplicaSets (or patch StatefulSets and list ControllerRevisions), cluster-wide or in a
+         *     namespace of a discovered Deployment or StatefulSet (infra/k8s-operate-rbac.yaml grants
+         *     that); nothing changes if it may not. Every fix still needs a person's approval.
          */
         post: operations["k8s_set_operate_connections__connection_id__k8s_operate_post"];
         delete?: never;
@@ -950,7 +975,8 @@ export interface paths {
         head?: never;
         /**
          * Update Workspace
-         * @description Rename the workspace or change its settings (owners).
+         * @description Rename the workspace, change its settings, or save or remove its Slack webhook
+         *     (owners).
          */
         patch: operations["update_workspace_workspaces__workspace_id__patch"];
         trace?: never;
@@ -1078,6 +1104,27 @@ export interface paths {
          * @description Change a member's role (owners). The last owner cannot be made a member.
          */
         patch: operations["update_member_workspaces__workspace_id__members__user_id__patch"];
+        trace?: never;
+    };
+    "/workspaces/{workspace_id}/notifications/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Notifications
+         * @description Send a test message to the Slack webhook and the email audience now (owners). One
+         *     result per channel that is set up.
+         */
+        post: operations["test_notifications_workspaces__workspace_id__notifications_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/workspaces/{workspace_id}/runs": {
@@ -1509,6 +1556,18 @@ export interface components {
              */
             url: string | null;
         };
+        /** ChannelTestOut */
+        ChannelTestOut: {
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "slack" | "email";
+            /** Detail */
+            detail: string;
+            /** Ok */
+            ok: boolean;
+        };
         /** Claim */
         Claim: {
             /**
@@ -1542,6 +1601,8 @@ export interface components {
             account?: string | null;
             /** Capabilities */
             capabilities?: ("observe" | "deploy" | "operate")[] | null;
+            /** Configmap Changes */
+            configmap_changes?: boolean | null;
             /**
              * Created At
              * Format: date-time
@@ -2476,7 +2537,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
@@ -2600,7 +2661,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /**
              * Incident Id
              * Format: uuid
@@ -2695,7 +2756,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** First Signal At */
@@ -2826,6 +2887,14 @@ export interface components {
              */
             id: string;
             role: components["schemas"]["WorkspaceRole"];
+        };
+        /**
+         * K8sConfigMapChangesIn
+         * @description Opt in to (or out of) ConfigMap changes as incident causes for a cluster.
+         */
+        K8sConfigMapChangesIn: {
+            /** Enabled */
+            enabled: boolean;
         };
         /**
          * K8sDeploySettingsIn
@@ -3093,6 +3162,43 @@ export interface components {
             provider: string;
             /** Type */
             type: string;
+        };
+        /**
+         * NotificationConfig
+         * @description Who is told about incidents and approvals, and which events (app.notifications).
+         */
+        NotificationConfig: {
+            /**
+             * Approval Needed
+             * @default true
+             */
+            approval_needed: boolean;
+            /**
+             * Email
+             * @default owners
+             * @enum {string}
+             */
+            email: "members" | "owners" | "none";
+            /**
+             * Incident Failed
+             * @default true
+             */
+            incident_failed: boolean;
+            /**
+             * Incident Opened
+             * @default true
+             */
+            incident_opened: boolean;
+            /**
+             * Incident Resolved
+             * @default true
+             */
+            incident_resolved: boolean;
+        };
+        /** NotificationTestOut */
+        NotificationTestOut: {
+            /** Results */
+            results: components["schemas"]["ChannelTestOut"][];
         };
         /**
          * OAuthProfile
@@ -3801,7 +3907,7 @@ export interface components {
              * Rule
              * @enum {string}
              */
-            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
         };
         /** StageFinished */
         StageFinished: {
@@ -4118,6 +4224,7 @@ export interface components {
              * @default true
              */
             incident_watch: boolean;
+            notifications?: components["schemas"]["NotificationConfig"];
         };
         /** WorkspaceCreate */
         WorkspaceCreate: {
@@ -4140,6 +4247,11 @@ export interface components {
             name: string;
             role: components["schemas"]["WorkspaceRole"];
             settings: components["schemas"]["WorkspaceConfig"];
+            /**
+             * Slack Saved
+             * @default false
+             */
+            slack_saved: boolean;
         };
         /** WorkspaceOut */
         WorkspaceOut: {
@@ -4193,6 +4305,8 @@ export interface components {
             /** Name */
             name?: string | null;
             settings?: components["schemas"]["WorkspaceConfig"] | null;
+            /** Slack Webhook Url */
+            slack_webhook_url?: string | null;
         };
     };
     responses: never;
@@ -5024,6 +5138,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    k8s_set_configmap_changes_connections__connection_id__k8s_configmap_changes_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["K8sConfigMapChangesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
                 };
             };
             /** @description Validation Error */
@@ -6239,6 +6390,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MembersOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_notifications_workspaces__workspace_id__notifications_test_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTestOut"];
                 };
             };
             /** @description Validation Error */

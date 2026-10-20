@@ -139,14 +139,14 @@ class FakeEmergencyActions:
         return self.kube
 
     async def plan_k8s_rollout_undo(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self, connection_id: uuid.UUID, namespace: str, name: str, kind: str = "deployment"
     ) -> ActionPlan:
-        return await self._kube().plan_k8s_rollout_undo(connection_id, namespace, deployment)
+        return await self._kube().plan_k8s_rollout_undo(connection_id, namespace, name, kind)
 
     async def plan_k8s_rollout_restart(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self, connection_id: uuid.UUID, namespace: str, name: str, kind: str = "deployment"
     ) -> ActionPlan:
-        return await self._kube().plan_k8s_rollout_restart(connection_id, namespace, deployment)
+        return await self._kube().plan_k8s_rollout_restart(connection_id, namespace, name, kind)
 
     def _service(self, cluster: str, service: str) -> FakeService:
         try:

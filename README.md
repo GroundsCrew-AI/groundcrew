@@ -25,6 +25,8 @@ make migrate            # in another terminal: create or upgrade the tables
 
 Open http://localhost:3000 and create an account (email and password, or Google or GitHub when
 configured). Your account gets a workspace of its own; invite your team from Settings.
+Settings, Notifications sends incidents and approval requests to a Slack channel (incoming
+webhook) and by email; see "Notifications" in [docs/self-hosting.md](docs/self-hosting.md).
 Local dev always uses the compose Postgres, even if `.env` has a Neon `DATABASE_URL`.
 `make models` sends one tiny test call to each configured Nemotron model.
 

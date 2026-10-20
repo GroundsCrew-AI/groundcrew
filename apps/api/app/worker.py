@@ -44,6 +44,7 @@ def default_handlers() -> dict[str, Handler]:
     from app.discovery.engine import discovery_job
     from app.incidents.store import INVESTIGATE_JOB, REDIAGNOSE_JOB
     from app.incidents.watcher import WATCH_JOB, watch_incidents_job
+    from app.notifications import NOTIFY_JOB, notify_job
     from app.pipeline.resume import resume_run_job
     from app.pipeline.runner import DEPLOY_JOB, pipeline_job
 
@@ -60,6 +61,7 @@ def default_handlers() -> dict[str, Handler]:
         REDIAGNOSE_JOB: rediagnose_incident_job,
         NO_FIX_JOB: no_fix_deadline_job,
         WATCH_JOB: watch_incidents_job,
+        NOTIFY_JOB: notify_job,
     }
 
 

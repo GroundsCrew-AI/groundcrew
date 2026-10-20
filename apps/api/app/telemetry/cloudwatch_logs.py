@@ -2,7 +2,8 @@
 
 Keeps what explains an incident: error-looking lines and tracebacks with one line of context on
 each side, then a sample of the rest when there are few errors. Request logs that carry a
-latency field (`latency_ms`, `duration_ms`, `elapsed_ms`) and a path are also summarized per
+latency field (`latency_ms`, `duration_ms`, `elapsed_ms`; or pino-http, lograge, nginx JSON,
+morgan, gin, and nginx / Apache access lines with a request time) and a path are summarized per
 minute and path, so a slow endpoint shows as one line per minute instead of thousands of
 requests. A minute whose p50 is SLOW_FACTOR x the path's baseline (and over SLOW_FLOOR_MS) is
 marked [SLOW]; health-check paths are summarized but never marked (their p95 jumps without a
@@ -35,6 +36,29 @@ _TRACE = re.compile(r'^\s+(File "|at |\.\.\.)|^\w+(\.\w+)*(Error|Exception):')
 _LATENCY_KEYS = ("latency_ms", "duration_ms", "elapsed_ms")
 _LATENCY_TEXT = re.compile(r"\b(latency_ms|duration_ms|elapsed_ms)[=:]\s*([0-9.]+)")
 _PATH_TEXT = re.compile(r"\bpath[=:]\s*(\S+)")
+# JSON request logs of common libraries: (latency key, scale to ms, where the path is).
+#   pino-http: responseTime (ms), req.url; lograge (Rails): duration (ms), path;
+#   nginx log_format escape=json: request_time / upstream_response_time (s), uri or request.
+_JSON_LATENCY = (
+    ("responseTime", 1.0),
+    ("response_time", 1.0),
+    ("request_time", 1000.0),
+    ("upstream_response_time", 1000.0),
+    ("duration", 1.0),
+)
+_METHOD = r"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"
+# morgan (dev, tiny): "GET /orders 200 12.345 ms - 512"
+_MORGAN = re.compile(rf"\b{_METHOD} (/\S*) \d{{3}} ([0-9.]+) ms\b")
+# gin: "| 200 |   12.345ms |  1.2.3.4 | GET      \"/orders\""
+_GIN = re.compile(
+    rf"\|\s*\d{{3}}\s*\|\s*([0-9.]+)(µs|us|ms|s)\s*\|.*\|\s*{_METHOD}\s+\"(/[^\"]*)\""
+)
+# nginx / Apache: a request line, then rt= / request_time= or a trailing seconds value
+# (log_format combined + $request_time).
+_REQUEST_LINE = re.compile(rf"\"{_METHOD} (/\S*) HTTP/[0-9.]+\"")
+_NGINX_TIME = re.compile(r"\b(?:rt|request_time|urt|upstream_response_time)=\"?([0-9.]+)")
+_TRAILING_SECONDS = re.compile(r"\s([0-9]+\.[0-9]{3})\s*$")
+_UNITS_MS = {"µs": 0.001, "us": 0.001, "ms": 1.0, "s": 1000.0}
 # Load balancer and container health checks: summarized, never a latency signal.
 HEALTH_PATH = re.compile(r"(?i)^/(health|healthz|healthcheck|ready|readyz|live|livez|ping)\b")
 SLOW_FACTOR = 3.0
@@ -70,6 +94,10 @@ def request_latency(message: str) -> tuple[str, float] | None:
         if match:
             found = _PATH_TEXT.search(message)
             path, value = (found.group(1) if found else ""), float(match.group(2))
+        elif data:
+            path, value = _library_json(data)
+        else:
+            path, value = _library_text(message)
     path = path.strip("\"',")
     if "://" in path:
         path = "/" + path.split("://", 1)[1].partition("/")[2]
@@ -77,6 +105,52 @@ def request_latency(message: str) -> tuple[str, float] | None:
     if value is None or not path.startswith("/"):
         return None
     return path, value
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.split(",")[0].strip())  # nginx upstream lists: "0.012, 0.150"
+        except ValueError:
+            return None
+    return None
+
+
+def _library_json(data: dict[str, Any]) -> tuple[str, float | None]:
+    req = data.get("req") if isinstance(data.get("req"), dict) else {}
+    path = str(
+        data.get("path")
+        or data.get("uri")
+        or data.get("url")
+        or (req or {}).get("url")
+        or str(data.get("request") or "").partition(" ")[2].partition(" ")[0]
+    )
+    for key, scale in _JSON_LATENCY:
+        if key == "duration" and not data.get("path"):
+            continue  # "duration" means ms only next to lograge's path
+        number = _number(data.get(key))
+        if number is not None:
+            return path, number * scale
+    return path, None
+
+
+def _library_text(message: str) -> tuple[str, float | None]:
+    found = _MORGAN.search(message)
+    if found:
+        return found.group(1), float(found.group(2))
+    found = _GIN.search(message)
+    if found:
+        return found.group(3), float(found.group(1)) * _UNITS_MS[found.group(2)]
+    request = _REQUEST_LINE.search(message)
+    if request:
+        timed = _NGINX_TIME.search(message) or _TRAILING_SECONDS.search(message)
+        if timed:
+            return request.group(1), float(timed.group(1)) * 1000.0
+    return "", None
 
 
 def is_health(path: str) -> bool:

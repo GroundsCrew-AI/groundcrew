@@ -80,6 +80,9 @@ const RULES: Record<DetectorRule, string> = {
   lambda_errors: "Function errors",
   lambda_throttles: "Function throttled",
   ec2_status_check: "Instance status check failed",
+  alb_5xx: "Load balancer 5xx",
+  alb_unhealthy_targets: "Unhealthy targets",
+  alb_latency: "Slow responses",
   user_report: "Reported by a person",
   other: "Other signal",
 };

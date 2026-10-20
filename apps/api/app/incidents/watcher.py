@@ -3,7 +3,8 @@ linked resources and open (or join) incidents.
 
 Linked resources are ECS services (with the log groups they `logs_to`) and RDS databases (with
 the log groups of the services that `reads` them, for the slow-query rule) on a connected AWS
-connection, and Deployments on a connected Kubernetes cluster (app/incidents/k8s_rules.py:
+connection, and Deployments and StatefulSets on a connected Kubernetes cluster
+(app/incidents/k8s_rules.py:
 rollout, pods, and their logs), not stale. All calls are read-only, through the connection's
 guarded read-only session or its kubeconfig. One pass:
 
@@ -38,13 +39,14 @@ from app.db.models import Connection, Edge, Incident, Job, JobStatus, Resource, 
 from app.db.session import SessionFactory
 from app.incidents import k8s_rules, rules
 from app.incidents.store import OPEN_STATUSES, Opened, open_incident, resource_group
+from app.telemetry import k8s
 from app.workspace_settings import get_config
 
 logger = logging.getLogger("groundcrew.incidents")
 
 WATCH_JOB: Final = "watch_incidents"
 WATCH_TYPES = ("ecs:service", "rds:db", "lambda:function", "ec2:instance")
-K8S_WATCH_TYPES = ("k8s:deployment",)
+K8S_WATCH_TYPES = ("k8s:deployment", "k8s:statefulset")
 CHECK_TIMEOUT_SECONDS = 30.0
 
 ReaderFor = Callable[[Connection], AwsReader]
@@ -109,7 +111,7 @@ async def _targets(session_factory: SessionFactory) -> list[Target]:
             }
             rows = [(r, c) for r, c in rows if r.workspace_id not in off]
         services = [r.id for r, _ in rows if r.type == "ecs:service"]
-        databases = [r.id for r, _ in rows if r.type == "rds:db"]
+        databases = [r.id for r, _ in rows if r.type in ("rds:db", "rds:cluster")]
         logs: dict[uuid.UUID, list[str]] = {}
         if services:
             edges = await session.execute(
@@ -153,6 +155,14 @@ def check(target: Target, reader: AwsReader, now: datetime) -> list[Signal]:
         signal = rules.rds_check(reader, r.region, r.id, r.name, target.log_groups, now)
         if signal is not None:
             out.append(signal)
+    elif r.type == "rds:cluster":
+        signal = rules.rds_check(
+            reader, r.region, r.id, r.name, target.log_groups, now, "DBClusterIdentifier"
+        )
+        if signal is not None:
+            out.append(signal)
+    elif r.type == ALB:
+        out.extend(rules.alb_check(reader, r.region, r.id, r.name, r.config, now))
     elif r.type == "lambda:function":
         log_group = str(r.config.get("log_group") or f"/aws/lambda/{r.name}")
         out.extend(rules.lambda_check(reader, r.region, r.id, r.name, log_group, now))
@@ -174,7 +184,9 @@ async def _check(
             kube = await asyncio.to_thread(kube_for, target.connection)
             try:
                 return await asyncio.wait_for(
-                    k8s_rules.check_deployment(kube, r.id, namespace, r.name, now),
+                    k8s_rules.check_workload(
+                        kube, r.id, namespace, r.name, now, k8s.RESOURCE_KINDS[r.type]
+                    ),
                     CHECK_TIMEOUT_SECONDS,
                 )
             finally:

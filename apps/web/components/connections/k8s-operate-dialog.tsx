@@ -11,14 +11,15 @@ import { isOperate } from "./aws-operate-dialog";
 import { CopyField } from "./copy-field";
 
 export const K8S_OPERATE_ALLOWS = [
-  "Roll a Deployment back to its previous revision (kubectl rollout undo)",
-  "Restart a Deployment's pods on the same template (kubectl rollout restart)",
-  "Patch Deployments and list ReplicaSets, nothing else, and only after a person approves each fix",
+  "Roll a Deployment or StatefulSet back to its previous revision (kubectl rollout undo)",
+  "Restart a Deployment's or StatefulSet's pods on the same template (kubectl rollout restart)",
+  "Patch Deployments and StatefulSets and list their revisions, nothing else, and only after a person approves each fix",
 ];
 
 /**
  * Turn approved emergency fixes on or off for a connected cluster. Turning them on means
- * granting the kubeconfig's identity patch on Deployments (infra/k8s-operate-rbac.yaml);
+ * granting the kubeconfig's identity patch on Deployments and StatefulSets
+ * (infra/k8s-operate-rbac.yaml);
  * Groundcrew checks that with access reviews before it uses it.
  */
 export function K8sOperateDialog({
@@ -60,7 +61,7 @@ export function K8sOperateDialog({
           <DialogTitle>{enabling ? "Turn on emergency fixes" : "Turn off emergency fixes"}</DialogTitle>
           <DialogDescription>
             {enabling
-              ? "Lets Medic offer rollbacks and restarts of Deployments when they break. Every fix still waits for your approval."
+              ? "Lets Medic offer rollbacks and restarts of Deployments and StatefulSets when they break. Every fix still waits for your approval."
               : "Medic stops offering emergency fixes for this cluster now. Delete the role binding to remove the rights."}
           </DialogDescription>
         </DialogHeader>
@@ -79,7 +80,7 @@ export function K8sOperateDialog({
               </li>
               <li>
                 Click <span className="font-medium">Verify</span>: Groundcrew asks the cluster whether this kubeconfig may
-                patch Deployments in the namespaces of your discovered Deployments.
+                patch Deployments or StatefulSets in the namespaces of your discovered workloads.
               </li>
             </ol>
             <ul className="space-y-1 rounded-md border px-3 py-2 text-[12.5px] text-muted-foreground">

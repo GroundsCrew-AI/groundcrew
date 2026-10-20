@@ -6,6 +6,7 @@ import { type ReactNode, useState } from "react";
 import { AccountSection } from "@/components/settings/account-section";
 import { LeaveWorkspace } from "@/components/settings/leave-workspace";
 import { MembersSection } from "@/components/settings/members-section";
+import { NotificationsSection } from "@/components/settings/notifications-section";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { WorkspaceNameForm, WorkspaceSettingsForm } from "@/components/settings/workspace-forms";
 import { CreateWorkspaceDialog } from "@/components/settings/create-workspace-dialog";
@@ -104,10 +105,26 @@ export default function SettingsPage() {
           description={owner ? "Applies to everyone in this workspace." : OWNER_ONLY.workspace}
         >
           <WorkspaceSettingsForm
-            key={`${data.id}:${JSON.stringify(data.settings)}`}
+            key={`${data.id}:${JSON.stringify({ ...data.settings, notifications: undefined })}`}
             workspace={data}
             canEdit={owner}
             platformCap={platformCap}
+          />
+        </SettingsSection>
+
+        <SettingsSection
+          id="settings-notifications"
+          title="Notifications"
+          description={
+            owner
+              ? "Tell your team in Slack and by email when an incident opens, needs an approval, resolves, or fails."
+              : "Only workspace owners can change notifications."
+          }
+        >
+          <NotificationsSection
+            key={`${data.id}:${JSON.stringify(data.settings.notifications)}:${data.slack_saved}`}
+            workspace={data}
+            canEdit={owner}
           />
         </SettingsSection>
 

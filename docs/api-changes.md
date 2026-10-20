@@ -297,3 +297,71 @@ All additive.
 - AppSpec (Scout, not in the HTTP API): `framework` adds `spring`, `quarkus`, `rails`,
   `sinatra`, `rack`, `axum`, `actix`, `rocket`, `laravel`, `slim`, `aspnet`;
   `package_manager` adds `maven`, `gradle`, `bundler`, `cargo`, `composer`, `dotnet`.
+## Kubernetes StatefulSets, ConfigMap and Secret changes (2026-10-19)
+
+All additive.
+- New `PUT /connections/{id}/k8s/configmap-changes` (owner only), body `{enabled: bool}`:
+  opt in to ConfigMap changes as incident causes. Off by default, because the `list configmaps`
+  right it needs also grants read access to ConfigMap contents. On: a SelfSubjectAccessReview
+  checks the kubeconfig may list ConfigMaps (cluster-wide or in a discovered workload's
+  namespace), else 422 and nothing changes. `ConnectionOut.configmap_changes` (bool, null for
+  non-k8s) carries the choice. Off: a workload that uses ConfigMaps gets the evidence line
+  "ConfigMap changes not visible (opt-in): ..." instead of a silent miss.
+- Incidents now cover `k8s:statefulset` resources like `k8s:deployment`: `k8s_pods_crashing`,
+  `health_check`, `log_error_spike`, and `k8s_rollout_failed` for a stuck rollout
+  (currentRevision is not updateRevision, pods failing, 5+ minutes after the new revision).
+  Evidence sources for them are keyed `k8s:statefulset/<name>`.
+- Change markers (`ChangeMarker`): a StatefulSet's ControllerRevision created in the window is a
+  `deploy` marker, ref `<ns>/<name> revision <n>`. A ConfigMap or Secret a workload's pods use
+  that changed in the window is a `config` marker (ref `<ns>/configmap/<name>@<resourceVersion>`,
+  only with the opt-in above) or a `secret_change` marker (ref `<ns>/secret/<name>@<resourceVersion>`), label
+  "ConfigMap shop/web-config changed". Read as metadata only; no value ever reaches Groundcrew.
+- `ActionPlan.params` for `k8s_rollout_undo` / `k8s_rollout_restart` on a StatefulSet:
+  `{namespace, statefulset, kind: "statefulset"}`. A Deployment's stay `{namespace, deployment}`.
+- A ConfigMap or Secret change as the cause gets no emergency fix, only a note in the run
+  ("ConfigMap shop/web-config changed at <time>; restore it, then Groundcrew can restart web.").
+- `POST /connections/{id}/k8s/operate` also accepts a kubeconfig that may patch StatefulSets and
+  list ControllerRevisions (and counts discovered StatefulSets' namespaces); the 422 text now
+  says "may not patch Deployments or StatefulSets".
+- RBAC: infra/k8s-readonly-rbac.yaml adds `controllerrevisions`, plus optional, commented-out
+  `list configmaps` and `list secrets` blocks (metadata only; each grants read access to
+  contents, so they are opt-in); infra/k8s-operate-rbac.yaml adds
+  `patch statefulsets` and `get/list controllerrevisions`. Re-apply them to get these.
+## Incident and approval notifications (2026-10-19)
+
+All additive.
+- `WorkspaceConfig.notifications` (`NotificationConfig`): `email` (`members`, `owners`, or
+  `none`; default `owners`) and four toggles, `incident_opened`, `approval_needed`,
+  `incident_resolved`, `incident_failed` (default on). `PATCH /workspaces/{id}` still replaces
+  `settings` as a whole, except that leaving `notifications` out keeps the saved ones (older
+  clients do not reset them).
+- `WorkspaceUpdate.slack_webhook_url` (owners): a Slack incoming webhook
+  (`https://hooks.slack.com/services/...`, else 422) saves it, Fernet-encrypted in
+  `workspaces.settings["slack_webhook"]`; `null` removes it; left out keeps it. 503 without
+  `SECRETS_KEY`. The URL is never returned: `WorkspaceDetail.slack_saved` says one is saved.
+- `POST /workspaces/{id}/notifications/test` (owners; 403 for members): sends a sample to every
+  channel that is set up, now. `NotificationTestOut {results: [{channel: "slack" | "email", ok,
+  detail}]}`, one per channel; `[]` when none is set up.
+- New job kind `notify` (`app/notifications.py`, max 5 attempts): one per channel and email
+  recipient, enqueued in the event's transaction; payload `{event_key, event, incident_id,
+  approval_ids, channel, user_id?}`. An event key that was already enqueued is not enqueued again.
+- Messages link to `{WEB_ORIGIN}/incidents/{id}`, never to approve or reject (link scanners open
+  links; approving stays an authenticated action in the app).
+## Load balancers, Aurora, slow requests (2026-10-20)
+
+All additive.
+- `DetectorRule`: `alb_5xx` (10+ 5xx in 5 minutes, 5 %+ of requests, 3x the share before;
+  down at 90 %), `alb_unhealthy_targets` (2+ minutes; down when a group has no healthy target),
+  `alb_latency` (p95 at least 1 s and 3x its baseline, 2+ minutes).
+- Discovery: Application Load Balancers with their target groups and registered targets
+  (`elasticloadbalancing:loadbalancer/app` config `dimension`, `target_groups[]`), and Aurora
+  clusters (`rds:cluster`). New edges: a balancer `calls` the ECS services, EC2 instances, and
+  Lambda functions its target groups route to; Aurora clusters get `reads` (security groups) and
+  `calls` (endpoint in env) edges like DB instances.
+- Medic: a failing balancer's just-deployed services (a deploy marker in the window) are
+  rollback targets.
+- Request latency is read from pino-http, lograge, nginx JSON, morgan, gin, and nginx / Apache
+  access lines with a request time (`[SLOW]` minutes and the slow-query rule). ALB access logs
+  live in S3, which Groundcrew never reads; the balancer's TargetResponseTime covers them.
+- Connect template: the read-only role adds `elasticloadbalancing:DescribeLoadBalancers`,
+  `DescribeTargetGroups`, `DescribeTargetHealth`.

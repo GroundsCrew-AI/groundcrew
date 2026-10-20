@@ -22,6 +22,8 @@ export type WorkspaceRole = Schemas["WorkspaceRole"];
 export type Members = Schemas["MembersOut"];
 export type Member = Schemas["MemberOut"];
 export type Invite = Schemas["InviteOut"];
+export type NotificationSettings = Schemas["NotificationConfig"];
+export type ChannelTestResult = Schemas["ChannelTestOut"];
 
 export const workspaceAdminKeys = {
   detail: (ws: string) => ["workspace", ws] as const,
@@ -126,11 +128,13 @@ export function useCreateWorkspace() {
   });
 }
 
-/** Rename and/or change settings (owners). `settings` replaces the whole object. */
+/** Rename and/or change settings (owners). `settings` replaces the whole object (left out,
+ * `notifications` keeps the saved ones). `slack_webhook_url` saves the Slack webhook and null
+ * removes it; the API never returns it, only `slack_saved`. */
 export function useUpdateWorkspace(workspaceId: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { name?: string; settings?: WorkspaceSettings }) =>
+    mutationFn: async (body: { name?: string; settings?: WorkspaceSettings; slack_webhook_url?: string | null }) =>
       unwrap(
         await api.PATCH("/workspaces/{workspace_id}", {
           params: { path: { workspace_id: workspaceId } },
@@ -146,6 +150,18 @@ export function useUpdateWorkspace(workspaceId: string) {
       void client.invalidateQueries({ queryKey: ["summary", workspaceId] });
       void client.invalidateQueries({ queryKey: ["workspace-config", workspaceId] });
     },
+  });
+}
+
+/** Send a test notification to every channel set up (owners): one result per channel. */
+export function useTestNotifications(workspaceId: string) {
+  return useMutation({
+    mutationFn: async () =>
+      unwrap(
+        await api.POST("/workspaces/{workspace_id}/notifications/test", {
+          params: { path: { workspace_id: workspaceId } },
+        }),
+      ),
   });
 }
 
@@ -314,4 +330,47 @@ export function sameSettings(a: WorkspaceSettings, b: WorkspaceSettings): boolea
     a.incident_watch === b.incident_watch &&
     (a.daily_usd_cap ?? null) === (b.daily_usd_cap ?? null)
   );
+}
+
+// ---------------------------------------------------------------------------- notifications
+
+export type NotificationEvent = "incident_opened" | "approval_needed" | "incident_resolved" | "incident_failed";
+
+export const NOTIFICATION_EVENTS: { key: NotificationEvent; label: string; hint: string }[] = [
+  {
+    key: "incident_opened",
+    label: "Incident opened",
+    hint: "Not for signals that join an open incident, and never for test incidents.",
+  },
+  { key: "approval_needed", label: "Approval needed", hint: "Medic proposed fixes and waits for an approval." },
+  { key: "incident_resolved", label: "Incident resolved", hint: "The signals recovered." },
+  { key: "incident_failed", label: "Incident failed", hint: "Medic could not fix it, or someone stopped it." },
+];
+
+export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
+  email: "owners",
+  incident_opened: true,
+  approval_needed: true,
+  incident_resolved: true,
+  incident_failed: true,
+};
+
+/** The saved notification settings, with the API's defaults for anything missing. */
+export function notificationsOf(settings: WorkspaceSettings): NotificationSettings {
+  return { ...DEFAULT_NOTIFICATIONS, ...settings.notifications };
+}
+
+export function sameNotifications(a: NotificationSettings, b: NotificationSettings): boolean {
+  return a.email === b.email && NOTIFICATION_EVENTS.every(({ key }) => a[key] === b[key]);
+}
+
+const SLACK_WEBHOOK = /^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)+$/;
+
+/** Why `text` is not a Slack incoming webhook, or null when it is (the API checks the same). */
+export function slackWebhookError(text: string): string | null {
+  const value = text.trim();
+  if (!value) return "Paste the webhook URL from Slack.";
+  return SLACK_WEBHOOK.test(value)
+    ? null
+    : "That is not a Slack incoming webhook (https://hooks.slack.com/services/...).";
 }

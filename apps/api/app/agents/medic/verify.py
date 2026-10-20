@@ -13,9 +13,10 @@ A round is *waiting*, not failing, while a service's rollout is IN_PROGRESS (mor
 deployment) or, after a fix PR merged, no deployment has started since the merge: the checks
 then describe the old tasks, so the UI shows "waiting for rollout" until the deadline.
 
-Kubernetes Deployments (`k8s_checks`): `rollout` passes when the rollout is complete and every
-desired pod is ready (waiting while pods are still being replaced, or after a fix PR merged
-until a revision created since the merge exists); `health` fails on any pod that crashes, cannot
+Kubernetes Deployments and StatefulSets (`k8s_checks`): `rollout` passes when the rollout is
+complete and every desired pod is ready (a StatefulSet: currentRevision == updateRevision and
+readyReplicas == replicas), waiting while pods are still being replaced, or after a fix PR merged
+until a revision created since the merge exists; `health` fails on any pod that crashes, cannot
 start, or fails its readiness probe now (pods being deleted are left out); `errors` reads the
 pods' logs again when a log spike opened the incident."""
 
@@ -215,6 +216,7 @@ def run_checks(
     waiting: list[str] | None = None,
     functions: list[Resource] | None = None,
     instances: list[Resource] | None = None,
+    balancers: list[Resource] | None = None,
 ) -> VerifyResult:
     """Blocking (boto3). `readers` is keyed by connection id (str). `deploy_after`: a fix PR
     merged then; `waiting`: reasons known before the round (a fix PR not merged yet).
@@ -223,6 +225,24 @@ def run_checks(
     started = time.monotonic()
     checks: list[VerifyCheck] = []
     waits = list(waiting or [])
+    for lb in balancers or []:
+        reader = readers.get(str(lb.connection_id))
+        if reader is None:
+            continue
+        try:
+            found = rules.alb_check(reader, lb.region, lb.id, lb.name, lb.config, now)
+        except Exception as exc:  # one unreadable balancer must not stop the round
+            detail = f"{lb.name}: could not read metrics ({error_text(exc)[:120]})"
+            checks.append(VerifyCheck(name="errors", ok=False, detail=detail))
+            continue
+        checks.append(
+            VerifyCheck(
+                name="errors",
+                ok=not found,
+                detail=f"{lb.name}: "
+                + ("; ".join(s.detail for s in found) or "5xx, targets, and latency normal"),
+            )
+        )
     for fn in functions or []:
         reader = readers.get(str(fn.connection_id))
         if reader is None:
@@ -294,7 +314,15 @@ def run_checks(
             continue
         groups = sorted({g for gs in log_groups.values() for g in gs})
         try:
-            spike = rules.rds_check(reader, db.region, db.id, db.name, groups, now)
+            spike = rules.rds_check(
+                reader,
+                db.region,
+                db.id,
+                db.name,
+                groups,
+                now,
+                "DBClusterIdentifier" if db.type == "rds:cluster" else "DBInstanceIdentifier",
+            )
         except Exception as exc:  # one unreadable database must not stop the round
             detail = f"{db.name}: could not read metrics ({error_text(exc)[:120]})"
             checks.append(VerifyCheck(name="metric", ok=False, detail=detail))
@@ -324,30 +352,34 @@ async def k8s_checks(
     waits: list[str],
     deploy_after: datetime | None = None,
 ) -> list[VerifyCheck]:
-    """One Deployment's recovery checks; appends to `waits` while its rollout is going."""
+    """One Deployment's or StatefulSet's recovery checks; appends to `waits` while its rollout
+    is going."""
     name = deployment.name
     namespace = str(deployment.config.get("namespace") or deployment.region or "default")
-    workload = await k8s.fetch_workload(reader, namespace, name)
+    kind = k8s.RESOURCE_KINDS.get(deployment.type, k8s.DEPLOYMENT)
+    workload = await k8s.fetch_workload(reader, namespace, name, kind)
     if workload is None:
-        return [VerifyCheck(name="rollout", ok=False, detail=f"{name}: deployment not found")]
-    going = k8s.rolling_out(workload.deployment)
+        return [VerifyCheck(name="rollout", ok=False, detail=f"{name}: {kind} not found")]
+    going = k8s.rolling_out(workload.obj, kind)
     if going:
         waits.append(f"{name} {going}")
     if deploy_after is not None:
         newest = max(
             (
                 parse_time((rs.get("metadata") or {}).get("creationTimestamp"))
-                for rs in workload.replicasets
+                for rs in workload.revisions
             ),
             default=None,
             key=lambda at: at.timestamp() if at else 0.0,
         )
         if newest is None or newest < deploy_after:
             waits.append(f"{name}: no new revision since the fix PR merged")
-    ready, desired = k8s.readiness(workload.deployment)
-    failed = k8s.rollout_failed(workload.deployment)
-    rollout_ok = failed is None and ready >= desired
-    detail = f"{name}: {ready}/{desired} pods ready, revision {k8s.revision(workload.deployment)}"
+    ready, desired = k8s.readiness(workload.obj)
+    failed = k8s.rollout_failed(workload.obj)
+    rollout_ok = k8s.rollout_complete(workload)
+    detail = f"{name}: {ready}/{desired} pods ready, revision {k8s.current_revision(workload)}"
+    if kind == k8s.STATEFULSET and not rollout_ok and ready >= desired:
+        detail += "; rollout not complete (currentRevision is not updateRevision)"
     if failed is not None:
         detail += f"; rollout failed: {failed.get('message') or 'progress deadline exceeded'}"
     out = [VerifyCheck(name="rollout", ok=rollout_ok, detail=detail)]

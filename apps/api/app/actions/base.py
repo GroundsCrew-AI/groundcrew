@@ -17,8 +17,9 @@ Every action is two calls, like `Target.rollback_plan()` / `rollback()`:
 Secret values are never read: a secret rollback moves the AWSCURRENT stage back to the version
 that holds AWSPREVIOUS (UpdateSecretVersionStage) by version id only.
 
-Kubernetes Deployments (app/actions/k8s.py) get `k8s_rollout_undo` and `k8s_rollout_restart`
-through the cluster's kubeconfig, on connections with the operate capability.
+Kubernetes Deployments and StatefulSets (app/actions/k8s.py) get `k8s_rollout_undo` and
+`k8s_rollout_restart` through the cluster's kubeconfig, on connections with the operate
+capability (`kind` "deployment" or "statefulset", see `k8s_params`).
 `EmergencyActionRouter` sends each plan to the implementation for its action.
 """
 
@@ -59,6 +60,27 @@ EMERGENCY_ACTION_NAMES: tuple[EmergencyActionName, ...] = (
     K8S_ROLLOUT_RESTART,
 )
 K8S_ACTIONS: frozenset[str] = frozenset({K8S_ROLLOUT_UNDO, K8S_ROLLOUT_RESTART})
+# The workload kinds the Kubernetes actions take (`kind`); deployment is the default.
+K8S_WORKLOAD_KINDS: frozenset[str] = frozenset({"deployment", "statefulset"})
+
+
+def k8s_params(namespace: str, name: str, kind: str = "deployment") -> dict[str, str]:
+    """A Kubernetes action's params. A Deployment's stay {"namespace", "deployment"} (no
+    `kind`), so plans and plan hashes made before StatefulSets existed stay valid; a
+    StatefulSet's are {"namespace", "statefulset", "kind": "statefulset"}."""
+    if kind not in K8S_WORKLOAD_KINDS:
+        raise EmergencyActionError(f"Groundcrew does not act on Kubernetes {kind}s.")
+    if kind == "deployment":
+        return {"namespace": namespace, "deployment": name}
+    return {"namespace": namespace, kind: name, "kind": kind}
+
+
+def k8s_workload(params: dict[str, str]) -> tuple[str, str, str]:
+    """(kind, namespace, name) from a Kubernetes action's params (`k8s_params`)."""
+    kind = params.get("kind") or "deployment"
+    if kind not in K8S_WORKLOAD_KINDS:
+        raise EmergencyActionError(f"Groundcrew does not act on Kubernetes {kind}s.")
+    return kind, params["namespace"], params[kind]
 
 
 class ActionPlan(BaseModel):
@@ -69,9 +91,10 @@ class ActionPlan(BaseModel):
     action: EmergencyActionName
     connection_id: uuid.UUID
     # What it acts on: "checkout/checkout-worker" (cluster/service), the secret's ARN, or
-    # "namespace/deployment".
+    # "namespace/name" (a Deployment or StatefulSet).
     target: str
-    # The exact call arguments: cluster and service, secret_arn, or namespace and deployment.
+    # The exact call arguments: cluster and service, secret_arn, or namespace and deployment
+    # (a StatefulSet: namespace, statefulset, and kind="statefulset"; k8s_params).
     params: dict[str, str]
     # State read by the plan, and the state after the action:
     #   ecs_rollback_service: task definition ARN now -> the previous revision's ARN
@@ -157,13 +180,14 @@ class EmergencyActions(Protocol):
         ...
 
     async def plan_k8s_rollout_undo(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self, connection_id: uuid.UUID, namespace: str, name: str, kind: str = "deployment"
     ) -> ActionPlan:
-        """Put the Deployment's previous revision's pod template back (kubectl rollout undo)."""
+        """Put the workload's previous revision's pod template back (kubectl rollout undo).
+        `kind` is "deployment" (the default) or "statefulset"."""
         ...
 
     async def plan_k8s_rollout_restart(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self, connection_id: uuid.UUID, namespace: str, name: str, kind: str = "deployment"
     ) -> ActionPlan:
         """Replace every pod with the same template (kubectl rollout restart)."""
         ...
@@ -208,11 +232,11 @@ class K8sActions(Protocol):
     """The Kubernetes half (app.actions.k8s.K8sEmergencyActions)."""
 
     async def plan_k8s_rollout_undo(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self, connection_id: uuid.UUID, namespace: str, name: str, kind: str = "deployment"
     ) -> ActionPlan: ...
 
     async def plan_k8s_rollout_restart(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self, connection_id: uuid.UUID, namespace: str, name: str, kind: str = "deployment"
     ) -> ActionPlan: ...
 
     async def execute(
@@ -263,14 +287,14 @@ class EmergencyActionRouter:
         return await self._aws().plan_ec2_reboot_instance(connection_id, instance_arn)
 
     async def plan_k8s_rollout_undo(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self, connection_id: uuid.UUID, namespace: str, name: str, kind: str = "deployment"
     ) -> ActionPlan:
-        return await self._k8s().plan_k8s_rollout_undo(connection_id, namespace, deployment)
+        return await self._k8s().plan_k8s_rollout_undo(connection_id, namespace, name, kind)
 
     async def plan_k8s_rollout_restart(
-        self, connection_id: uuid.UUID, namespace: str, deployment: str
+        self, connection_id: uuid.UUID, namespace: str, name: str, kind: str = "deployment"
     ) -> ActionPlan:
-        return await self._k8s().plan_k8s_rollout_restart(connection_id, namespace, deployment)
+        return await self._k8s().plan_k8s_rollout_restart(connection_id, namespace, name, kind)
 
     async def execute(
         self, plan: ActionPlan, token: ApprovedAction, *, run_id: uuid.UUID
@@ -284,13 +308,11 @@ async def plan_again(actions: EmergencyActions, plan: ActionPlan) -> ActionPlan:
     run gets a fresh plan and a fresh approval, never the old ones)."""
     p = plan.params
     if plan.action == K8S_ROLLOUT_UNDO:
-        return await actions.plan_k8s_rollout_undo(
-            plan.connection_id, p["namespace"], p["deployment"]
-        )
+        kind, namespace, name = k8s_workload(p)
+        return await actions.plan_k8s_rollout_undo(plan.connection_id, namespace, name, kind)
     if plan.action == K8S_ROLLOUT_RESTART:
-        return await actions.plan_k8s_rollout_restart(
-            plan.connection_id, p["namespace"], p["deployment"]
-        )
+        kind, namespace, name = k8s_workload(p)
+        return await actions.plan_k8s_rollout_restart(plan.connection_id, namespace, name, kind)
     if plan.action == LAMBDA_ROLLBACK_ALIAS:
         return await actions.plan_lambda_rollback_alias(plan.connection_id, p["function_arn"])
     if plan.action == EC2_REBOOT_INSTANCE:

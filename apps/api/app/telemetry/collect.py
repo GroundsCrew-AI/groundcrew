@@ -29,7 +29,7 @@ from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader, connection_regions, error_text
 from app.connectors.credentials import ConnectionCredentialsProvider
 from app.connectors.github import GitHubApp, get_github_app
-from app.connectors.kubernetes import KubeReader
+from app.connectors.kubernetes import CONFIGMAP_CHANGES_KEY, KubeReader
 from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Edge, Resource
 from app.db.session import SessionFactory
@@ -51,6 +51,7 @@ class EvidenceClients(Protocol):
     def vercel(self, connection_id: uuid.UUID) -> VercelClient: ...
     def installation_id(self, connection_id: uuid.UUID) -> int: ...
     def kube(self, connection_id: uuid.UUID) -> KubeReader: ...
+    def kube_configmaps(self, connection_id: uuid.UUID) -> bool: ...
 
 
 class ConnectionClients:
@@ -104,6 +105,10 @@ class ConnectionClients:
         if conn.kind != "k8s" or not conn.secret_encrypted:
             raise LookupError(f"{conn.name} has no kubeconfig.")
         return kubernetes.live_reader(decrypt(conn.secret_encrypted))
+
+    def kube_configmaps(self, connection_id: uuid.UUID) -> bool:
+        """Whether the cluster's owner opted in to ConfigMap changes as causes."""
+        return bool(self._conn(connection_id).config.get(CONFIGMAP_CHANGES_KEY))
 
     def close(self) -> None:
         self._credentials.close()
@@ -249,6 +254,31 @@ def plan_readers(
                     until=until,
                 ),
             )
+        elif r.type == "elasticloadbalancing:loadbalancer/app":
+            key = f"alb:{r.name}"
+            job = aws_job(
+                r,
+                partial(
+                    aws_compute.read_balancer,
+                    region=region,
+                    name=r.name,
+                    config=dict(r.config),
+                    since=since,
+                    until=until,
+                ),
+            )
+        elif r.type == "rds:cluster":
+            key = f"rds:{r.name}"
+            job = aws_job(
+                r,
+                partial(
+                    aws_compute.read_cluster,
+                    region=region,
+                    cluster=r.name,
+                    since=since,
+                    until=until,
+                ),
+            )
         elif r.type == "ec2:instance":
             key = f"ec2:{r.name}"
             job = aws_job(
@@ -298,18 +328,34 @@ def plan_readers(
                 return await vercel.read_project(clients.vercel(conn), pid, name, since, until)
 
             job = vc
-        elif r.type == "k8s:deployment":
-            key = f"k8s:{r.name}"
+        elif r.type in k8s.RESOURCE_KINDS:
+            workload_kind = k8s.RESOURCE_KINDS[r.type]
+            key = (
+                f"k8s:{r.name}"
+                if workload_kind == k8s.DEPLOYMENT
+                else f"k8s:{workload_kind}/{r.name}"
+            )
             ns, conn = str(r.config.get("namespace") or r.region or "default"), r.connection_id
 
             async def kd(
-                ns: str = ns, conn: uuid.UUID | None = conn, name: str = r.name
+                ns: str = ns,
+                conn: uuid.UUID | None = conn,
+                name: str = r.name,
+                kind: str = workload_kind,
             ) -> ReaderOutput:
                 if conn is None:
                     raise LookupError(f"{name} has no Kubernetes connection.")
                 reader = await asyncio.to_thread(clients.kube, conn)
                 try:
-                    return await k8s.read_workload(reader, ns, name, since, until)
+                    return await k8s.read_workload(
+                        reader,
+                        ns,
+                        name,
+                        since,
+                        until,
+                        kind,
+                        configmaps_enabled=clients.kube_configmaps(conn),
+                    )
                 finally:
                     close = getattr(reader, "close", None)
                     if close is not None:
