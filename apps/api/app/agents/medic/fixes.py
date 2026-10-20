@@ -78,6 +78,8 @@ CRASH_RULES = frozenset(
         "lambda_errors",
     }
 )
+# Load balancer rules: what they flag is the services behind the balancer.
+ALB_RULES = frozenset({"alb_5xx", "alb_unhealthy_targets", "alb_latency"})
 # What a rollback acts on, per resource type.
 ROLLBACK_TYPES = frozenset({"ecs:service", "k8s:deployment", "k8s:statefulset", "lambda:function"})
 # Kubernetes workloads Medic rolls back, by graph type -> the actions' `kind`.
@@ -108,6 +110,14 @@ class Graph:
             self.resources[e.from_id]
             for e in self.edges
             if e.to_id == resource_id and e.kind == "uses" and e.from_id in self.resources
+        ]
+
+    def behind(self, balancers: set[uuid.UUID | None]) -> list[uuid.UUID]:
+        """What the given load balancers send traffic to (their `calls` edges)."""
+        return [
+            e.to_id
+            for e in self.edges
+            if e.kind == "calls" and e.from_id in balancers and e.to_id in self.resources
         ]
 
     def repo_for(self, resource_ids: list[uuid.UUID]) -> Resource | None:
@@ -624,8 +634,12 @@ async def _change_fixes(
                 )
                 order += 1
         else:
+            # A failing load balancer: the services behind it that were just deployed.
+            behind = graph.behind({s.resource_id for s in signals if s.rule in ALB_RULES})
+            deployed_now = {c.resource_id for c in changes if c.kind == "deploy"}
             if down:
                 targets = {s.resource_id for s in signals if s.rule in CRASH_RULES or s.down}
+                targets |= {r for r in behind if r in deployed_now}
                 deployed: dict[uuid.UUID, str] = {}
             else:
                 # Degraded: only the services the triggering deploy changed, and only for a
@@ -636,9 +650,13 @@ async def _change_fixes(
                     else []
                 )
                 deployed = {m.resource_id: m.ref for m in markers if m.resource_id}
-                signaled = {s.resource_id for s in signals}
+                signaled = {s.resource_id for s in signals} | set(behind)
                 targets = {r for r in deployed if r in signaled or r in graph.affected}
-            order_by = graph.affected if down else sorted(deployed, key=str)
+            order_by = (
+                list(dict.fromkeys([*graph.affected, *behind]))
+                if down
+                else sorted(deployed, key=str)
+            )
             for rid in order_by:
                 found = graph.resources.get(rid)
                 if found is None or found.type not in ROLLBACK_TYPES or rid not in targets:

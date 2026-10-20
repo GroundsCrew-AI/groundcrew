@@ -5,13 +5,16 @@ else). A workspace always keeps at least one owner. Members are added by email a
 GitHub login: an existing user (with that confirmed address, or that GitHub account) joins at
 once; anyone else gets an invite that applies when they sign up or sign in. Email invites are
 also sent by email.
+
+Notifications (app.notifications) are part of the settings; the Slack webhook is write-only:
+saved encrypted, and only `slack_saved` comes back.
 """
 
 import logging
 import re
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -27,9 +30,18 @@ from app.accounts import (
 )
 from app.db.models import User, Workspace, WorkspaceInvite, WorkspaceMember, WorkspaceRole
 from app.mail import Mailer, MailError, get_mailer, invite_mail
+from app.notifications import send_test
 from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.schemas import WorkspaceOut
-from app.workspace_settings import WorkspaceConfig, get_config, set_config
+from app.security.crypto import SecretsKeyError
+from app.workspace_settings import (
+    SLACK_WEBHOOK,
+    WorkspaceConfig,
+    get_config,
+    set_config,
+    set_slack_webhook,
+    slack_saved,
+)
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 log = logging.getLogger(__name__)
@@ -49,6 +61,8 @@ class WorkspaceDetail(BaseModel):
     name: str
     role: WorkspaceRole
     settings: WorkspaceConfig
+    # A Slack webhook is saved for notifications. The URL itself is never returned.
+    slack_saved: bool = False
     created_at: datetime
 
 
@@ -56,7 +70,23 @@ class WorkspaceUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: Name | None = None
     # Replaces the settings as a whole; send the current values for fields you keep.
+    # `notifications` left out keeps the saved ones.
     settings: WorkspaceConfig | None = None
+    # A Slack incoming webhook (https://hooks.slack.com/services/...) saves it, encrypted;
+    # null removes it; left out keeps it.
+    slack_webhook_url: str | None = Field(default=None, max_length=500)
+
+
+class ChannelTestOut(BaseModel):
+    channel: Literal["slack", "email"]
+    ok: bool
+    # What happened: "Sent to 2 people.", or the error.
+    detail: str
+
+
+class NotificationTestOut(BaseModel):
+    # One per channel that is set up; empty when none is.
+    results: list[ChannelTestOut]
 
 
 class MemberOut(BaseModel):
@@ -102,6 +132,17 @@ class MemberAdd(BaseModel):
 class MemberUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: WorkspaceRole
+
+
+def _detail(workspace: Workspace, role: WorkspaceRole) -> WorkspaceDetail:
+    return WorkspaceDetail(
+        id=workspace.id,
+        name=workspace.name,
+        role=role,
+        settings=get_config(workspace),
+        slack_saved=slack_saved(workspace),
+        created_at=workspace.created_at,
+    )
 
 
 def _not_found(what: str = "Workspace") -> HTTPException:
@@ -208,32 +249,55 @@ async def get_workspace(
         workspace, role = await member_workspace(session, user, workspace_id)
     except NotFoundError:
         raise _not_found() from None
-    return WorkspaceDetail(
-        id=workspace.id,
-        name=workspace.name,
-        role=role,
-        settings=get_config(workspace),
-        created_at=workspace.created_at,
-    )
+    return _detail(workspace, role)
 
 
 @router.patch("/{workspace_id}")
 async def update_workspace(
     workspace_id: uuid.UUID, body: WorkspaceUpdate, user: CurrentUser, session: SessionDep
 ) -> WorkspaceDetail:
-    """Rename the workspace or change its settings (owners)."""
+    """Rename the workspace, change its settings, or save or remove its Slack webhook
+    (owners)."""
     workspace = await _owner(session, user, workspace_id)
     if body.name is not None:
         workspace.name = body.name
     if body.settings is not None:
-        set_config(workspace, body.settings)
+        config = body.settings
+        if "notifications" not in config.model_fields_set:
+            # Clients that predate notifications send the other settings only.
+            config = config.model_copy(
+                update={"notifications": get_config(workspace).notifications}
+            )
+        set_config(workspace, config)
+    if "slack_webhook_url" in body.model_fields_set:
+        url = (body.slack_webhook_url or "").strip()
+        if url and not SLACK_WEBHOOK.match(url):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "That is not a Slack incoming webhook (https://hooks.slack.com/services/...).",
+            )
+        try:
+            set_slack_webhook(workspace, url or None)
+        except SecretsKeyError as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from None
     await session.commit()
-    return WorkspaceDetail(
-        id=workspace.id,
-        name=workspace.name,
-        role=WorkspaceRole.owner,
-        settings=get_config(workspace),
-        created_at=workspace.created_at,
+    return _detail(workspace, WorkspaceRole.owner)
+
+
+@router.post("/{workspace_id}/notifications/test")
+async def test_notifications(
+    workspace_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    mailer: Annotated[Mailer, Depends(get_mailer)],
+) -> NotificationTestOut:
+    """Send a test message to the Slack webhook and the email audience now (owners). One
+    result per channel that is set up."""
+    workspace = await _owner(session, user, workspace_id)
+    results = await send_test(session, settings, workspace, mailer)
+    return NotificationTestOut(
+        results=[ChannelTestOut(channel=r.channel, ok=r.ok, detail=r.detail) for r in results]
     )
 
 

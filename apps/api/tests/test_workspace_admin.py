@@ -107,6 +107,13 @@ async def test_create_workspace_and_settings(client: httpx.AsyncClient, owner: M
         "emergency_approvers": "owners",
         "incident_watch": True,
         "daily_usd_cap": None,
+        "notifications": {
+            "email": "owners",
+            "incident_opened": True,
+            "approval_needed": True,
+            "incident_resolved": True,
+            "incident_failed": True,
+        },
     }
     r = await client.patch(
         f"/workspaces/{wid}",

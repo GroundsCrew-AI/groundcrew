@@ -551,6 +551,24 @@ Discovered, never watched or fixed before. Now:
   app/policy/actions.py, infra/aws-connect.yaml (+ templates copy); web lib/incidents.ts,
   components/connections/aws-operate-dialog.tsx.
 
+## Load balancers, Aurora, slow requests (2026-10-20)
+
+- ALB: discovered with target groups and targets; `rule_load_balancers` adds balancer -> service /
+  instance / function `calls` edges, so an ALB incident groups with the services behind it and
+  its evidence includes them. Rules `alb_5xx`, `alb_unhealthy_targets`, `alb_latency`
+  (AWS/ApplicationELB per-minute metrics); evidence: per-minute 5xx and p95 plus live target
+  health with reasons; verify re-runs the rules. Medic rolls back the services behind a failing
+  balancer that were deployed in the window (`Graph.behind`, `ALB_RULES`).
+- Aurora: `rds:cluster` discovered (DescribeDBClusters), watched with the rds rule on the
+  DBClusterIdentifier dimension, read as evidence, verified; edges like DB instances.
+- Slow requests: `request_latency` reads pino-http, lograge, nginx JSON, morgan, gin, and nginx /
+  Apache access lines.
+- Tests: tests/test_alb_aurora.py (15); template snapshot regenerated (only the three new actions).
+- Files (Ahmed's code marked *): app/incidents/{rules,watcher,store}.py*,
+  app/telemetry/{aws_compute,collect,cloudwatch_logs}.py*, app/agents/medic/{agent,events,fixes,
+  verify}.py*, app/discovery/aws.py, app/graph/edges.py, app/connectors/aws.py,
+  infra/aws-connect.yaml (+ copy), tests/aws_fixture.py; web lib/incidents.ts.
+
 ## How to resume
 
 ```bash
@@ -743,3 +761,23 @@ ConfigMap or Secret change (no new revision) shows up as a cause.
   infra/k8s-readonly-rbac.yaml, infra/k8s-operate-rbac.yaml; web
   components/connections/k8s-operate-dialog.tsx, lib/api/{openapi.json,schema.d.ts};
   docs/api-changes.md, docs/phase5-interfaces.md.
+## Incident and approval notifications (2026-10-19)
+
+Nobody was told when Medic opened an incident or waited for an approval. Now each workspace has
+Slack (an incoming webhook, stored encrypted, write-only) and email (members, owners, or nobody)
+for four events: incident opened, approval needed, resolved, failed (`app/notifications.py`).
+The event's transaction enqueues `notify` jobs (one per channel and recipient, deduped by an
+event key); the worker sends them with retries, so delivery never blocks Medic or the watcher.
+Messages link to the incident page and never carry approve links. Settings, Notifications in the
+web app; `POST /workspaces/{id}/notifications/test`. Setup: docs/self-hosting.md, Notifications.
+Deploy-plan approvals are not notified (two creation sites in app/pipeline/runner.py, both
+outside incidents).
+- Tests: tests/test_notifications.py (10: enqueue on open/approval/resolved/failed, none for
+  deduped signals or test incidents, toggles and audience, Slack Block Kit payload and email
+  text, encrypted write-only webhook, owner-only, test endpoint, retry on failure, enqueue never
+  raises, dedupe, log redaction); web notifications-section.test.tsx (5).
+- Teammate files touched (Ahmed's, with the user's OK), each a single enqueue call:
+  - app/incidents/store.py: `open_incident` enqueues `incident_opened` for a new incident (not
+    the deduped path); `set_status` enqueues `incident_resolved` / `incident_failed`.
+  - app/agents/medic/agent.py: `_request_approvals` collects the new approval ids and enqueues
+    `approval_needed`.

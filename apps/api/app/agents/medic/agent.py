@@ -27,7 +27,7 @@ from typing import Any, Final
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import queue
+from app import notifications, queue
 from app.actions.base import EmergencyActionError, EmergencyActions
 from app.agents.medic import diagnose as dx
 from app.agents.medic import evidence as ev
@@ -767,6 +767,7 @@ class MedicRunner:
     async def _request_approvals(
         self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
     ) -> None:
+        requested: list[uuid.UUID] = []
         for rec in state.fixes:
             tool = rec.fix.action or OPEN_FIX_PR
             plan_hash = (
@@ -791,6 +792,7 @@ class MedicRunner:
             )
             session.add(approval)
             await session.flush()
+            requested.append(approval.id)
             rec.approval_id = approval.id
             rec.fix = rec.fix.model_copy(update={"approval_id": approval.id})
             rec.status = "waiting_approval"
@@ -807,6 +809,11 @@ class MedicRunner:
         _save(incident, state)
         await self._status(session, incident, run, "waiting_approval")
         run.status, run.stop_reason = RunStatus.waiting_approval, StopReason.waiting_approval
+        # Slack and email link to the incident page, never to approve: approving stays a
+        # signed-in action in the app (app.notifications).
+        await notifications.enqueue_event(
+            session, incident, "approval_needed", approval_ids=requested
+        )
         await session.commit()
 
     # ------------------------------------------------------------------- resume
@@ -1129,9 +1136,14 @@ class MedicRunner:
         """The recovery checks, now. None when no affected resource can be read."""
         services, databases, logs = self._verify_targets(graph, state)
         functions, instances = self._compute_targets(graph, state)
+        balancers = [
+            r
+            for r in graph.resources.values()
+            if r.type == "elasticloadbalancing:loadbalancer/app" and r.id in set(graph.affected)
+        ]
         deployments = self._k8s_targets(graph, state)
         readers: dict[str, AwsReader] = {}
-        for res in [*services, *databases, *functions, *instances]:
+        for res in [*services, *databases, *functions, *instances, *balancers]:
             conn = graph.connections.get(res.connection_id) if res.connection_id else None
             if conn is not None and str(conn.id) not in readers:
                 try:
@@ -1183,6 +1195,7 @@ class MedicRunner:
                 waiting=waiting,
                 functions=functions,
                 instances=instances,
+                balancers=balancers,
             )
             if readers
             else None
@@ -1339,7 +1352,7 @@ class MedicRunner:
         databases = [
             r
             for r in graph.resources.values()
-            if r.type == "rds:db" and (r.id in ids or r.id in reads)
+            if r.type in ("rds:db", "rds:cluster") and (r.id in ids or r.id in reads)
         ]
         logs: dict[str, list[str]] = {}
         for e in graph.edges:

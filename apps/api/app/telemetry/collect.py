@@ -254,6 +254,31 @@ def plan_readers(
                     until=until,
                 ),
             )
+        elif r.type == "elasticloadbalancing:loadbalancer/app":
+            key = f"alb:{r.name}"
+            job = aws_job(
+                r,
+                partial(
+                    aws_compute.read_balancer,
+                    region=region,
+                    name=r.name,
+                    config=dict(r.config),
+                    since=since,
+                    until=until,
+                ),
+            )
+        elif r.type == "rds:cluster":
+            key = f"rds:{r.name}"
+            job = aws_job(
+                r,
+                partial(
+                    aws_compute.read_cluster,
+                    region=region,
+                    cluster=r.name,
+                    since=since,
+                    until=until,
+                ),
+            )
         elif r.type == "ec2:instance":
             key = f"ec2:{r.name}"
             job = aws_job(

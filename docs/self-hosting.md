@@ -117,6 +117,28 @@ Email needs SMTP: set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`, `ss
 SendGrid, Mailgun, your own relay). In dev without `SMTP_HOST`, the API prints each email with its
 link to stderr. To run with provider sign-in only, set `PASSWORD_AUTH_ENABLED=false`.
 
+## Notifications
+
+Each workspace tells its team when an incident opens (not when a signal joins an open incident,
+never for test incidents), when Medic waits for an approval, and when an incident resolves or
+fails. An owner sets it up in Settings, Notifications; members see it read-only.
+
+- **Slack**: in Slack, add the Incoming Webhooks app (or create an app with incoming webhooks),
+  pick the channel, and paste the `https://hooks.slack.com/services/...` URL. It is stored
+  encrypted with `SECRETS_KEY`, never shown again (the page says "Saved"), and masked in logs.
+- **Email**: to every member, owners only (the default), or nobody. Only confirmed addresses get
+  mail, through the same SMTP settings as above.
+- **Events**: each of the four can be turned off. **Send test** posts a sample to every channel
+  that is set up and shows what each one answered.
+
+Messages carry the incident title, severity, affected resources, a one-line summary (the root
+cause once Medic knows it), and a link to the incident page; approval messages add each fix and
+its plan (before and after). They never carry approve or reject links: mail security scanners
+and link previews open every link they see, so approving stays a signed-in action in the app,
+on the incident's approval card. Sending happens in worker jobs (`notify`, up to 5 attempts with
+backoff), so a slow or broken Slack or SMTP never holds up Medic or the incident watcher.
+Approvals of deploy plans are not notified yet.
+
 ## Required in production
 
 With `APP_ENV=staging` or `production`, the API and worker refuse to start until these are set:

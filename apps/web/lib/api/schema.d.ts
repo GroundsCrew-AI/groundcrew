@@ -973,7 +973,8 @@ export interface paths {
         head?: never;
         /**
          * Update Workspace
-         * @description Rename the workspace or change its settings (owners).
+         * @description Rename the workspace, change its settings, or save or remove its Slack webhook
+         *     (owners).
          */
         patch: operations["update_workspace_workspaces__workspace_id__patch"];
         trace?: never;
@@ -1101,6 +1102,27 @@ export interface paths {
          * @description Change a member's role (owners). The last owner cannot be made a member.
          */
         patch: operations["update_member_workspaces__workspace_id__members__user_id__patch"];
+        trace?: never;
+    };
+    "/workspaces/{workspace_id}/notifications/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Notifications
+         * @description Send a test message to the Slack webhook and the email audience now (owners). One
+         *     result per channel that is set up.
+         */
+        post: operations["test_notifications_workspaces__workspace_id__notifications_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/workspaces/{workspace_id}/runs": {
@@ -1531,6 +1553,18 @@ export interface components {
              * @default null
              */
             url: string | null;
+        };
+        /** ChannelTestOut */
+        ChannelTestOut: {
+            /**
+             * Channel
+             * @enum {string}
+             */
+            channel: "slack" | "email";
+            /** Detail */
+            detail: string;
+            /** Ok */
+            ok: boolean;
         };
         /** Claim */
         Claim: {
@@ -2501,7 +2535,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
@@ -2625,7 +2659,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /**
              * Incident Id
              * Format: uuid
@@ -2720,7 +2754,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** First Signal At */
@@ -3110,6 +3144,43 @@ export interface components {
             provider: string;
             /** Type */
             type: string;
+        };
+        /**
+         * NotificationConfig
+         * @description Who is told about incidents and approvals, and which events (app.notifications).
+         */
+        NotificationConfig: {
+            /**
+             * Approval Needed
+             * @default true
+             */
+            approval_needed: boolean;
+            /**
+             * Email
+             * @default owners
+             * @enum {string}
+             */
+            email: "members" | "owners" | "none";
+            /**
+             * Incident Failed
+             * @default true
+             */
+            incident_failed: boolean;
+            /**
+             * Incident Opened
+             * @default true
+             */
+            incident_opened: boolean;
+            /**
+             * Incident Resolved
+             * @default true
+             */
+            incident_resolved: boolean;
+        };
+        /** NotificationTestOut */
+        NotificationTestOut: {
+            /** Results */
+            results: components["schemas"]["ChannelTestOut"][];
         };
         /**
          * OAuthProfile
@@ -3818,7 +3889,7 @@ export interface components {
              * Rule
              * @enum {string}
              */
-            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
         };
         /** StageFinished */
         StageFinished: {
@@ -4135,6 +4206,7 @@ export interface components {
              * @default true
              */
             incident_watch: boolean;
+            notifications?: components["schemas"]["NotificationConfig"];
         };
         /** WorkspaceCreate */
         WorkspaceCreate: {
@@ -4157,6 +4229,11 @@ export interface components {
             name: string;
             role: components["schemas"]["WorkspaceRole"];
             settings: components["schemas"]["WorkspaceConfig"];
+            /**
+             * Slack Saved
+             * @default false
+             */
+            slack_saved: boolean;
         };
         /** WorkspaceOut */
         WorkspaceOut: {
@@ -4210,6 +4287,8 @@ export interface components {
             /** Name */
             name?: string | null;
             settings?: components["schemas"]["WorkspaceConfig"] | null;
+            /** Slack Webhook Url */
+            slack_webhook_url?: string | null;
         };
     };
     responses: never;
@@ -6293,6 +6372,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MembersOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_notifications_workspaces__workspace_id__notifications_test_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTestOut"];
                 };
             };
             /** @description Validation Error */

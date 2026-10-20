@@ -493,6 +493,10 @@ FIXTURE: dict[str, Any] = {
     "iam:ListAttachedRolePolicies": {"AttachedPolicies": []},
 }
 
+# The demo has no Aurora cluster and no load balancer (its services run without one).
+FIXTURE["rds:DescribeDBClusters"] = {"DBClusters": []}
+FIXTURE["elbv2:DescribeLoadBalancers"] = {"LoadBalancers": []}
+
 # GetRole: the listed role (discovery reads its tags there; ListRoles leaves them out).
 FIXTURE["iam:GetRole"] = lambda p: {
     "Role": next(r for r in FIXTURE["iam:ListRoles"]["Roles"] if r["RoleName"] == p["RoleName"])
