@@ -907,6 +907,33 @@
         "title": "ChangeMarker",
         "type": "object"
       },
+      "ChannelTestOut": {
+        "properties": {
+          "channel": {
+            "enum": [
+              "slack",
+              "email"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel",
+          "ok",
+          "detail"
+        ],
+        "title": "ChannelTestOut",
+        "type": "object"
+      },
       "Claim": {
         "properties": {
           "evidence_ids": {
@@ -5273,6 +5300,59 @@
         "title": "Neighbor",
         "type": "object"
       },
+      "NotificationConfig": {
+        "description": "Who is told about incidents and approvals, and which events (app.notifications).",
+        "properties": {
+          "approval_needed": {
+            "default": true,
+            "title": "Approval Needed",
+            "type": "boolean"
+          },
+          "email": {
+            "default": "owners",
+            "enum": [
+              "members",
+              "owners",
+              "none"
+            ],
+            "title": "Email",
+            "type": "string"
+          },
+          "incident_failed": {
+            "default": true,
+            "title": "Incident Failed",
+            "type": "boolean"
+          },
+          "incident_opened": {
+            "default": true,
+            "title": "Incident Opened",
+            "type": "boolean"
+          },
+          "incident_resolved": {
+            "default": true,
+            "title": "Incident Resolved",
+            "type": "boolean"
+          }
+        },
+        "title": "NotificationConfig",
+        "type": "object"
+      },
+      "NotificationTestOut": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelTestOut"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "NotificationTestOut",
+        "type": "object"
+      },
       "OAuthProfile": {
         "description": "What the web server learned from the provider at sign-in.",
         "properties": {
@@ -8195,6 +8275,9 @@
             "default": true,
             "title": "Incident Watch",
             "type": "boolean"
+          },
+          "notifications": {
+            "$ref": "#/components/schemas/NotificationConfig"
           }
         },
         "title": "WorkspaceConfig",
@@ -8237,6 +8320,11 @@
           },
           "settings": {
             "$ref": "#/components/schemas/WorkspaceConfig"
+          },
+          "slack_saved": {
+            "default": false,
+            "title": "Slack Saved",
+            "type": "boolean"
           }
         },
         "required": [
@@ -8385,6 +8473,18 @@
                 "type": "null"
               }
             ]
+          },
+          "slack_webhook_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slack Webhook Url"
           }
         },
         "title": "WorkspaceUpdate",
@@ -11588,7 +11688,7 @@
         ]
       },
       "patch": {
-        "description": "Rename the workspace or change its settings (owners).",
+        "description": "Rename the workspace, change its settings, or save or remove its Slack webhook\n(owners).",
         "operationId": "update_workspace_workspaces__workspace_id__patch",
         "parameters": [
           {
@@ -12273,6 +12373,66 @@
           }
         },
         "summary": "Update Member",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/notifications/test": {
+      "post": {
+        "description": "Send a test message to the Slack webhook and the email audience now (owners). One\nresult per channel that is set up.",
+        "operationId": "test_notifications_workspaces__workspace_id__notifications_test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationTestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Notifications",
         "tags": [
           "workspaces"
         ]

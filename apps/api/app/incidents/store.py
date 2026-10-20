@@ -21,7 +21,7 @@ from typing import Final, get_args
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import queue
+from app import notifications, queue
 from app.agents.medic.events import (
     DetectedBy,
     DetectorRule,
@@ -397,6 +397,8 @@ async def open_incident(
         {"incident_id": str(incident.id), "run_id": str(run.id)},
         max_attempts=1,
     )
+    # Slack and email, sent by their own jobs (never for a deduped signal or a test incident).
+    await notifications.enqueue_event(session, incident, "incident_opened")
     await session.commit()
     return Opened(incident, run, deduped=False)
 
@@ -433,6 +435,11 @@ async def set_status(
             reason=reason,
         ),
     )
+    # Every way an incident ends comes through here (Medic, a person stopping the run).
+    if status == "resolved":
+        await notifications.enqueue_event(session, incident, "incident_resolved")
+    elif status == "failed":
+        await notifications.enqueue_event(session, incident, "incident_failed")
 
 
 async def count_open(session: AsyncSession, workspace_id: uuid.UUID) -> int:

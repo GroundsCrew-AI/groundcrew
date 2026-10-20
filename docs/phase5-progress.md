@@ -719,3 +719,24 @@ How to set up a cluster: docs/kind.md, Real clusters. API: docs/api-changes.md.
   web lib/discovery.ts, lib/api/{openapi.json,schema.d.ts},
   components/connections/{connection-row,k8s-deploy-settings-dialog}.tsx; docs/kind.md,
   docs/api-changes.md.
+
+## Incident and approval notifications (2026-10-19)
+
+Nobody was told when Medic opened an incident or waited for an approval. Now each workspace has
+Slack (an incoming webhook, stored encrypted, write-only) and email (members, owners, or nobody)
+for four events: incident opened, approval needed, resolved, failed (`app/notifications.py`).
+The event's transaction enqueues `notify` jobs (one per channel and recipient, deduped by an
+event key); the worker sends them with retries, so delivery never blocks Medic or the watcher.
+Messages link to the incident page and never carry approve links. Settings, Notifications in the
+web app; `POST /workspaces/{id}/notifications/test`. Setup: docs/self-hosting.md, Notifications.
+Deploy-plan approvals are not notified (two creation sites in app/pipeline/runner.py, both
+outside incidents).
+- Tests: tests/test_notifications.py (10: enqueue on open/approval/resolved/failed, none for
+  deduped signals or test incidents, toggles and audience, Slack Block Kit payload and email
+  text, encrypted write-only webhook, owner-only, test endpoint, retry on failure, enqueue never
+  raises, dedupe, log redaction); web notifications-section.test.tsx (5).
+- Teammate files touched (Ahmed's, with the user's OK), each a single enqueue call:
+  - app/incidents/store.py: `open_incident` enqueues `incident_opened` for a new incident (not
+    the deduped path); `set_status` enqueues `incident_resolved` / `incident_failed`.
+  - app/agents/medic/agent.py: `_request_approvals` collects the new approval ids and enqueues
+    `approval_needed`.

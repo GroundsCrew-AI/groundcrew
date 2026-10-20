@@ -27,7 +27,7 @@ from typing import Any, Final
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import queue
+from app import notifications, queue
 from app.actions.base import EmergencyActionError, EmergencyActions
 from app.agents.medic import diagnose as dx
 from app.agents.medic import evidence as ev
@@ -767,6 +767,7 @@ class MedicRunner:
     async def _request_approvals(
         self, session: AsyncSession, incident: Incident, run: Run, state: MedicState
     ) -> None:
+        requested: list[uuid.UUID] = []
         for rec in state.fixes:
             tool = rec.fix.action or OPEN_FIX_PR
             plan_hash = (
@@ -791,6 +792,7 @@ class MedicRunner:
             )
             session.add(approval)
             await session.flush()
+            requested.append(approval.id)
             rec.approval_id = approval.id
             rec.fix = rec.fix.model_copy(update={"approval_id": approval.id})
             rec.status = "waiting_approval"
@@ -807,6 +809,11 @@ class MedicRunner:
         _save(incident, state)
         await self._status(session, incident, run, "waiting_approval")
         run.status, run.stop_reason = RunStatus.waiting_approval, StopReason.waiting_approval
+        # Slack and email link to the incident page, never to approve: approving stays a
+        # signed-in action in the app (app.notifications).
+        await notifications.enqueue_event(
+            session, incident, "approval_needed", approval_ids=requested
+        )
         await session.commit()
 
     # ------------------------------------------------------------------- resume
