@@ -166,6 +166,8 @@ async def test_owner_sets_deploy_settings_and_the_token_is_encrypted_never_retur
         "tls": True,
         "tls_cluster_issuer": "letsencrypt",
         "public_url_base": None,
+        "registry_auth": "token",
+        "aws_connection_id": None,
     }
     async with session_factory() as session:
         stored = await session.scalar(select(Connection).where(Connection.id == conn_id))

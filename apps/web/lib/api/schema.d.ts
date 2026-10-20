@@ -530,6 +530,8 @@ export interface paths {
          * @description Where this cluster's deploys go: the image registry (push credentials optional, the
          *     token stored encrypted and never returned), an optional imagePullSecret, the Ingress class,
          *     app domain, and TLS. A cluster without them deploys like the local kind cluster.
+         *     registry_auth "ecr": an AWS connection of the same workspace with the deploy capability
+         *     logs in to the ECR registry at push time (no stored token).
          */
         put: operations["k8s_set_deploy_settings_connections__connection_id__k8s_deploy_settings_put"];
         post?: never;
@@ -2902,6 +2904,8 @@ export interface components {
         K8sDeploySettingsIn: {
             /** App Domain */
             app_domain?: string | null;
+            /** Aws Connection Id */
+            aws_connection_id?: string | null;
             /**
              * Ingress Class
              * @default nginx
@@ -2916,6 +2920,12 @@ export interface components {
             pull_secret: boolean;
             /** Registry */
             registry: string;
+            /**
+             * Registry Auth
+             * @default token
+             * @enum {string}
+             */
+            registry_auth: "token" | "ecr";
             /**
              * Tls
              * @default false
@@ -2932,6 +2942,8 @@ export interface components {
         K8sDeploySettingsOut: {
             /** App Domain */
             app_domain: string | null;
+            /** Aws Connection Id */
+            aws_connection_id?: string | null;
             /** Ingress Class */
             ingress_class: string;
             /** Public Url Base */
@@ -2940,6 +2952,12 @@ export interface components {
             pull_secret: boolean;
             /** Registry */
             registry: string;
+            /**
+             * Registry Auth
+             * @default token
+             * @enum {string}
+             */
+            registry_auth: "token" | "ecr";
             /** Tls */
             tls: boolean;
             /** Tls Cluster Issuer */

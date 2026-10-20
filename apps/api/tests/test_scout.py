@@ -20,7 +20,17 @@ from tests.fakes import FakeLLM, reply
 pytestmark = pytest.mark.anyio
 
 FIXTURES = Path(__file__).resolve().parents[3] / "demo" / "fixtures"
-FIXTURE_NAMES = ("next-app", "fastapi-pg", "express-redis", "py-build-trap")
+FIXTURE_NAMES = (
+    "next-app",
+    "fastapi-pg",
+    "express-redis",
+    "py-build-trap",
+    "java-spring-maven",
+    "ruby-rails",
+    "rust-axum",
+    "php-laravel",
+    "dotnet-aspnet",
+)
 
 
 def _settings() -> Settings:

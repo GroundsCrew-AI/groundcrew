@@ -21,7 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts import NotFoundError, member_workspace, require_owner
 from app.config import Settings, get_settings
 from app.connectors import kubernetes as kube
-from app.connectors.aws import AwsError, get_sessions, new_external_id, parse_role_arn
+from app.connectors.aws import (
+    AwsError,
+    connection_regions,
+    get_sessions,
+    new_external_id,
+    parse_role_arn,
+)
 from app.connectors.deploy_infra import deploy_role_arn, operate_role_arn
 from app.connectors.github import GitHubError, check_repo_name, get_github_app
 from app.connectors.kubernetes import kubeconfig_summary
@@ -54,7 +60,12 @@ from app.routes.discovery_schemas import (
 from app.routes.schemas import RunCreated
 from app.security.crypto import SecretsKeyError, encrypt
 from app.targets.k8s_deploy import CONFIG_KEY as DEPLOY_SETTINGS_KEY
-from app.targets.k8s_deploy import DeploySettingsError, build_settings, deploy_settings
+from app.targets.k8s_deploy import (
+    DeploySettingsError,
+    build_settings,
+    check_ecr_connection,
+    deploy_settings,
+)
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 
@@ -559,12 +570,30 @@ async def k8s_set_deploy_settings(
 ) -> ConnectionOut:
     """Where this cluster's deploys go: the image registry (push credentials optional, the
     token stored encrypted and never returned), an optional imagePullSecret, the Ingress class,
-    app domain, and TLS. A cluster without them deploys like the local kind cluster."""
+    app domain, and TLS. A cluster without them deploys like the local kind cluster.
+    registry_auth "ecr": an AWS connection of the same workspace with the deploy capability
+    logs in to the ECR registry at push time (no stored token)."""
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     if conn.kind != "k8s" or conn.status != "connected":
         raise _unprocessable("Only a connected Kubernetes cluster has deploy settings.")
     try:
+        aws_connection_id: str | None = None
+        if body.registry_auth == "ecr":
+            aws = (
+                await session.get(Connection, body.aws_connection_id)
+                if body.aws_connection_id
+                else None
+            )
+            # The deploy role's ECR rights cover the region its stack was created in.
+            regions = (
+                [str(aws.config["region"])]
+                if aws is not None and aws.config.get("region")
+                else connection_regions(aws.config if aws else None, settings)
+            )
+            aws_connection_id = check_ecr_connection(body.registry, aws, conn.workspace_id, regions)
         new = build_settings(
+            registry_auth=body.registry_auth,
+            aws_connection_id=aws_connection_id,
             registry=body.registry,
             username=body.username,
             token=body.token,

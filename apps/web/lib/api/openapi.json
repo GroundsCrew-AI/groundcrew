@@ -4619,6 +4619,18 @@
             ],
             "title": "App Domain"
           },
+          "aws_connection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Connection Id"
+          },
           "ingress_class": {
             "default": "nginx",
             "maxLength": 253,
@@ -4646,6 +4658,15 @@
             "maxLength": 255,
             "minLength": 3,
             "title": "Registry",
+            "type": "string"
+          },
+          "registry_auth": {
+            "default": "token",
+            "enum": [
+              "token",
+              "ecr"
+            ],
+            "title": "Registry Auth",
             "type": "string"
           },
           "tls": {
@@ -4709,6 +4730,18 @@
             ],
             "title": "App Domain"
           },
+          "aws_connection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Connection Id"
+          },
           "ingress_class": {
             "title": "Ingress Class",
             "type": "string"
@@ -4730,6 +4763,15 @@
           },
           "registry": {
             "title": "Registry",
+            "type": "string"
+          },
+          "registry_auth": {
+            "default": "token",
+            "enum": [
+              "token",
+              "ecr"
+            ],
+            "title": "Registry Auth",
             "type": "string"
           },
           "tls": {
@@ -10199,7 +10241,7 @@
         ]
       },
       "put": {
-        "description": "Where this cluster's deploys go: the image registry (push credentials optional, the\ntoken stored encrypted and never returned), an optional imagePullSecret, the Ingress class,\napp domain, and TLS. A cluster without them deploys like the local kind cluster.",
+        "description": "Where this cluster's deploys go: the image registry (push credentials optional, the\ntoken stored encrypted and never returned), an optional imagePullSecret, the Ingress class,\napp domain, and TLS. A cluster without them deploys like the local kind cluster.\nregistry_auth \"ecr\": an AWS connection of the same workspace with the deploy capability\nlogs in to the ECR registry at push time (no stored token).",
         "operationId": "k8s_set_deploy_settings_connections__connection_id__k8s_deploy_settings_put",
         "parameters": [
           {

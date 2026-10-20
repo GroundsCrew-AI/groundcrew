@@ -1,0 +1,14 @@
+{
+  "language": "java",
+  "framework": "spring",
+  "runtime_version": "21",
+  "package_manager": "maven",
+  "install_cmd": "mvn -B dependency:go-offline",
+  "build_cmd": "mvn -B package -DskipTests",
+  "start_cmd": "java -jar target/orders-0.0.1-SNAPSHOT.jar",
+  "port": 8080,
+  "database": "postgres",
+  "health_path": "/actuator/health",
+  "has_dockerfile": false,
+  "env_vars": []
+}

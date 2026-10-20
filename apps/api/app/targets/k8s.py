@@ -27,14 +27,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+import boto3
 import httpx
 import yaml
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import Settings
+from app.connectors.aws import AwsError
 from app.connectors.credentials import CredentialsProvider
-from app.connectors.deploy_infra import k8s_labels, namespace, slug
+from app.connectors.deploy_infra import aws_tags, ecr_repository, k8s_labels, namespace, slug
 from app.db.session import SessionFactory, get_session_factory
-from app.discovery.types import ConnectorResult
+from app.discovery.types import ConnectorError, ConnectorResult
 from app.pipeline.events import PreflightCheck, TargetKind, VerifyCheck
 from app.policy.actions import (
     TARGET_APPLY,
@@ -42,8 +45,8 @@ from app.policy.actions import (
     ApprovedAction,
     consume_approved_action,
 )
-from app.sandbox.base import PushTarget, Sandbox
-from app.sandbox.registry import kind_target
+from app.sandbox.base import PushTarget, RegistryLogin, Sandbox
+from app.sandbox.registry import ecr_login, kind_target
 from app.security.redact import redact
 from app.targets.base import (
     MASK,
@@ -331,7 +334,101 @@ class K8sTarget:
     def _image(self, app: str, tag: str) -> str:
         if self.deploy is None:
             return kind_target(self.settings, app, tag).image
-        return self.deploy.image(app, tag)
+        return self.deploy.image(self._repository(app), tag)
+
+    def _repository(self, app: str) -> str:
+        """`<app>`, or with ECR `groundcrew-<app>`: the deploy role may create and push to
+        groundcrew-* repositories only."""
+        if self.deploy is not None and self.deploy.uses_ecr:
+            return ecr_repository(self.settings, app)
+        return app
+
+    # --- ECR through an AWS connection (deploy settings with registry_auth "ecr") ---------
+
+    def _ecr_settings(self) -> K8sDeploySettings:
+        if self.deploy is None or self.deploy.aws_connection_id is None:
+            raise TargetError("This cluster's registry is not Amazon ECR.")
+        return self.deploy
+
+    def _ecr_session(self) -> boto3.Session:
+        connection_id = uuid.UUID(str(self._ecr_settings().aws_connection_id))
+        return self.credentials.aws_deploy_session(connection_id)
+
+    async def _ecr(self, operation: str, /, **kwargs: Any) -> dict[str, Any]:
+        """One ECR call through the AWS connection's deploy session, in the registry's region.
+        ClientError is raised as is; anything else that stops the call is a TargetError."""
+        region = self._ecr_settings().ecr_region
+
+        def call() -> dict[str, Any]:
+            client: Any = self._ecr_session().client("ecr", region_name=region)
+            return dict(getattr(client, operation)(**kwargs))
+
+        try:
+            return await asyncio.to_thread(call)
+        except ClientError:
+            raise
+        except (ConnectorError, AwsError) as exc:
+            raise TargetError(f"The AWS connection for ECR cannot be used: {exc}") from None
+        except BotoCoreError as exc:
+            raise TargetError(f"ecr:{operation} failed: {type(exc).__name__}") from None
+
+    @staticmethod
+    def _ecr_error(what: str, exc: ClientError) -> TargetError:
+        error = exc.response.get("Error", {})
+        code = str(error.get("Code", ""))
+        message = redact(str(error.get("Message", ""))[:300])
+        if code in ("AccessDeniedException", "AccessDenied", "UnauthorizedOperation"):
+            return TargetError(
+                f"{what} was refused ({code}). The groundcrew-deploy role may only use ECR "
+                "repositories named groundcrew-* in the region of its stack; check the "
+                "registry's region and the stack's Tier=deploy."
+            )
+        return TargetError(f"{what} failed: {code} {message}".strip())
+
+    async def _ecr_repository_exists(self, name: str) -> bool:
+        try:
+            await self._ecr("describe_repositories", repositoryNames=[name])
+            return True
+        except ClientError as exc:
+            if str(exc.response.get("Error", {}).get("Code")) == "RepositoryNotFoundException":
+                return False
+            raise self._ecr_error("ecr:DescribeRepositories", exc) from None
+
+    async def _ensure_ecr_repository(self, name: str, run_id: uuid.UUID) -> None:
+        if await self._ecr_repository_exists(name):
+            return
+        try:
+            await self._ecr("create_repository", repositoryName=name, tags=aws_tags(run_id))
+        except ClientError as exc:
+            if str(exc.response.get("Error", {}).get("Code")) != "RepositoryAlreadyExistsException":
+                raise self._ecr_error("ecr:CreateRepository", exc) from None
+
+    async def _ecr_login(self) -> RegistryLogin:
+        """A fresh login (ECR tokens last 12 hours), fetched when it is used, never stored."""
+        region = self._ecr_settings().ecr_region
+        try:
+            return await ecr_login(self._ecr_session(), region=region)
+        except ClientError as exc:
+            raise self._ecr_error("ecr:GetAuthorizationToken", exc) from None
+        except (ConnectorError, AwsError) as exc:
+            raise TargetError(f"The AWS connection for ECR cannot be used: {exc}") from None
+        except BotoCoreError as exc:
+            raise TargetError(f"ecr:GetAuthorizationToken failed: {type(exc).__name__}") from None
+
+    async def _ecr_check(self, app: str) -> PreflightCheck:
+        """Read-only: can the AWS connection reach the repository (or create it)?"""
+        name = self._repository(app)
+        try:
+            exists = await self._ecr_repository_exists(name)
+        except TargetError as exc:
+            return PreflightCheck(name="other", status="fail", detail=f"ECR: {exc}")
+        detail = (
+            f"ECR repository {name} exists"
+            if exists
+            else f"ECR repository {name} is created by apply (the deploy role may create "
+            "groundcrew-* repositories)"
+        )
+        return PreflightCheck(name="other", status="pass", detail=detail)
 
     def _push_target(self, app: str, tag: str) -> PushTarget:
         """kind: GC_KIND_REGISTRY, no login. Otherwise the connection's registry, with its
@@ -592,6 +689,11 @@ class K8sTarget:
             "Ingress": "ingresses",
         }
         login = f", login as {self.deploy.username}" if self.deploy and self.deploy.username else ""
+        if self.deploy is not None and self.deploy.uses_ecr:
+            login = (
+                ", ECR login through the AWS connection (fresh token), repository "
+                f"{self._repository(n['app'])} created if missing"
+            )
         steps = [
             ApplyStep(
                 kind="image",
@@ -628,6 +730,8 @@ class K8sTarget:
         """Read-only: the plan's own checks, then whether the names belong to Groundcrew."""
         checks = common_checks(plan)
         checks.append(self._registry_check())
+        if self.deploy is not None and self.deploy.uses_ecr:
+            checks.append(await self._ecr_check(plan.app))
         n = self._names(plan.app)
         ns = await self.api.get("namespaces", n["namespace"])
 
@@ -702,11 +806,13 @@ class K8sTarget:
                 "under Deploy settings on the Connections page (docs/kind.md, Real clusters).",
             )
         d = self.deploy
-        parts = [
-            f"Images go to {d.registry}"
-            + (f" (login as {d.username})" if d.has_credentials else " (no login)"),
-            f"ingress class {d.ingress_class}",
-        ]
+        if d.uses_ecr:
+            who = " (Amazon ECR, login through the AWS connection)"
+        elif d.has_credentials:
+            who = f" (login as {d.username})"
+        else:
+            who = " (no login)"
+        parts = [f"Images go to {d.registry}{who}", f"ingress class {d.ingress_class}"]
         if d.uses_pull_secret:
             parts.append("pulled with an imagePullSecret")
         if d.app_domain is None and not is_local_kind(self.server):
@@ -754,10 +860,19 @@ class K8sTarget:
                 "deploy again."
             )
         # 1. Push: the first thing that leaves the sandbox, only now that the plan is approved.
-        await sandbox.push(spec.source_image, self._push_target(n["app"], spec.tag))
+        fresh: RegistryLogin | None = None
+        if self.deploy is not None and self.deploy.uses_ecr:
+            # ECR: the repository, then a login fetched now (tokens last 12 hours).
+            await self._ensure_ecr_repository(self._repository(n["app"]), plan.run_id)
+            fresh = await self._ecr_login()
+            target = PushTarget(image=plan.image, login=fresh)
+        else:
+            target = self._push_target(n["app"], spec.tag)
+        await sandbox.push(spec.source_image, target)
         # Plain values are in the plan already (check_spec_matches); secrets come from the spec.
+        # With ECR the pull secret is written again with this deploy's fresh token.
         pull = (
-            self.deploy.dockerconfigjson()
+            self.deploy.dockerconfigjson(fresh)
             if self.deploy is not None and self.deploy.uses_pull_secret
             else None
         )
@@ -1014,6 +1129,24 @@ class K8sTarget:
             rollback_to_revision=to,
         )
 
+    async def _refresh_ecr_pull_secret(self, plan: TargetPlan) -> None:
+        """Before a rollback, a fresh ECR token in the pull secret: the one the last deploy
+        wrote may be older than 12 hours. Best effort: nodes may still have the image, or
+        pull it through their node role (EKS)."""
+        if self.deploy is None or not (self.deploy.uses_ecr and self.deploy.uses_pull_secret):
+            return
+        n = self._names(plan.app)
+        try:
+            login = await self._ecr_login()
+        except TargetError:
+            return
+        secret = next(
+            o
+            for o in self._manifests(plan, None, self.deploy.dockerconfigjson(login))
+            if o["metadata"]["name"] == n["pull_secret"]
+        )
+        await self._write("secrets", secret, n["namespace"])
+
     async def rollback(self, plan: TargetPlan, token: ApprovedAction) -> Deployment:
         await consume_approved_action(
             self.session_factory,
@@ -1055,6 +1188,7 @@ class K8sTarget:
             raise TargetError(
                 f"Revision {plan.rollback_to_revision} of {n['app']} is no longer in the cluster."
             )
+        await self._refresh_ecr_pull_secret(plan)
         template = match["spec"]["template"]
         labels = dict((template.get("metadata") or {}).get("labels") or {})
         labels.pop("pod-template-hash", None)

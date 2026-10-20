@@ -13,7 +13,24 @@ from app.repos.files import SKIP_DIRS, IgnoreRules, is_binary, is_secret_file
 MAX_FILES = 2_000
 MAX_SOURCE_FILES = 300
 MAX_FILE_BYTES = 200_000
-SOURCE_SUFFIXES = frozenset({".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".py", ".go"})
+SOURCE_SUFFIXES = frozenset(
+    {
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".py",
+        ".go",
+        ".java",
+        ".kt",
+        ".rb",
+        ".rs",
+        ".php",
+        ".cs",
+    }
+)
 
 
 class RepoView:

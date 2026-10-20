@@ -280,6 +280,23 @@ All additive.
   `https://<app>.<app_domain>` with TLS. Preflight has a new `other` check: it fails on a cluster
   that is not the local kind cluster and has no deploy settings.
 
+## Amazon ECR for Kubernetes deploys; more languages in Scout (2026-10-19)
+
+All additive.
+- `K8sDeploySettingsIn` adds `registry_auth: "token" | "ecr"` (default `"token"`, as before) and
+  `aws_connection_id` (uuid). With `"ecr"`: `registry` must be
+  `<account>.dkr.ecr.<region>.amazonaws.com` with no path; `aws_connection_id` must be an AWS
+  connection of the same workspace with the `deploy` capability, in that account, and the
+  region must be its stack's region; `username` and `token` must be empty; `pull_secret` is
+  allowed. 422 with the reason otherwise.
+- `K8sDeploySettingsOut` adds `registry_auth` and `aws_connection_id`.
+- Deploys with ECR: the image is `<registry>/groundcrew-<app>:<tag>`; apply creates the
+  repository when missing and logs in fresh at every push; the `<app>-registry` pull secret is
+  rewritten with a fresh token at every deploy. Preflight adds an `other` check for the
+  repository (read-only `ecr:DescribeRepositories`).
+- AppSpec (Scout, not in the HTTP API): `framework` adds `spring`, `quarkus`, `rails`,
+  `sinatra`, `rack`, `axum`, `actix`, `rocket`, `laravel`, `slim`, `aspnet`;
+  `package_manager` adds `maven`, `gradle`, `bundler`, `cargo`, `composer`, `dotnet`.
 ## Kubernetes StatefulSets, ConfigMap and Secret changes (2026-10-19)
 
 All additive.

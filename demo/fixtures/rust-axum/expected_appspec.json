@@ -1,0 +1,14 @@
+{
+  "language": "rust",
+  "framework": "axum",
+  "runtime_version": "1.80",
+  "package_manager": "cargo",
+  "install_cmd": "cargo fetch",
+  "build_cmd": "cargo build --release",
+  "start_cmd": "./target/release/ledger",
+  "port": 3000,
+  "database": "postgres",
+  "health_path": null,
+  "has_dockerfile": false,
+  "env_vars": []
+}

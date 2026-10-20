@@ -16,7 +16,21 @@ from typing import Any
 from app.agents.scout.appspec import EnvVar, Evidence, FieldName
 from app.agents.scout.repo_view import RepoView
 
-MANIFESTS = ("package.json", "requirements.txt", "pyproject.toml", "Pipfile", "go.mod")
+MANIFESTS = (
+    "package.json",
+    "requirements.txt",
+    "pyproject.toml",
+    "Pipfile",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Gemfile",
+    "Cargo.toml",
+    "composer.json",
+)
+# .NET projects and solutions are named after the app (Api.csproj, Shop.sln).
+MANIFEST_SUFFIXES = (".csproj", ".fsproj", ".sln")
 ENV_TEMPLATES = (".env.example", ".env.sample", ".env.template", ".env.dist", ".env.defaults")
 
 EXPLICIT, DERIVED, DEFAULT = 3, 2, 1
@@ -140,11 +154,38 @@ def _module(rel: str) -> str:
 # --- top level ---------------------------------------------------------------------------
 
 
+def is_manifest(name: str) -> bool:
+    return name in MANIFESTS or name.endswith(MANIFEST_SUFFIXES)
+
+
 def detect(view: RepoView) -> Detection:
     found = Detection()
     _dockerfile(view, found)
     _procfile(view, found)
-    if view.exists("package.json"):
+    # JVM, Ruby, Rust, PHP, and .NET apps often carry a package.json for front-end assets
+    # (Rails, Laravel): the server language decides, and the Node rules are skipped.
+    backend = False
+    if view.exists("pom.xml"):
+        _maven(view, found)
+        backend = True
+    elif gradle := _gradle_file(view):
+        _gradle(view, found, gradle)
+        backend = True
+    if view.exists("Gemfile"):
+        _ruby(view, found)
+        backend = True
+    if view.exists("Cargo.toml"):
+        _rust(view, found)
+        backend = True
+    if view.exists("composer.json") or _plain_php_entry(view):
+        _php(view, found)
+        backend = True
+    if project := _dotnet_project(view):
+        _dotnet(view, found, project)
+        backend = True
+    if view.exists("package.json") and backend:
+        found.notes.append("package.json is taken as front-end assets of the server app")
+    elif view.exists("package.json"):
         _node(view, found)
     if any(view.exists(m) for m in ("requirements.txt", "pyproject.toml", "Pipfile")):
         _python(view, found)
@@ -162,13 +203,13 @@ def detect(view: RepoView) -> Detection:
 
 def find_subpath(view: RepoView) -> tuple[str | None, list[str]]:
     """For a monorepo with no manifest at the root: the one app directory, or the candidates."""
-    if any(view.exists(m) for m in MANIFESTS):
+    if any(is_manifest(f) for f in view.files if "/" not in f):
         return None, []
     dirs = sorted(
         {
             str(PurePosixPath(f).parent)
             for f in view.files
-            if PurePosixPath(f).name in MANIFESTS and 1 <= len(PurePosixPath(f).parts) - 1 <= 2
+            if is_manifest(PurePosixPath(f).name) and 1 <= len(PurePosixPath(f).parts) - 1 <= 2
         }
     )
     return (dirs[0], dirs) if len(dirs) == 1 else (None, dirs)
@@ -325,7 +366,8 @@ def _database_from_deps(
     for packages, database in table:
         for package in packages:
             if package in deps:
-                line = _dep_line(view, rel, package)
+                # "sqlx:postgres" is a crate feature: the line is the crate's.
+                line = _dep_line(view, rel, package.split(":")[0])
                 found.set("database", database, DERIVED, rel, line, f"{package} dependency")
                 return
     found.set("database", "none", DEFAULT, rel, 1, "no database client in the dependencies")
@@ -512,6 +554,405 @@ def _go(view: RepoView, found: Detection) -> None:
     _database_from_deps(view, found, rel, required, _GO_DATABASES)
 
 
+# --- JVM: Maven and Gradle (Spring Boot, Quarkus) ------------------------------------------
+
+_JVM_DATABASES = (
+    (("postgresql", "r2dbc-postgresql"), "postgres"),
+    (("mysql-connector-j", "mysql-connector-java", "mariadb-java-client"), "mysql"),
+    (("spring-boot-starter-data-redis", "jedis", "lettuce-core", "quarkus-redis-client"), "redis"),
+    (("mongodb-driver-sync", "spring-boot-starter-data-mongodb"), "other"),
+)
+_JVM_PORT = 8080  # Spring Boot and Quarkus both serve on 8080
+_XML_TAG = r"<{0}>\s*([^<\s]+)\s*</{0}>"
+
+
+def _xml_values(text: str, tag: str) -> list[str]:
+    return re.findall(_XML_TAG.format(re.escape(tag)), text)
+
+
+def _pom_own(text: str) -> str:
+    """The pom without the blocks whose artifactId and version are not the project's."""
+    for block in ("parent", "dependencies", "dependencyManagement", "build", "profiles"):
+        text = re.sub(rf"<{block}>.*?</{block}>", "", text, flags=re.S)
+    return text
+
+
+def _jvm_framework(text: str) -> str | None:
+    if "org.springframework.boot" in text:
+        return "spring"
+    if "io.quarkus" in text:
+        return "quarkus"
+    return None
+
+
+def _jvm_common(
+    view: RepoView, found: Detection, rel: str, framework: str | None, deps: set[str]
+) -> None:
+    """Framework, health path, port (convention, then the app's config), and database."""
+    found.set("language", "java", DERIVED, rel, 1, f"{rel} present")
+    if framework is not None:
+        needle = "spring-boot" if framework == "spring" else "io.quarkus"
+        line = _line_of(view, rel, needle)
+        found.set("framework", framework, DERIVED, rel, line, f"{framework} build")
+        found.set("port", _JVM_PORT, DEFAULT, rel, line, f"{framework} serves on {_JVM_PORT}")
+    if framework == "spring" and "spring-boot-starter-actuator" in deps:
+        line = _dep_line(view, rel, "spring-boot-starter-actuator")
+        found.set("health_path", "/actuator/health", DERIVED, rel, line, "Spring Boot Actuator")
+    if framework == "quarkus" and "quarkus-smallrye-health" in deps:
+        line = _dep_line(view, rel, "quarkus-smallrye-health")
+        found.set("health_path", "/q/health", DERIVED, rel, line, "SmallRye Health")
+    key = {"spring": "server.port", "quarkus": "quarkus.http.port"}.get(framework or "")
+    if key is not None:
+        _jvm_config_port(view, found, key)
+    _database_from_deps(view, found, rel, deps, _JVM_DATABASES)
+
+
+def _jvm_config_port(view: RepoView, found: Detection, key: str) -> None:
+    base = "src/main/resources/application"
+    props = f"{base}.properties"
+    for number, text in enumerate(view.lines(props) or [], start=1):
+        match = re.match(rf"\s*{re.escape(key)}\s*[=:]\s*(\d{{2,5}})\s*$", text)
+        if match:
+            found.set("port", int(match.group(1)), EXPLICIT, props, number, key)
+            return
+    parent = key.rsplit(".", 1)[0].split(".")[-1]  # server, or http under quarkus
+    for rel in (f"{base}.yml", f"{base}.yaml"):
+        section = None
+        for number, text in enumerate(view.lines(rel) or [], start=1):
+            heading = re.match(r"^\s*([\w.-]+):\s*$", text)
+            if heading:
+                section = heading.group(1)
+                continue
+            match = re.match(r"^\s+port:\s*(\d{2,5})\s*$", text)
+            if match and section == parent:
+                found.set("port", int(match.group(1)), EXPLICIT, rel, number, key)
+                return
+
+
+def _java_version(view: RepoView, found: Detection, rel: str, text: str) -> None:
+    for pattern in (
+        r"<java\.version>\s*(\d+(?:\.\d+)?)",
+        r"<maven\.compiler\.release>\s*(\d+)",
+        r"<maven\.compiler\.source>\s*(\d+(?:\.\d+)?)",
+        r"JavaLanguageVersion\.of\(\s*(\d+)\s*\)",
+        r"sourceCompatibility\s*=\s*(?:JavaVersion\.VERSION_|['\"])(\d+)",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            line = view.find(rel, match.group(0)) or 1
+            found.set("runtime_version", match.group(1), EXPLICIT, rel, line, "Java version")
+            return
+
+
+def _maven(view: RepoView, found: Detection) -> None:
+    rel = "pom.xml"
+    text = view.text(rel) or ""
+    deps = set(_xml_values(text, "artifactId"))
+    framework = _jvm_framework(text)
+    _jvm_common(view, found, rel, framework, deps)
+    mvn = "./mvnw" if view.exists("mvnw") else "mvn"
+    found.set("package_manager", "maven", DERIVED, rel, 1, "pom.xml")
+    found.set("install_cmd", f"{mvn} -B dependency:go-offline", DERIVED, rel, 1, "Maven")
+    found.set("build_cmd", f"{mvn} -B package -DskipTests", DERIVED, rel, 1, "Maven package")
+    _java_version(view, found, rel, text)
+    if framework == "quarkus":
+        line = _line_of(view, rel, "io.quarkus")
+        command = "java -jar target/quarkus-app/quarkus-run.jar"
+        found.set("start_cmd", command, DERIVED, rel, line, "Quarkus fast-jar layout")
+        return
+    if framework != "spring":
+        return
+    final = _xml_values(text, "finalName")
+    own = _pom_own(text)
+    artifact, version = _xml_values(own, "artifactId"), _xml_values(own, "version")
+    if final:
+        jar, line = final[0], _line_of(view, rel, "<finalName>")
+    elif artifact and version:
+        jar, line = f"{artifact[0]}-{version[0]}", _line_of(view, rel, f">{artifact[0]}<")
+    else:
+        return
+    found.set("start_cmd", f"java -jar target/{jar}.jar", DERIVED, rel, line, "Spring Boot jar")
+
+
+def _gradle_file(view: RepoView) -> str | None:
+    return next((f for f in ("build.gradle.kts", "build.gradle") if view.exists(f)), None)
+
+
+_GRADLE_DEP = re.compile(r"""['"]([\w.-]+):([\w.-]+)(?::[^'"]*)?['"]""")
+
+
+def _gradle(view: RepoView, found: Detection, rel: str) -> None:
+    text = view.text(rel) or ""
+    deps = {m.group(2) for m in _GRADLE_DEP.finditer(text)}
+    framework = _jvm_framework(text)
+    _jvm_common(view, found, rel, framework, deps)
+    gradle = "./gradlew" if view.exists("gradlew") else "gradle"
+    found.set("package_manager", "gradle", DERIVED, rel, 1, rel)
+    found.set("build_cmd", f"{gradle} build -x test", DERIVED, rel, 1, "Gradle build")
+    _java_version(view, found, rel, text)
+    if framework == "quarkus":
+        line = _line_of(view, rel, "io.quarkus")
+        command = "java -jar build/quarkus-app/quarkus-run.jar"
+        found.set("start_cmd", command, DERIVED, rel, line, "Quarkus fast-jar layout")
+        return
+    if framework != "spring":
+        return
+    settings = next((f for f in ("settings.gradle.kts", "settings.gradle") if view.exists(f)), None)
+    if settings is None:
+        return
+    name = re.search(r"""rootProject\.name\s*=\s*['"]([\w.-]+)['"]""", view.text(settings) or "")
+    if name is None:
+        return
+    version = re.search(r"""^version\s*=\s*['"]([\w.+-]+)['"]""", text, re.MULTILINE)
+    jar = f"{name.group(1)}-{version.group(1)}" if version else name.group(1)
+    line = _line_of(view, settings, "rootProject.name")
+    found.set("start_cmd", f"java -jar build/libs/{jar}.jar", DERIVED, settings, line, "boot jar")
+
+
+# --- Ruby (Rails, Sinatra, Rack) ------------------------------------------------------------
+
+_GEM = re.compile(r"""^\s*gem\s+['"]([\w.-]+)['"]""")
+_RUBY_DATABASES = (
+    (("pg",), "postgres"),
+    (("mysql2", "trilogy"), "mysql"),
+    (("redis",), "redis"),
+    (("mongoid", "mongo"), "other"),
+)
+_RACKUP = "bundle exec rackup --host 0.0.0.0 --port 9292"
+
+
+def _ruby(view: RepoView, found: Detection) -> None:
+    rel = "Gemfile"
+    gems: dict[str, int] = {}
+    for number, text in enumerate(view.lines(rel) or [], start=1):
+        match = _GEM.match(text)
+        if match:
+            gems.setdefault(match.group(1), number)
+    found.set("language", "ruby", DERIVED, rel, 1, "Gemfile present")
+    if view.exists("Gemfile.lock"):
+        found.set("package_manager", "bundler", EXPLICIT, "Gemfile.lock", 1, "lockfile")
+    else:
+        found.set("package_manager", "bundler", DERIVED, rel, 1, "Gemfile without a lockfile")
+    found.set("install_cmd", "bundle install", DERIVED, rel, 1, "bundler")
+    _ruby_version(view, found)
+
+    if "rails" in gems:
+        line = gems["rails"]
+        found.set("framework", "rails", DERIVED, rel, line, "rails gem")
+        command = "bundle exec rails server -b 0.0.0.0 -p 3000"
+        found.set("start_cmd", command, DERIVED, rel, line, "Rails server")
+        found.set("port", 3000, DEFAULT, rel, line, "Rails serves on 3000")
+        if any(f.startswith("app/assets/") for f in view.files):
+            command = "bundle exec rails assets:precompile"
+            found.set("build_cmd", command, DERIVED, rel, line, "Rails assets")
+        routes = "config/routes.rb"
+        for number, text in enumerate(view.lines(routes) or [], start=1):
+            match = re.search(r"""get\s+['"]/?([\w/-]*)['"].*rails/health#show""", text)
+            if match:
+                path = "/" + match.group(1)
+                found.set("health_path", path, EXPLICIT, routes, number, "Rails health route")
+                break
+    elif view.exists("config.ru"):
+        framework = "sinatra" if "sinatra" in gems else "rack"
+        line = gems.get(framework, 1)
+        found.set("framework", framework, DERIVED, rel, line, f"{framework} with config.ru")
+        found.set("start_cmd", _RACKUP, DERIVED, "config.ru", 1, "rackup file")
+        found.set("port", 9292, DEFAULT, "config.ru", 1, "rackup serves on 9292")
+    elif "sinatra" in gems:
+        found.set("framework", "sinatra", DERIVED, rel, gems["sinatra"], "sinatra gem")
+        for source in view.source_files:
+            if not source.endswith(".rb"):
+                continue
+            found_at = view.find(source, "require 'sinatra") or view.find(
+                source, 'require "sinatra'
+            )
+            if found_at:
+                command = f"bundle exec ruby {source} -o 0.0.0.0 -p 4567"
+                found.set("start_cmd", command, DERIVED, source, found_at, "Sinatra app file")
+                found.set("port", 4567, DEFAULT, source, found_at, "Sinatra serves on 4567")
+                break
+    _database_from_deps(view, found, rel, set(gems), _RUBY_DATABASES)
+
+
+def _ruby_version(view: RepoView, found: Detection) -> None:
+    text = (view.text(".ruby-version") or "").strip().removeprefix("ruby-")
+    if re.fullmatch(r"\d+\.\d+(?:\.\d+)?", text):
+        found.set("runtime_version", text, EXPLICIT, ".ruby-version", 1, ".ruby-version")
+        return
+    for number, line in enumerate(view.lines("Gemfile") or [], start=1):
+        match = re.match(r"""\s*ruby\s+['"][^\d'"]*(\d+\.\d+(?:\.\d+)?)""", line)
+        if match:
+            found.set("runtime_version", match.group(1), EXPLICIT, "Gemfile", number, "ruby")
+            return
+
+
+# --- Rust (axum, actix-web, Rocket) ---------------------------------------------------------
+
+_RUST_FRAMEWORKS = (
+    # crate, framework, the port its examples and docs use
+    ("axum", "axum", 3000),
+    ("actix-web", "actix", 8080),
+    ("rocket", "rocket", 8000),
+)
+_RUST_DATABASES = (
+    (
+        ("tokio-postgres", "postgres", "sqlx:postgres", "diesel:postgres", "sea-orm:sqlx-postgres"),
+        "postgres",
+    ),
+    (("mysql", "mysql_async", "sqlx:mysql", "diesel:mysql", "sea-orm:sqlx-mysql"), "mysql"),
+    (("redis",), "redis"),
+    (("mongodb",), "other"),
+)
+
+
+def _rust(view: RepoView, found: Detection) -> None:
+    rel = "Cargo.toml"
+    try:
+        data = tomllib.loads(view.text(rel) or "")
+    except tomllib.TOMLDecodeError:
+        found.notes.append("Cargo.toml is not valid TOML")
+        return
+    found.set("language", "rust", DERIVED, rel, 1, "Cargo.toml present")
+    found.set("package_manager", "cargo", DERIVED, rel, 1, "cargo")
+    found.set("install_cmd", "cargo fetch", DERIVED, rel, 1, "cargo")
+    locked = " --locked" if view.exists("Cargo.lock") else ""
+    found.set("build_cmd", f"cargo build --release{locked}", DERIVED, rel, 1, "cargo build")
+    package = data.get("package") or {}
+    bins = [b for b in data.get("bin") or [] if isinstance(b, dict) and b.get("name")]
+    binary = str(bins[0]["name"]) if bins else package.get("name")
+    if binary:
+        line = _line_of(view, rel, f'"{binary}"')
+        found.set("start_cmd", f"./target/release/{binary}", DERIVED, rel, line, "the binary")
+    rust_version = package.get("rust-version")
+    if isinstance(rust_version, str):
+        line = _line_of(view, rel, "rust-version")
+        found.set("runtime_version", rust_version, EXPLICIT, rel, line, "rust-version")
+    toolchain = re.search(
+        r"""channel\s*=\s*['"](\d+\.\d+(?:\.\d+)?)['"]""", view.text("rust-toolchain.toml") or ""
+    )
+    if toolchain:
+        where = "rust-toolchain.toml"
+        line = _line_of(view, where, "channel")
+        found.set("runtime_version", toolchain.group(1), EXPLICIT, where, line, "toolchain")
+    deps: set[str] = set()
+    for name, spec in (data.get("dependencies") or {}).items():
+        deps.add(name)
+        features = spec.get("features", []) if isinstance(spec, dict) else []
+        deps.update(f"{name}:{f}" for f in features)
+    for crate, framework, port in _RUST_FRAMEWORKS:
+        if crate in deps:
+            line = _dep_line(view, rel, crate)
+            found.set("framework", framework, DERIVED, rel, line, f"{crate} dependency")
+            found.set("port", port, DEFAULT, rel, line, f"{framework} apps serve on {port}")
+            break
+    _database_from_deps(view, found, rel, deps, _RUST_DATABASES)
+
+
+# --- PHP (Laravel, Slim, plain) -------------------------------------------------------------
+
+_PHP_DATABASES = (
+    (("ext-pgsql", "ext-pdo_pgsql"), "postgres"),
+    (("ext-mysqli", "ext-pdo_mysql"), "mysql"),
+    (("predis/predis", "ext-redis"), "redis"),
+    (("mongodb/mongodb",), "other"),
+)
+# The Dockerfile Builder writes for PHP is php:<v>-apache: Apache serves on 80 and runs PHP
+# as www-data.
+PHP_PORT = 80
+_PHP_START = "apache2-foreground"
+
+
+def _plain_php_entry(view: RepoView) -> str | None:
+    return next((f for f in ("index.php", "public/index.php") if view.exists(f)), None)
+
+
+def _php(view: RepoView, found: Detection) -> None:
+    rel = "composer.json" if view.exists("composer.json") else _plain_php_entry(view)
+    if rel is None:
+        return
+    found.set("language", "php", DERIVED, rel, 1, f"{rel} present")
+    found.set("start_cmd", _PHP_START, DEFAULT, rel, 1, "php-apache image")
+    found.set("port", PHP_PORT, DEFAULT, rel, 1, f"php-apache serves on {PHP_PORT}")
+    if rel != "composer.json":
+        return
+    try:
+        data = json.loads(view.text(rel) or "{}")
+    except json.JSONDecodeError:
+        found.notes.append("composer.json is not valid JSON")
+        return
+    require: dict[str, Any] = (data.get("require") or {}) if isinstance(data, dict) else {}
+    if view.exists("composer.lock"):
+        found.set("package_manager", "composer", EXPLICIT, "composer.lock", 1, "lockfile")
+    else:
+        found.set("package_manager", "composer", DERIVED, rel, 1, "composer.json")
+    command = "composer install --no-dev --optimize-autoloader --no-interaction"
+    found.set("install_cmd", command, DERIVED, rel, 1, "composer")
+    version = re.search(r"\d+\.\d+", str(require.get("php", "")))
+    if version:
+        line = _line_of(view, rel, '"php"')
+        found.set("runtime_version", version.group(0), EXPLICIT, rel, line, "require.php")
+    for package, framework in (("laravel/framework", "laravel"), ("slim/slim", "slim")):
+        if package in require:
+            line = _dep_line(view, rel, package)
+            found.set("framework", framework, DERIVED, rel, line, f"{package} dependency")
+            break
+    boot = "bootstrap/app.php"
+    for number, text in enumerate(view.lines(boot) or [], start=1):
+        match = re.search(r"""health:\s*['"](/[^'"]*)['"]""", text)
+        if match:
+            found.set("health_path", match.group(1), EXPLICIT, boot, number, "Laravel health")
+            break
+    _database_from_deps(view, found, rel, set(require), _PHP_DATABASES)
+
+
+# --- .NET (ASP.NET Core) --------------------------------------------------------------------
+
+_WEB_SDK = "Microsoft.NET.Sdk.Web"
+_DOTNET_DATABASES = (
+    (("Npgsql", "Npgsql.EntityFrameworkCore.PostgreSQL"), "postgres"),
+    (("MySqlConnector", "MySql.Data", "Pomelo.EntityFrameworkCore.MySql"), "mysql"),
+    (("StackExchange.Redis", "Microsoft.Extensions.Caching.StackExchangeRedis"), "redis"),
+    (("MongoDB.Driver",), "other"),
+)
+
+
+def _dotnet_project(view: RepoView) -> str | None:
+    """The project to publish: the web project (ASP.NET Core), else the only project.
+    Projects up to three folders deep (a solution at the root, src/Api/Api.csproj)."""
+    projects = [f for f in view.files if f.endswith((".csproj", ".fsproj")) and f.count("/") <= 3]
+    web = [p for p in projects if _WEB_SDK in (view.text(p) or "")]
+    if web:
+        return sorted(web, key=lambda p: (p.count("/"), p))[0]
+    return projects[0] if len(projects) == 1 else None
+
+
+def _dotnet(view: RepoView, found: Detection, rel: str) -> None:
+    text = view.text(rel) or ""
+    found.set("language", "dotnet", DERIVED, rel, 1, f"{rel} present")
+    found.set("package_manager", "dotnet", DERIVED, rel, 1, "NuGet through dotnet")
+    found.set("install_cmd", f"dotnet restore {rel}", DERIVED, rel, 1, "dotnet restore")
+    command = f"dotnet publish {rel} -c Release -o out"
+    found.set("build_cmd", command, DERIVED, rel, 1, "dotnet publish")
+    assembly = _xml_values(text, "AssemblyName")
+    name = assembly[0] if assembly else PurePosixPath(rel).stem
+    line = _line_of(view, rel, "<AssemblyName>") if assembly else 1
+    found.set("start_cmd", f"dotnet {name}.dll", DERIVED, rel, line, "published assembly")
+    target = re.search(r"<TargetFrameworks?>\s*net(\d+)\.(\d+)", text)
+    major = int(target.group(1)) if target else None
+    if target:
+        line = _line_of(view, rel, "<TargetFramework")
+        version = f"{target.group(1)}.{target.group(2)}"
+        found.set("runtime_version", version, EXPLICIT, rel, line, "TargetFramework")
+    if _WEB_SDK in text:
+        line = _line_of(view, rel, _WEB_SDK)
+        found.set("framework", "aspnet", DERIVED, rel, line, "web SDK")
+        # .NET 8 images listen on 8080 (ASPNETCORE_HTTP_PORTS); before that, on 80.
+        port = 80 if major is not None and major < 8 else 8080
+        found.set("port", port, DEFAULT, rel, line, f"ASP.NET Core serves on {port}")
+    packages = set(re.findall(r"""<PackageReference\s+Include=["']([^"']+)["']""", text))
+    _database_from_deps(view, found, rel, packages, _DOTNET_DATABASES)
+
+
 # --- env vars, ports, health ---------------------------------------------------------------
 
 
@@ -540,9 +981,14 @@ _GO_ENV = re.compile(r"os\.Getenv\(\s*\"([A-Z][A-Z0-9_]*)\"\s*\)")
 _HEALTH = re.compile(
     r"['\"`](/(?:health|healthz|healthcheck|ready|readyz|livez|status|ping))['\"`]"
 )
-_ROUTE_HINT = re.compile(r"\.(get|route|use|all|handle|HandleFunc|GET)\b|@\w+\.(get|route)", re.I)
+_ROUTE_HINT = re.compile(
+    r"\.(get|route|use|all|handle|HandleFunc|GET)\b|@\w+\.(get|route)|@(Get|Request)Mapping|"
+    r"@Path\b|Map(Get|HealthChecks)\b|Route::get|#\[get\b",
+    re.I,
+)
 _LISTEN_PORT = re.compile(
     r"\.listen\(\s*(\d{2,5})|PORT\s*(?:\|\||\?\?)\s*(\d{2,5})|port\s*=\s*(\d{2,5})|\"(?::|0\.0\.0\.0:)(\d{2,5})\""
+    r"|\(\s*\"0\.0\.0\.0\"\s*,\s*(\d{2,5})\s*\)"
 )
 
 
@@ -586,7 +1032,7 @@ def _source_scan(view: RepoView, found: Detection) -> None:
             if health and _ROUTE_HINT.search(text):
                 found.set("health_path", health.group(1), EXPLICIT, rel, number, "route defined")
             port = _LISTEN_PORT.search(text)
-            if port and ("listen" in text or "PORT" in text or "run(" in text or "Run(" in text):
+            if port and any(w in text for w in ("listen", "PORT", "run(", "Run(", "bind(")):
                 value = int(next(g for g in port.groups() if g))
                 if 1 <= value <= 65535:
                     found.set("port", value, EXPLICIT, rel, number, "port in code")

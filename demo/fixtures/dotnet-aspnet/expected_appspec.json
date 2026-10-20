@@ -1,0 +1,14 @@
+{
+  "language": "dotnet",
+  "framework": "aspnet",
+  "runtime_version": "8.0",
+  "package_manager": "dotnet",
+  "install_cmd": "dotnet restore src/Weather.Api/Weather.Api.csproj",
+  "build_cmd": "dotnet publish src/Weather.Api/Weather.Api.csproj -c Release -o out",
+  "start_cmd": "dotnet Weather.Api.dll",
+  "port": 8080,
+  "database": "postgres",
+  "health_path": "/healthz",
+  "has_dockerfile": false,
+  "env_vars": []
+}
