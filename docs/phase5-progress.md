@@ -551,6 +551,24 @@ Discovered, never watched or fixed before. Now:
   app/policy/actions.py, infra/aws-connect.yaml (+ templates copy); web lib/incidents.ts,
   components/connections/aws-operate-dialog.tsx.
 
+## Load balancers, Aurora, slow requests (2026-10-20)
+
+- ALB: discovered with target groups and targets; `rule_load_balancers` adds balancer -> service /
+  instance / function `calls` edges, so an ALB incident groups with the services behind it and
+  its evidence includes them. Rules `alb_5xx`, `alb_unhealthy_targets`, `alb_latency`
+  (AWS/ApplicationELB per-minute metrics); evidence: per-minute 5xx and p95 plus live target
+  health with reasons; verify re-runs the rules. Medic rolls back the services behind a failing
+  balancer that were deployed in the window (`Graph.behind`, `ALB_RULES`).
+- Aurora: `rds:cluster` discovered (DescribeDBClusters), watched with the rds rule on the
+  DBClusterIdentifier dimension, read as evidence, verified; edges like DB instances.
+- Slow requests: `request_latency` reads pino-http, lograge, nginx JSON, morgan, gin, and nginx /
+  Apache access lines.
+- Tests: tests/test_alb_aurora.py (15); template snapshot regenerated (only the three new actions).
+- Files (Ahmed's code marked *): app/incidents/{rules,watcher,store}.py*,
+  app/telemetry/{aws_compute,collect,cloudwatch_logs}.py*, app/agents/medic/{agent,events,fixes,
+  verify}.py*, app/discovery/aws.py, app/graph/edges.py, app/connectors/aws.py,
+  infra/aws-connect.yaml (+ copy), tests/aws_fixture.py; web lib/incidents.ts.
+
 ## How to resume
 
 ```bash

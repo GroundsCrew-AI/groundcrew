@@ -43,7 +43,8 @@ from app.workspace_settings import get_config
 logger = logging.getLogger("groundcrew.incidents")
 
 WATCH_JOB: Final = "watch_incidents"
-WATCH_TYPES = ("ecs:service", "rds:db", "lambda:function", "ec2:instance")
+ALB = "elasticloadbalancing:loadbalancer/app"
+WATCH_TYPES = ("ecs:service", "rds:db", "rds:cluster", "lambda:function", "ec2:instance", ALB)
 K8S_WATCH_TYPES = ("k8s:deployment",)
 CHECK_TIMEOUT_SECONDS = 30.0
 
@@ -109,7 +110,7 @@ async def _targets(session_factory: SessionFactory) -> list[Target]:
             }
             rows = [(r, c) for r, c in rows if r.workspace_id not in off]
         services = [r.id for r, _ in rows if r.type == "ecs:service"]
-        databases = [r.id for r, _ in rows if r.type == "rds:db"]
+        databases = [r.id for r, _ in rows if r.type in ("rds:db", "rds:cluster")]
         logs: dict[uuid.UUID, list[str]] = {}
         if services:
             edges = await session.execute(
@@ -153,6 +154,14 @@ def check(target: Target, reader: AwsReader, now: datetime) -> list[Signal]:
         signal = rules.rds_check(reader, r.region, r.id, r.name, target.log_groups, now)
         if signal is not None:
             out.append(signal)
+    elif r.type == "rds:cluster":
+        signal = rules.rds_check(
+            reader, r.region, r.id, r.name, target.log_groups, now, "DBClusterIdentifier"
+        )
+        if signal is not None:
+            out.append(signal)
+    elif r.type == ALB:
+        out.extend(rules.alb_check(reader, r.region, r.id, r.name, r.config, now))
     elif r.type == "lambda:function":
         log_group = str(r.config.get("log_group") or f"/aws/lambda/{r.name}")
         out.extend(rules.lambda_check(reader, r.region, r.id, r.name, log_group, now))

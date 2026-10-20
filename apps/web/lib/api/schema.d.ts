@@ -2508,7 +2508,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
@@ -2632,7 +2632,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /**
              * Incident Id
              * Format: uuid
@@ -2727,7 +2727,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** First Signal At */
@@ -3854,7 +3854,7 @@ export interface components {
              * Rule
              * @enum {string}
              */
-            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "user_report" | "other";
+            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
         };
         /** StageFinished */
         StageFinished: {

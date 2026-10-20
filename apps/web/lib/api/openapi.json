@@ -3504,6 +3504,9 @@
               "lambda_errors",
               "lambda_throttles",
               "ec2_status_check",
+              "alb_5xx",
+              "alb_unhealthy_targets",
+              "alb_latency",
               "user_report",
               "other"
             ],
@@ -3920,6 +3923,9 @@
               "lambda_errors",
               "lambda_throttles",
               "ec2_status_check",
+              "alb_5xx",
+              "alb_unhealthy_targets",
+              "alb_latency",
               "user_report",
               "other"
             ],
@@ -4180,6 +4186,9 @@
               "lambda_errors",
               "lambda_throttles",
               "ec2_status_check",
+              "alb_5xx",
+              "alb_unhealthy_targets",
+              "alb_latency",
               "user_report",
               "other"
             ],
@@ -7237,6 +7246,9 @@
               "lambda_errors",
               "lambda_throttles",
               "ec2_status_check",
+              "alb_5xx",
+              "alb_unhealthy_targets",
+              "alb_latency",
               "user_report",
               "other"
             ],

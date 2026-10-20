@@ -59,6 +59,9 @@ DetectorRule = Literal[
     "lambda_errors",  # a function's error rate (CloudWatch Errors / Invocations)
     "lambda_throttles",  # a function hit its concurrency limit
     "ec2_status_check",  # an instance's system or instance status check is impaired
+    "alb_5xx",  # a load balancer's 5xx share (its targets' and its own)
+    "alb_unhealthy_targets",  # a target group's targets fail their health checks
+    "alb_latency",  # a load balancer's p95 target response time
     "user_report",
     "other",
 ]

@@ -14,6 +14,12 @@ the watcher runs them every INCIDENT_WATCH_INTERVAL_SECONDS and dedupes into ope
 | lambda_errors | 5+ errors in 5 minutes, 5 %+ of invocations, 3x the rate before (down at 90 %) |
 | lambda_throttles | at least 10 throttles in the last 5 minutes, 10 % of its requests, 3x before |
 | ec2_status_check | an instance's system or instance status check is impaired (down) |
+| alb_5xx | 10+ 5xx in 5 minutes, 5 %+ of requests, 3x the share before (down at 90 %) |
+| alb_unhealthy_targets | a target group has unhealthy targets for 2+ minutes (down: none healthy) |
+| alb_latency | target response time p95 at least 1 s and 3x its baseline, 2+ minutes |
+
+Aurora clusters (rds:cluster) use the rds_cpu_latency rule with the DBClusterIdentifier
+dimension.
 
 Slow queries: 2 minutes in a row with database CPU > 15 % and, in the request logs of a service
 that `reads` the database, a path's p50 at 3x its baseline and >= 20 ms (health checks ignored;
@@ -329,9 +335,11 @@ def rds_check(
     db: str,
     log_groups: list[str],
     now: datetime,
+    dimension: str = "DBInstanceIdentifier",
 ) -> Signal | None:
-    """Blocking (boto3). Slow queries from the readers' request logs, else CPU + read latency."""
-    cpu, latency = fetch_rds(reader, region, db, now)
+    """Blocking (boto3). Slow queries from the readers' request logs, else CPU + read latency.
+    `dimension`: DBClusterIdentifier for an Aurora cluster."""
+    cpu, latency = fetch_rds(reader, region, db, now, dimension)
     events = [e for group in log_groups for e in fetch_logs(reader, region, group, now)]
     return slow_query_signal(resource_id, db, cpu, events, now) or rds_signal(
         resource_id, db, cpu, latency, now
@@ -339,7 +347,11 @@ def rds_check(
 
 
 def fetch_rds(
-    reader: AwsReader, region: str | None, db: str, now: datetime
+    reader: AwsReader,
+    region: str | None,
+    db: str,
+    now: datetime,
+    dimension: str = "DBInstanceIdentifier",
 ) -> tuple[list[tuple[datetime, float]], list[tuple[datetime, float]]]:
     """Blocking (boto3). CPU in percent, read latency in milliseconds."""
 
@@ -350,7 +362,7 @@ def fetch_rds(
                 "Metric": {
                     "Namespace": "AWS/RDS",
                     "MetricName": name,
-                    "Dimensions": [{"Name": "DBInstanceIdentifier", "Value": db}],
+                    "Dimensions": [{"Name": dimension, "Value": db}],
                 },
                 "Period": 60,
                 "Stat": "Average",
@@ -571,3 +583,184 @@ def fetch_ec2_status(reader: AwsReader, region: str | None, instance: str) -> di
         IncludeAllInstances=True,
     ).get("InstanceStatuses", [])
     return found[0] if found else None
+
+
+# --- Application Load Balancer ----------------------------------------------------------------
+
+ALB_MIN_5XX = 10
+ALB_5XX_SHARE = 0.05
+ALB_LATENCY_FLOOR_S = 1.0
+ALB_LATENCY_MINUTES = 2
+
+
+def fetch_alb(
+    reader: AwsReader,
+    region: str | None,
+    balancer: str,
+    groups: list[str],
+    now: datetime,
+) -> dict[str, Points]:
+    """Blocking (boto3). Per-minute requests, 5xx (targets and the balancer itself), and p95
+    response time for the balancer (its LoadBalancer dimension, app/name/id); unhealthy and
+    healthy host counts per target group (`unhealthy0`, `healthy0`, ... in `groups` order)."""
+
+    def query(metric_id: str, metric: str, stat: str, dims: dict[str, str]) -> dict[str, Any]:
+        return {
+            "Id": metric_id,
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/ApplicationELB",
+                    "MetricName": metric,
+                    "Dimensions": [{"Name": k, "Value": v} for k, v in dims.items()],
+                },
+                "Period": 60,
+                "Stat": stat,
+            },
+        }
+
+    lb = {"LoadBalancer": balancer}
+    queries = [
+        query("requests", "RequestCount", "Sum", lb),
+        query("target5xx", "HTTPCode_Target_5XX_Count", "Sum", lb),
+        query("elb5xx", "HTTPCode_ELB_5XX_Count", "Sum", lb),
+        query("p95", "TargetResponseTime", "p95", lb),
+    ]
+    for i, group in enumerate(groups):
+        dims = {"TargetGroup": group, "LoadBalancer": balancer}
+        queries += [
+            query(f"unhealthy{i}", "UnHealthyHostCount", "Maximum", dims),
+            query(f"healthy{i}", "HealthyHostCount", "Minimum", dims),
+        ]
+    results = reader.call(
+        "cloudwatch",
+        region,
+        "GetMetricData",
+        MetricDataQueries=queries,
+        StartTime=now - RECENT - BASELINE,
+        EndTime=now,
+    ).get("MetricDataResults", [])
+    return {
+        str(r.get("Id")): sorted(
+            (t, float(v))
+            for t, v in zip(r.get("Timestamps", []), r.get("Values", []), strict=False)
+            if isinstance(t, datetime)
+        )
+        for r in results
+    }
+
+
+def alb_signals(
+    resource_id: Any,
+    name: str,
+    metrics: dict[str, Points],
+    groups: list[str],
+    now: datetime,
+) -> list[Signal]:
+    """5xx share, unhealthy targets per group, and p95 latency of one load balancer."""
+    out: list[Signal] = []
+    requests, requests_before, _ = _split_sum(metrics.get("requests", []), now)
+    errors = errors_before = 0.0
+    for key in ("target5xx", "elb5xx"):
+        recent, before, _ = _split_sum(metrics.get(key, []), now)
+        errors, errors_before = errors + recent, errors_before + before
+    share = errors / requests if requests else (1.0 if errors else 0.0)
+    share_before = errors_before / requests_before if requests_before else 0.0
+    if (
+        errors >= ALB_MIN_5XX
+        and share >= ALB_5XX_SHARE
+        and share >= ERROR_RATE_FACTOR * share_before + 0.01
+    ):
+        first = min(
+            (
+                t
+                for key in ("target5xx", "elb5xx")
+                for t, v in metrics.get(key, [])
+                if v > 0 and t >= now - RECENT
+            ),
+            default=now,
+        )
+        down = share >= DOWN_ERROR_SHARE
+        out.append(
+            Signal(
+                rule="alb_5xx",
+                resource_id=resource_id,
+                resource_name=name,
+                detail=(
+                    f"{errors:.0f} 5xx responses in {requests:.0f} requests in the last 5 minutes "
+                    f"({share:.0%}, before {share_before:.0%})"
+                    + ("; nearly every request fails" if down else "")
+                ),
+                at=first,
+                down=down,
+            )
+        )
+    bad: list[str] = []
+    since: list[datetime] = []
+    none_healthy = bool(groups)
+    for i, group in enumerate(groups):
+        unhealthy = [(t, v) for t, v in metrics.get(f"unhealthy{i}", []) if t >= now - RECENT]
+        healthy = [(t, v) for t, v in metrics.get(f"healthy{i}", []) if t >= now - RECENT]
+        last_healthy = healthy[-1][1] if healthy else None
+        if last_healthy is None or last_healthy > 0:
+            none_healthy = False
+        # The last two minutes both unhealthy: one failed probe is not an outage.
+        tail = [v for _, v in unhealthy[-2:]]
+        if len(tail) == 2 and all(v > 0 for v in tail):
+            started = next((t for t, v in unhealthy if v > 0), now)
+            since.append(started)
+            group_name = group.split("/")[1] if "/" in group else group
+            bad.append(
+                f"{group_name}: {tail[-1]:.0f} unhealthy, "
+                f"{last_healthy if last_healthy is not None else '?'} healthy"
+            )
+    if bad:
+        out.append(
+            Signal(
+                rule="alb_unhealthy_targets",
+                resource_id=resource_id,
+                resource_name=name,
+                detail=f"unhealthy targets: {'; '.join(bad)}"[:500],
+                at=min(since, default=now),
+                down=none_healthy,
+            )
+        )
+    p95 = metrics.get("p95", [])
+    p95_now = [(t, v) for t, v in p95 if t >= now - RECENT]
+    p95_before = [v for t, v in p95 if t < now - RECENT]
+    if len(p95_now) >= ALB_LATENCY_MINUTES and p95_before:
+        baseline = statistics.median(p95_before)
+        slow = [(t, v) for t, v in p95_now if v >= max(ALB_LATENCY_FLOOR_S, 3 * baseline)]
+        if len(slow) >= ALB_LATENCY_MINUTES:
+            out.append(
+                Signal(
+                    rule="alb_latency",
+                    resource_id=resource_id,
+                    resource_name=name,
+                    detail=(
+                        f"p95 response time {max(v for _, v in slow):.2f} s "
+                        f"(baseline {baseline:.2f} s) for {len(slow)} of the last 5 minutes"
+                    ),
+                    at=slow[0][0],
+                )
+            )
+    return out
+
+
+def alb_check(
+    reader: AwsReader,
+    region: str | None,
+    resource_id: Any,
+    name: str,
+    config: dict[str, Any],
+    now: datetime,
+) -> list[Signal]:
+    """Blocking (boto3). Every rule for one discovered Application Load Balancer."""
+    balancer = str(config.get("dimension") or "")
+    if not balancer:
+        return []
+    groups = [
+        str(g.get("dimension")) for g in config.get("target_groups") or [] if g.get("dimension")
+    ]
+    return alb_signals(
+        resource_id, name, fetch_alb(reader, region, balancer, groups, now), groups, now
+    )

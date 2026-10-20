@@ -215,6 +215,7 @@ def run_checks(
     waiting: list[str] | None = None,
     functions: list[Resource] | None = None,
     instances: list[Resource] | None = None,
+    balancers: list[Resource] | None = None,
 ) -> VerifyResult:
     """Blocking (boto3). `readers` is keyed by connection id (str). `deploy_after`: a fix PR
     merged then; `waiting`: reasons known before the round (a fix PR not merged yet).
@@ -223,6 +224,24 @@ def run_checks(
     started = time.monotonic()
     checks: list[VerifyCheck] = []
     waits = list(waiting or [])
+    for lb in balancers or []:
+        reader = readers.get(str(lb.connection_id))
+        if reader is None:
+            continue
+        try:
+            found = rules.alb_check(reader, lb.region, lb.id, lb.name, lb.config, now)
+        except Exception as exc:  # one unreadable balancer must not stop the round
+            detail = f"{lb.name}: could not read metrics ({error_text(exc)[:120]})"
+            checks.append(VerifyCheck(name="errors", ok=False, detail=detail))
+            continue
+        checks.append(
+            VerifyCheck(
+                name="errors",
+                ok=not found,
+                detail=f"{lb.name}: "
+                + ("; ".join(s.detail for s in found) or "5xx, targets, and latency normal"),
+            )
+        )
     for fn in functions or []:
         reader = readers.get(str(fn.connection_id))
         if reader is None:
@@ -294,7 +313,15 @@ def run_checks(
             continue
         groups = sorted({g for gs in log_groups.values() for g in gs})
         try:
-            spike = rules.rds_check(reader, db.region, db.id, db.name, groups, now)
+            spike = rules.rds_check(
+                reader,
+                db.region,
+                db.id,
+                db.name,
+                groups,
+                now,
+                "DBClusterIdentifier" if db.type == "rds:cluster" else "DBInstanceIdentifier",
+            )
         except Exception as exc:  # one unreadable database must not stop the round
             detail = f"{db.name}: could not read metrics ({error_text(exc)[:120]})"
             checks.append(VerifyCheck(name="metric", ok=False, detail=detail))
