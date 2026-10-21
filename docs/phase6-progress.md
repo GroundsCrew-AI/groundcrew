@@ -83,8 +83,10 @@ Done (one commit each, branch `phase6-hardening`):
 - Fixed on the way: #54 had dropped load balancers and Aurora clusters from the watcher (NameError on any
   ALB); restored in its own commit.
 
-Tests: API 1109 passed, 6 skipped (ruff, mypy clean); web 252 passed (tsc, eslint clean). The Playwright
-e2e job was not run locally; CI runs it on the PR.
+Tests: API 1109 passed, 6 skipped (ruff, mypy clean); web 252 passed (tsc, eslint clean); Playwright e2e
+5 passed against a production build (`scripts/e2e.sh`, run on a copy of apps/web so the dev stack's `.next`
+was untouched), including sign-in, the live run stream and a deploy approval under the new CSP.
+GitHub Actions did not run on the PR: the organization's billing refused to start the jobs.
 
 Teammate areas touched (Ahmed): `app/agents/medic/agent.py` (research quota), `app/incidents/watcher.py`
 (the #54 regression).

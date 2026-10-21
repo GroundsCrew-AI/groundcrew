@@ -10,8 +10,16 @@ async function signIn(page: Page) {
 
 test.describe.configure({ mode: "serial" });
 
+test("signed out, / is the landing page; a private page asks to sign in", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("link", { name: "Get started" }).first()).toBeVisible();
+  await page.goto("/runs");
+  await expect(page).toHaveURL(/\/signin\?callbackUrl=%2Fruns/);
+});
+
 test("signs in with the dev-only test user", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("link", { name: "Get started" }).first().click();
   await expect(page).toHaveURL(/\/signin/);
   await signIn(page);
   await expect(page.getByText("E2E Tester").or(page.getByText("e2e-tester")).first()).toBeVisible();
