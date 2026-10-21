@@ -707,6 +707,13 @@
             "title": "External Id",
             "type": "string"
           },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/StackParameter"
+            },
+            "title": "Parameters",
+            "type": "array"
+          },
           "principal_arn": {
             "title": "Principal Arn",
             "type": "string"
@@ -723,6 +730,10 @@
             "title": "Stack Name",
             "type": "string"
           },
+          "template_download_url": {
+            "title": "Template Download Url",
+            "type": "string"
+          },
           "template_path": {
             "title": "Template Path",
             "type": "string"
@@ -733,6 +744,10 @@
               "deploy"
             ],
             "title": "Tier",
+            "type": "string"
+          },
+          "upload_console_url": {
+            "title": "Upload Console Url",
             "type": "string"
           }
         },
@@ -745,6 +760,9 @@
           "stack_name",
           "console_url",
           "template_path",
+          "template_download_url",
+          "upload_console_url",
+          "parameters",
           "cli_command",
           "role_arn_command"
         ],
@@ -3250,6 +3268,75 @@
         "title": "FollowUp",
         "type": "object"
       },
+      "GitHubAuthorizeOut": {
+        "properties": {
+          "authorize_url": {
+            "title": "Authorize Url",
+            "type": "string"
+          },
+          "install_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Install Url"
+          }
+        },
+        "required": [
+          "authorize_url",
+          "install_url"
+        ],
+        "title": "GitHubAuthorizeOut",
+        "type": "object"
+      },
+      "GitHubClaimIn": {
+        "properties": {
+          "code": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 2000,
+            "minLength": 10,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "state"
+        ],
+        "title": "GitHubClaimIn",
+        "type": "object"
+      },
+      "GitHubClaimOut": {
+        "properties": {
+          "installations": {
+            "items": {
+              "$ref": "#/components/schemas/GitHubInstallationOut"
+            },
+            "title": "Installations",
+            "type": "array"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "installations"
+        ],
+        "title": "GitHubClaimOut",
+        "type": "object"
+      },
       "GitHubInstallationOut": {
         "properties": {
           "account": {
@@ -3310,6 +3397,11 @@
             },
             "title": "Installations",
             "type": "array"
+          },
+          "needs_authorization": {
+            "default": false,
+            "title": "Needs Authorization",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5140,6 +5232,21 @@
         "title": "LastDiscovery",
         "type": "object"
       },
+      "LinkToken": {
+        "properties": {
+          "token": {
+            "maxLength": 200,
+            "minLength": 10,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "LinkToken",
+        "type": "object"
+      },
       "LinkWithPassword": {
         "properties": {
           "password": {
@@ -5693,6 +5800,10 @@
       },
       "Options": {
         "properties": {
+          "email_link": {
+            "title": "Email Link",
+            "type": "boolean"
+          },
           "google": {
             "title": "Google",
             "type": "boolean"
@@ -5713,6 +5824,7 @@
         "required": [
           "password",
           "google",
+          "email_link",
           "require_verified_email",
           "password_min_length"
         ],
@@ -7617,6 +7729,24 @@
         "title": "SignupsIn",
         "type": "object"
       },
+      "StackParameter": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "StackParameter",
+        "type": "object"
+      },
       "StageFinished": {
         "properties": {
           "agent": {
@@ -8649,6 +8779,24 @@
         "title": "VerifyResult",
         "type": "object"
       },
+      "WebhookOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "handled": {
+            "title": "Handled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "handled",
+          "detail"
+        ],
+        "title": "WebhookOut",
+        "type": "object"
+      },
       "WorkspaceConfig": {
         "properties": {
           "daily_usd_cap": {
@@ -9135,6 +9283,158 @@
         "summary": "Decide",
         "tags": [
           "approvals"
+        ]
+      }
+    },
+    "/auth/email-link": {
+      "post": {
+        "description": "Email a single-use sign-in link. The answer is the same whether or not the address has\nan account; while sign-ups are paused, only addresses with an account or an invite get\none.",
+        "operationId": "send_email_link_auth_email_link_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Email"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send Email Link",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/email-link/verify": {
+      "post": {
+        "description": "Sign in with the link's token (once). Creates the account on the first sign-in.",
+        "operationId": "verify_email_link_auth_email_link_verify_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Email Link",
+        "tags": [
+          "auth"
         ]
       }
     },
@@ -10121,9 +10421,129 @@
         ]
       }
     },
+    "/connections/github/authorize": {
+      "get": {
+        "description": "Where an owner proves which installations of the app they can reach (GitHub OAuth).",
+        "operationId": "github_authorize_connections_github_authorize_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubAuthorizeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Authorize",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/github/claim": {
+      "post": {
+        "description": "Finish the GitHub authorization: the installations of the app this person can reach on\nGitHub become usable in the workspace it was started for (owners). No GitHub token is\nkept.",
+        "operationId": "github_claim_connections_github_claim_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubClaimIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubClaimOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Claim",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
     "/connections/github/installations": {
       "get": {
-        "description": "Installations of our GitHub App and their repositories, marking the linked ones.",
+        "description": "The installations of our GitHub App this workspace may use, and their repositories,\nmarking the linked ones. Other accounts' installations are never listed.",
         "operationId": "github_installations_connections_github_installations_get",
         "parameters": [
           {
@@ -11177,6 +11597,87 @@
         "summary": "Update Env",
         "tags": [
           "deploys"
+        ]
+      }
+    },
+    "/github/webhook": {
+      "post": {
+        "operationId": "github_webhook_github_webhook_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-github-event",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Github-Event"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-github-delivery",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Github-Delivery"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-hub-signature-256",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Hub-Signature-256"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Webhook",
+        "tags": [
+          "github"
         ]
       }
     },

@@ -24,6 +24,7 @@ export function isPublicPath(pathname: string): boolean {
 /** Sign-in pages: open without a session (signed-in visitors are sent home, except sign-out). */
 export const AUTH_PAGES: readonly string[] = [
   "/signin",
+  "/signin/email",
   "/signup",
   "/verify-email",
   "/forgot-password",

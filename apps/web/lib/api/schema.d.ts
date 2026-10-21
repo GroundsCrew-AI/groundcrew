@@ -61,6 +61,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/email-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Email Link
+         * @description Email a single-use sign-in link. The answer is the same whether or not the address has
+         *     an account; while sign-ups are paused, only addresses with an account or an invite get
+         *     one.
+         */
+        post: operations["send_email_link_auth_email_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/email-link/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Email Link
+         * @description Sign in with the link's token (once). Creates the account on the first sign-in.
+         */
+        post: operations["verify_email_link_auth_email_link_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/forgot-password": {
         parameters: {
             query?: never;
@@ -361,6 +403,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/github/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Github Authorize
+         * @description Where an owner proves which installations of the app they can reach (GitHub OAuth).
+         */
+        get: operations["github_authorize_connections_github_authorize_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/github/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Github Claim
+         * @description Finish the GitHub authorization: the installations of the app this person can reach on
+         *     GitHub become usable in the workspace it was started for (owners). No GitHub token is
+         *     kept.
+         */
+        post: operations["github_claim_connections_github_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/github/installations": {
         parameters: {
             query?: never;
@@ -370,7 +454,8 @@ export interface paths {
         };
         /**
          * Github Installations
-         * @description Installations of our GitHub App and their repositories, marking the linked ones.
+         * @description The installations of our GitHub App this workspace may use, and their repositories,
+         *     marking the linked ones. Other accounts' installations are never listed.
          */
         get: operations["github_installations_connections_github_installations_get"];
         put?: never;
@@ -671,6 +756,23 @@ export interface paths {
          *     (no rebuild). Values are handled like POST /deploys: encrypted in the job, never echoed.
          */
         post: operations["update_env_deploys__deploy_id__env_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/github/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Github Webhook */
+        post: operations["github_webhook_github_webhook_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1565,6 +1667,8 @@ export interface components {
             console_url: string | null;
             /** External Id */
             external_id: string;
+            /** Parameters */
+            parameters: components["schemas"]["StackParameter"][];
             /** Principal Arn */
             principal_arn: string;
             /** Region */
@@ -1573,6 +1677,8 @@ export interface components {
             role_arn_command: string;
             /** Stack Name */
             stack_name: string;
+            /** Template Download Url */
+            template_download_url: string;
             /** Template Path */
             template_path: string;
             /**
@@ -1580,6 +1686,8 @@ export interface components {
              * @enum {string}
              */
             tier: "observe" | "deploy";
+            /** Upload Console Url */
+            upload_console_url: string;
         };
         /** AwsTemplateUrlOut */
         AwsTemplateUrlOut: {
@@ -2547,6 +2655,30 @@ export interface components {
              */
             url: string | null;
         };
+        /** GitHubAuthorizeOut */
+        GitHubAuthorizeOut: {
+            /** Authorize Url */
+            authorize_url: string;
+            /** Install Url */
+            install_url: string | null;
+        };
+        /** GitHubClaimIn */
+        GitHubClaimIn: {
+            /** Code */
+            code: string;
+            /** State */
+            state: string;
+        };
+        /** GitHubClaimOut */
+        GitHubClaimOut: {
+            /** Installations */
+            installations: components["schemas"]["GitHubInstallationOut"][];
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
         /** GitHubInstallationOut */
         GitHubInstallationOut: {
             /** Account */
@@ -2566,6 +2698,11 @@ export interface components {
             install_url: string | null;
             /** Installations */
             installations: components["schemas"]["GitHubInstallationOut"][];
+            /**
+             * Needs Authorization
+             * @default false
+             */
+            needs_authorization: boolean;
         };
         /** GitHubLinkIn */
         GitHubLinkIn: {
@@ -3184,6 +3321,11 @@ export interface components {
              */
             truncated: boolean;
         };
+        /** LinkToken */
+        LinkToken: {
+            /** Token */
+            token: string;
+        };
         /** LinkWithPassword */
         LinkWithPassword: {
             /** Password */
@@ -3405,6 +3547,8 @@ export interface components {
         };
         /** Options */
         Options: {
+            /** Email Link */
+            email_link: boolean;
             /** Google */
             google: boolean;
             /** Password */
@@ -4119,6 +4263,13 @@ export interface components {
             /** Paused */
             paused: boolean;
         };
+        /** StackParameter */
+        StackParameter: {
+            /** Key */
+            key: string;
+            /** Value */
+            value: string;
+        };
         /** StageFinished */
         StageFinished: {
             /**
@@ -4445,6 +4596,13 @@ export interface components {
              */
             waiting: string | null;
         };
+        /** WebhookOut */
+        WebhookOut: {
+            /** Detail */
+            detail: string;
+            /** Handled */
+            handled: boolean;
+        };
         /** WorkspaceConfig */
         WorkspaceConfig: {
             /** Daily Usd Cap */
@@ -4670,6 +4828,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_email_link_auth_email_link_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-client-ip"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Email"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Accepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_email_link_auth_email_link_verify_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-client-ip"?: string | null;
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkToken"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthUser"];
                 };
             };
             /** @description Validation Error */
@@ -5188,6 +5418,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_authorize_connections_github_authorize_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAuthorizeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_claim_connections_github_claim_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubClaimIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubClaimOut"];
                 };
             };
             /** @description Validation Error */
@@ -5767,6 +6065,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    github_webhook_github_webhook_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-github-event"?: string | null;
+                "x-github-delivery"?: string | null;
+                "x-hub-signature-256"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookOut"];
+                };
             };
             /** @description Validation Error */
             422: {

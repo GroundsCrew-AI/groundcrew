@@ -19,6 +19,7 @@ export type AuthUser = {
 export type AuthOptions = {
   password: boolean;
   google: boolean;
+  email_link: boolean;
   require_verified_email: boolean;
   password_min_length: number;
 };
@@ -92,5 +93,5 @@ export async function authApi<T>(path: string, init: { method?: "GET" | "POST"; 
 export async function authOptions(): Promise<AuthOptions> {
   const result = await authApi<AuthOptions>("options", { method: "GET" });
   // Unreachable API: offer only provider sign-in (fail closed).
-  return result.ok ? result.data : { password: false, google: false, require_verified_email: true, password_min_length: 10 };
+  return result.ok ? result.data : { password: false, google: false, email_link: false, require_verified_email: true, password_min_length: 10 };
 }

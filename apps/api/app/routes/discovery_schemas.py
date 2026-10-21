@@ -175,6 +175,11 @@ class AwsStartIn(BaseModel):
     tier: AwsTier = "observe"
 
 
+class StackParameter(BaseModel):
+    key: str
+    value: str
+
+
 class AwsStartOut(BaseModel):
     connection_id: uuid.UUID
     tier: AwsTier
@@ -187,6 +192,11 @@ class AwsStartOut(BaseModel):
     console_url: str | None
     # GET this API path for the template body (infra/aws-connect.yaml).
     template_path: str
+    # Template upload, which works for any AWS account: download the template from here, then
+    # "Upload a template file" in CloudFormation (upload_console_url) with these parameters.
+    template_download_url: str
+    upload_console_url: str
+    parameters: list[StackParameter]
     cli_command: str
     role_arn_command: str
 
@@ -272,8 +282,31 @@ class GitHubInstallationOut(BaseModel):
 class GitHubInstallationsOut(BaseModel):
     configured: bool
     install_url: str | None
+    # Only installations an owner of this workspace proved access to on GitHub
+    # (POST /connections/github/claim), or that its GitHub connections already use.
     installations: list[GitHubInstallationOut]
+    # True when the workspace has none yet: an owner authorizes on GitHub first.
+    needs_authorization: bool = False
     error: str | None = None
+
+
+class GitHubAuthorizeOut(BaseModel):
+    # Send the owner here; GitHub returns to /connections/github/callback with code and state.
+    authorize_url: str
+    # Install the app on another account or organization; its Setup URL comes back to
+    # /connections/github/setup, which authorizes again to pick the new installation up.
+    install_url: str | None
+
+
+class GitHubClaimIn(BaseModel):
+    code: str = Field(min_length=1, max_length=100)
+    state: str = Field(min_length=10, max_length=2000)
+
+
+class GitHubClaimOut(BaseModel):
+    workspace_id: uuid.UUID
+    # Installations of the app this person can reach on GitHub, now usable in the workspace.
+    installations: list[GitHubInstallationOut]
 
 
 class GitHubLinkIn(BaseModel):

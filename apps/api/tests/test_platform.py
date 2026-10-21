@@ -53,7 +53,8 @@ def test_production_needs_its_secrets_and_a_real_origin() -> None:
         "SMTP_HOST" in p
         for p in _prod(smtp_host=None, password_auth_enabled=True).production_problems()
     )
-    assert _prod(smtp_host=None, password_auth_enabled=False).production_problems() == []
+    assert any("sign-in links" in p for p in _prod(smtp_host=None).production_problems())
+    assert _prod(smtp_host=None, email_link_auth_enabled=False).production_problems() == []
     # Dev and test run without them.
     Settings(_env_file=None, app_env="dev").require_production_ready()
 

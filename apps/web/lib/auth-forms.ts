@@ -39,6 +39,9 @@ const SIGN_IN: Record<string, string> = {
   locked: "Too many wrong passwords. Wait a few minutes, or reset your password.",
   rate_limited: "Too many attempts. Wait a few minutes and try again.",
   disabled: "Email sign-in is turned off on this server.",
+  invalid_link: "This sign-in link is used or expired. Ask for a new one below.",
+  signups_paused: "New sign-ups are paused for now. If someone invited you, use the address they invited.",
+  signup_rate_limited: "Too many new accounts right now. Try again later.",
   unreachable: "The server is not reachable. Try again in a moment.",
   config: "Sign-in is not configured on this server.",
 };

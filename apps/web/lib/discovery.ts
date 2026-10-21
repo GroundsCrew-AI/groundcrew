@@ -238,6 +238,29 @@ export function useGitHubInstallations(
   });
 }
 
+/** Start GitHub authorization: the URL to send the owner to, and the app's install page. */
+export function useGitHubAuthorize() {
+  return useMutation({
+    mutationFn: async (workspaceId: string) =>
+      unwrap(
+        await api.GET("/connections/github/authorize", {
+          params: { query: { workspace_id: workspaceId } },
+        }),
+      ),
+  });
+}
+
+/** Finish it: the installations GitHub says this person can reach join the workspace. */
+export function useClaimGitHub() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { code: string; state: string }) =>
+      unwrap(await api.POST("/connections/github/claim", { body })),
+    onSuccess: (data) =>
+      void client.invalidateQueries({ queryKey: discoveryKeys.installations(data.workspace_id) }),
+  });
+}
+
 export function useLinkGitHub() {
   const invalidate = useInvalidateWorkspace();
   const client = useQueryClient();

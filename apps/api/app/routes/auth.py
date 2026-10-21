@@ -28,9 +28,10 @@ from app.mail import (
     account_exists_mail,
     get_mailer,
     reset_mail,
+    sign_in_mail,
     verification_mail,
 )
-from app.platform import SignupRefusedError
+from app.platform import SignupRefusedError, invited, signups_paused
 from app.routes.deps import SessionDep, SettingsDep, bearer_token
 from app.security.auth import AuthConfigError, AuthError, verify_service_token
 from app.security.passwords import MAX_LENGTH, hash_password_async, password_problem
@@ -142,6 +143,8 @@ class Accepted(BaseModel):
 class Options(BaseModel):
     password: bool
     google: bool
+    # Sign-in by emailed link.
+    email_link: bool
     require_verified_email: bool
     password_min_length: int
 
@@ -169,6 +172,7 @@ async def options(settings: SettingsDep) -> Options:
     return Options(
         password=settings.password_auth,
         google=settings.google_auth,
+        email_link=settings.email_link_auth_enabled,
         require_verified_email=settings.auth_require_verified_email,
         password_min_length=settings.password_min_length,
     )
@@ -376,4 +380,71 @@ async def reset_password(
         )
     except LinkError as exc:
         raise AuthFlowError(status.HTTP_400_BAD_REQUEST, "invalid_link", str(exc)) from None
+    return AuthUser.of(user)
+
+
+class LinkToken(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+
+
+@router.post("/email-link", status_code=status.HTTP_202_ACCEPTED)
+async def send_email_link(
+    body: Email,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    mailer: MailerDep,
+    x_client_ip: ClientIp = None,
+) -> Accepted:
+    """Email a single-use sign-in link. The answer is the same whether or not the address has
+    an account; while sign-ups are paused, only addresses with an account or an invite get
+    one."""
+    if not settings.email_link_auth_enabled:
+        raise AuthFlowError(
+            status.HTTP_403_FORBIDDEN, "disabled", "Email sign-in is turned off on this server."
+        )
+    _limit(f"links:ip:{_client(request, x_client_ip)}", 20, 3600)
+    _limit(f"email-link:email:{body.email}", 5, 3600)
+    purpose = AuthTokenPurpose.sign_in
+    if await accounts.links_sent_to(session, body.email, purpose, timedelta(hours=1)) >= (
+        LINKS_PER_HOUR
+    ):
+        return Accepted()
+    if (
+        await accounts.user_by_email(session, body.email) is None
+        and await signups_paused(session)
+        and not await invited(session, body.email, None)
+    ):
+        return Accepted()
+    token = await accounts.issue_sign_in_link(
+        session, body.email, timedelta(minutes=settings.email_link_minutes)
+    )
+    await session.commit()
+    await _send(mailer, sign_in_mail(settings, body.email, token))
+    return Accepted()
+
+
+@router.post("/email-link/verify")
+async def verify_email_link(
+    body: LinkToken,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    x_client_ip: ClientIp = None,
+) -> AuthUser:
+    """Sign in with the link's token (once). Creates the account on the first sign-in."""
+    if not settings.email_link_auth_enabled:
+        raise AuthFlowError(
+            status.HTTP_403_FORBIDDEN, "disabled", "Email sign-in is turned off on this server."
+        )
+    _limit(f"link:ip:{_client(request, x_client_ip)}", 30, 3600)
+    try:
+        user = await accounts.email_link_sign_in(
+            session, body.token, settings=settings, ip=_client(request, x_client_ip)
+        )
+    except LinkError as exc:
+        raise AuthFlowError(status.HTTP_400_BAD_REQUEST, "invalid_link", str(exc)) from None
+    except SignupRefusedError as exc:
+        await session.rollback()
+        raise _signup_refused(exc) from None
     return AuthUser.of(user)

@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.config import get_settings
+from app.connectors import github_claims
 from app.db.models import (
     Approval,
     ApprovalStatus,
@@ -53,6 +54,8 @@ class Tenant:
     aws: uuid.UUID
     k8s: uuid.UUID
     vercel: uuid.UUID
+    # The caller (a member of another workspace).
+    intruder: uuid.UUID
 
 
 Request = tuple[str, Callable[[Tenant], str], Callable[[Tenant], dict[str, Any] | None]]
@@ -254,6 +257,20 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
             "kubeconfig": "apiVersion: v1\nkind: Config\nclusters: []\n",
         },
     ),
+    ("GET", "/connections/github/authorize"): (
+        "GET",
+        lambda t: f"/connections/github/authorize?workspace_id={t.workspace}",
+        _none,
+    ),
+    # A valid authorization state the caller holds, for the other workspace.
+    ("POST", "/connections/github/claim"): (
+        "POST",
+        lambda t: "/connections/github/claim",
+        lambda t: {
+            "code": "c0de",
+            "state": github_claims.make_state(_settings(), t.intruder, t.workspace),
+        },
+    ),
     ("GET", "/deploys"): ("GET", lambda t: f"/deploys?workspace_id={t.workspace}", _none),
     ("POST", "/deploys"): (
         "POST",
@@ -299,6 +316,7 @@ NOT_WORKSPACE_SCOPED = {
     ("DELETE", "/me"): "the caller's own account (test_deletion.py)",
     ("GET", "/me/account-deletion"): "the caller's own account",
     ("POST", "/workspaces"): "creates a workspace the caller owns",
+    ("POST", "/github/webhook"): "signed by GitHub, no user (test_github_claims.py)",
     ("GET", "/connections/aws/template"): "the public connect template",
     ("GET", "/connections/aws/template-url"): "the public connect template URL",
     ("GET", "/admin/platform"): "platform operators only, 404 for others (test_abuse.py)",
@@ -331,7 +349,7 @@ async def client(session_factory: SessionFactory) -> AsyncIterator[httpx.AsyncCl
     app.dependency_overrides.clear()
 
 
-async def _tenant(sf: SessionFactory, alice: Member) -> Tenant:
+async def _tenant(sf: SessionFactory, alice: Member, intruder: uuid.UUID) -> Tenant:
     ws = alice.workspace_id
     async with sf() as session:
         run = Run(workspace_id=ws, agent="echo_ops", goal="g", status=RunStatus.waiting_approval)
@@ -384,6 +402,7 @@ async def _tenant(sf: SessionFactory, alice: Member) -> Tenant:
             aws=aws.id,
             k8s=k8s.id,
             vercel=vercel.id,
+            intruder=intruder,
         )
 
 
@@ -404,7 +423,7 @@ async def test_other_workspaces_are_404_on_every_route(
 ) -> None:
     alice = await _member(session_factory, 9001, "alice")
     bob = await _member(session_factory, 9002, "bob")
-    tenant = await _tenant(session_factory, alice)
+    tenant = await _tenant(session_factory, alice, bob.user_id)
     before = await _counts(session_factory)
 
     for (method, path), (verb, url, body) in CROSS_TENANT.items():

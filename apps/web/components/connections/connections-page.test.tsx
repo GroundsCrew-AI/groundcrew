@@ -6,7 +6,10 @@ import { connection } from "@/tests/discovery-fixtures";
 
 const role = vi.hoisted(() => ({ value: "owner" as "owner" | "approver" | "viewer" }));
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/lib/workspace", () => ({
   useWorkspace: () => ({ workspace: { id: "ws-1", name: "Acme", role: role.value }, error: null, refetch: vi.fn() }),
 }));
