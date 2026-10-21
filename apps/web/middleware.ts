@@ -49,5 +49,5 @@ export default auth((request) => {
 // Everything except Auth.js, the API proxy (they answer for themselves), the health check, and
 // build assets.
 export const config = {
-  matcher: ["/((?!api/auth|api/gc|api/health|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api/auth|api/gc|api/health|_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png).*)"],
 };
