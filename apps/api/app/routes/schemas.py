@@ -83,6 +83,8 @@ class WorkspaceOut(BaseModel):
 class MeOut(BaseModel):
     user: UserOut
     workspaces: list[WorkspaceOut]
+    # Email and password accounts are offered on this server (Settings shows the password form).
+    password_auth: bool = False
 
 
 class RunCreate(BaseModel):

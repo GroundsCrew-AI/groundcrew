@@ -18,7 +18,7 @@ from app.accounts import (
     user_workspaces,
 )
 from app.agents.medic.events import PENDING_FOLLOWUP_STATES
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
     Approval,
@@ -61,25 +61,28 @@ async def _check_member(session: SessionDep, user: User, workspace_id: uuid.UUID
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.") from None
 
 
-async def _me(session: SessionDep, user: User) -> MeOut:
+async def _me(session: SessionDep, user: User, settings: Settings) -> MeOut:
     workspaces = await user_workspaces(session, user)
     return MeOut(
         user=UserOut.build(user, await sign_in_methods(session, user)),
         workspaces=[WorkspaceOut.build(w, r) for w, r in workspaces],
+        password_auth=settings.password_auth,
     )
 
 
 @router.get("/me")
-async def me(user: CurrentUser, session: SessionDep) -> MeOut:
-    return await _me(session, user)
+async def me(user: CurrentUser, session: SessionDep, settings: SettingsDep) -> MeOut:
+    return await _me(session, user, settings)
 
 
 @router.patch("/me")
-async def update_me(body: ProfileUpdate, user: CurrentUser, session: SessionDep) -> MeOut:
+async def update_me(
+    body: ProfileUpdate, user: CurrentUser, session: SessionDep, settings: SettingsDep
+) -> MeOut:
     """Change your display name."""
     user.name = body.name.strip() or user.name
     await session.commit()
-    return await _me(session, user)
+    return await _me(session, user, settings)
 
 
 @router.post("/me/password", status_code=status.HTTP_204_NO_CONTENT)
@@ -88,7 +91,7 @@ async def change_my_password(
 ) -> None:
     """Change your password, or add one to a GitHub or Google account (it then signs in with
     its email too). Every session ends, this one included: sign in again with the new one."""
-    if not settings.password_auth_enabled:
+    if not settings.password_auth:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Email sign-in is turned off on this server."
         )

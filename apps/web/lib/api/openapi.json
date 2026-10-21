@@ -5027,6 +5027,11 @@
       },
       "MeOut": {
         "properties": {
+          "password_auth": {
+            "default": false,
+            "title": "Password Auth",
+            "type": "boolean"
+          },
           "user": {
             "$ref": "#/components/schemas/UserOut"
           },
@@ -5500,6 +5505,10 @@
       },
       "Options": {
         "properties": {
+          "google": {
+            "title": "Google",
+            "type": "boolean"
+          },
           "password": {
             "title": "Password",
             "type": "boolean"
@@ -5515,6 +5524,7 @@
         },
         "required": [
           "password",
+          "google",
           "require_verified_email",
           "password_min_length"
         ],
@@ -8713,7 +8723,7 @@
     },
     "/auth/oauth": {
       "post": {
-        "description": "A GitHub or Google sign-in: the user, linked or created.",
+        "description": "A GitHub or Google sign-in: the user, linked or created. Google only where it is on\n(GOOGLE_AUTH_ENABLED; off on hosted instances by default).",
         "operationId": "oauth_auth_oauth_post",
         "parameters": [
           {

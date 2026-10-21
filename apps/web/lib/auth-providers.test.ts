@@ -30,4 +30,18 @@ describe("enabledOAuthProviders", () => {
       google: false,
     });
   });
+
+  const google = { AUTH_GOOGLE_ID: "g", AUTH_GOOGLE_SECRET: "s" };
+
+  it.each([
+    ["dev", undefined, true],
+    ["test", undefined, true],
+    ["production", undefined, false],
+    ["staging", undefined, false],
+    [undefined, undefined, false],
+    ["production", "true", true],
+    ["dev", "false", false],
+  ])("Google with APP_ENV=%s GOOGLE_AUTH_ENABLED=%s -> %s", (appEnv, flag, expected) => {
+    expect(enabledOAuthProviders({ ...google, APP_ENV: appEnv, GOOGLE_AUTH_ENABLED: flag }).google).toBe(expected);
+  });
 });
