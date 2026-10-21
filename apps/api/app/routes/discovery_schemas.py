@@ -175,6 +175,11 @@ class AwsStartIn(BaseModel):
     tier: AwsTier = "observe"
 
 
+class StackParameter(BaseModel):
+    key: str
+    value: str
+
+
 class AwsStartOut(BaseModel):
     connection_id: uuid.UUID
     tier: AwsTier
@@ -187,6 +192,11 @@ class AwsStartOut(BaseModel):
     console_url: str | None
     # GET this API path for the template body (infra/aws-connect.yaml).
     template_path: str
+    # Template upload, which works for any AWS account: download the template from here, then
+    # "Upload a template file" in CloudFormation (upload_console_url) with these parameters.
+    template_download_url: str
+    upload_console_url: str
+    parameters: list[StackParameter]
     cli_command: str
     role_arn_command: str
 

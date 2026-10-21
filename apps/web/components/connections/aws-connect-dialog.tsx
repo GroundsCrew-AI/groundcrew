@@ -1,14 +1,14 @@
 "use client";
 
 import { ChevronRight, CircleCheck, Download, ExternalLink } from "lucide-react";
-import { type FormEvent, type ReactNode, type RefObject, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { type AwsStart, type AwsTier, downloadAwsTemplate, useAwsComplete, useAwsStart } from "@/lib/discovery";
+import { type AwsStart, type AwsTier, useAwsComplete, useAwsStart } from "@/lib/discovery";
 import { useWorkspace } from "@/lib/workspace";
 
 import { CopyField } from "./copy-field";
@@ -28,45 +28,64 @@ export const DEPLOY_CREATES = [
   "The same explicit deny on reading secret values. Nothing else in the account can be changed.",
 ];
 
-/**
- * Opens a blank tab synchronously from the click (so the browser allows it), to be pointed at
- * the CloudFormation Quick-create link once the API has made this workspace's ExternalId.
- */
-export function openPendingTab(): Window | null {
-  const tab = window.open("", "_blank");
-  if (tab) {
-    tab.opener = null;
-    tab.document.title = "Opening AWS CloudFormation";
-    tab.document.body.textContent = "Opening AWS CloudFormation";
-  }
-  return tab;
+function Step({ n, children }: { n: number; children: ReactNode }) {
+  return (
+    <li className="grid grid-cols-[22px_1fr] gap-3 text-[13px] leading-relaxed">
+      <span className="flex size-[22px] items-center justify-center rounded-full border font-mono text-[11px] text-muted-foreground">
+        {n}
+      </span>
+      <div className="min-w-0 space-y-2">{children}</div>
+    </li>
+  );
 }
 
-function Steps({ region }: { region: string }) {
-  const steps: ReactNode[] = [
-    <>
-      In the AWS tab, sign in to the account you want to connect. Check that the region at the top right is{" "}
-      <span className="font-mono">{region}</span>. Everything else is already filled in.
-    </>,
-    <>
-      At the bottom, tick <span className="italic">I acknowledge that AWS CloudFormation might create IAM resources
-      with custom names</span>, then click <span className="font-medium">Create stack</span>.
-    </>,
-    <>
-      Wait about a minute until the status is <span className="font-mono">CREATE_COMPLETE</span>. Open the{" "}
-      <span className="font-medium">Outputs</span> tab and copy <span className="font-mono">RoleArn</span>.
-    </>,
-  ];
+/** Create the stack by uploading the template, which works in any AWS account. */
+function UploadSteps({ info }: { info: AwsStart }) {
   return (
-    <ol className="space-y-3">
-      {steps.map((step, i) => (
-        <li key={i} className="grid grid-cols-[22px_1fr] gap-3 text-[13px] leading-relaxed">
-          <span className="flex size-[22px] items-center justify-center rounded-full border font-mono text-[11px] text-muted-foreground">
-            {i + 1}
-          </span>
-          <p>{step}</p>
-        </li>
-      ))}
+    <ol className="space-y-4">
+      <Step n={1}>
+        <p>Download the template. It is the same file as in Groundcrew&apos;s repository.</p>
+        <Button asChild size="sm" variant="outline">
+          <a href={info.template_download_url} download="aws-connect.yaml">
+            <Download aria-hidden="true" />
+            aws-connect.yaml
+          </a>
+        </Button>
+      </Step>
+      <Step n={2}>
+        <p>
+          Open CloudFormation in the account you want to connect, in{" "}
+          <span className="font-mono">{info.region}</span>. Choose{" "}
+          <span className="font-medium">Choose an existing template</span>, then{" "}
+          <span className="font-medium">Upload a template file</span>, pick aws-connect.yaml, and click Next.
+        </p>
+        <Button asChild size="sm" variant="outline">
+          <a href={info.upload_console_url} target="_blank" rel="noreferrer">
+            Open CloudFormation
+            <ExternalLink aria-hidden="true" />
+          </a>
+        </Button>
+      </Step>
+      <Step n={3}>
+        <p>
+          Name the stack <span className="font-mono">{info.stack_name}</span> and set these parameters. Leave the
+          others as they are.
+        </p>
+        <div className="grid gap-2">
+          <CopyField label="Stack name" value={info.stack_name} />
+          {info.parameters.map((p) => (
+            <CopyField key={p.key} label={p.key} value={p.value} />
+          ))}
+        </div>
+      </Step>
+      <Step n={4}>
+        <p>
+          Click Next twice, tick <span className="italic">I acknowledge that AWS CloudFormation might create IAM
+          resources with custom names</span>, and Submit. Wait about a minute for{" "}
+          <span className="font-mono">CREATE_COMPLETE</span>, then copy <span className="font-mono">RoleArn</span>{" "}
+          from the <span className="font-medium">Outputs</span> tab and paste it below.
+        </p>
+      </Step>
     </ol>
   );
 }
@@ -83,41 +102,36 @@ function Disclosure({ title, defaultOpen, children }: { title: string; defaultOp
   );
 }
 
-function OtherWays({ info, defaultOpen }: { info: AwsStart; defaultOpen: boolean }) {
+function OtherWays({ info }: { info: AwsStart }) {
   return (
-    <Disclosure title="Other ways to connect" defaultOpen={defaultOpen}>
+    <Disclosure title="With the AWS CLI instead">
       <p className="text-[12.5px] text-muted-foreground">
-        Create the stack with the AWS CLI, using credentials for the account you are connecting:
+        With credentials for the account you are connecting, in the folder where you saved aws-connect.yaml:
       </p>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => void downloadAwsTemplate().catch((e: Error) => toast.error(e.message))}
-      >
-        <Download aria-hidden="true" />
-        aws-connect.yaml
-      </Button>
       <CopyField label="Create the stack" value={info.cli_command} multiline />
       <CopyField label="Print the RoleArn" value={info.role_arn_command} multiline />
-      <div className="grid gap-2 sm:grid-cols-2">
-        <CopyField label="ExternalId" value={info.external_id} />
-        <CopyField label="GroundcrewPrincipalArn" value={info.principal_arn} />
-      </div>
+      {info.console_url && (
+        <p className="text-[12.5px] text-muted-foreground">
+          In the account this Groundcrew server runs in, a{" "}
+          <a href={info.console_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+            filled-in CloudFormation link
+          </a>{" "}
+          also works.
+        </p>
+      )}
     </Disclosure>
   );
 }
 
-/** Connect AWS: Quick-create link in a new tab, three steps, paste the RoleArn, verified. */
+/** Connect AWS: upload the template in CloudFormation with this workspace's parameters, paste
+ * the RoleArn, verified. */
 export function AwsConnectDialog({
   open,
   onOpenChange,
-  tab,
   tier = "observe",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** A tab opened by the Connect click; pointed at CloudFormation once the link is ready. */
-  tab?: RefObject<Window | null>;
   /** observe: read-only. deploy: also the deploy role and cluster (Tier=deploy). */
   tier?: AwsTier;
 }) {
@@ -127,32 +141,10 @@ export function AwsConnectDialog({
   const [roleArn, setRoleArn] = useState("");
   const startRequested = open && workspace !== undefined;
 
-  // Hand the waiting tab its destination exactly once: CloudFormation when there is a link,
-  // otherwise say why in the tab and close it.
-  function sendTab(info: AwsStart | undefined, error?: Error) {
-    const waiting = tab?.current;
-    if (!waiting || !tab) return;
-    tab.current = null;
-    if (info?.console_url) {
-      waiting.location.href = info.console_url;
-      return;
-    }
-    const reason = error ? `Could not open CloudFormation: ${error.message}` : "One-click setup is not available.";
-    waiting.document.body.textContent = `${reason} Close this tab and go back to Groundcrew.`;
-    waiting.close();
-  }
-
   useEffect(() => {
     if (!startRequested || !workspace) return;
-    if (start.data && start.data.tier === tier) {
-      sendTab(start.data); // reopened: the link is already known
-      return;
-    }
-    if (start.isPending) return;
-    start.mutate({ workspaceId: workspace.id, tier }, {
-      onSuccess: (info) => sendTab(info),
-      onError: (error) => sendTab(undefined, error),
-    });
+    if ((start.data && start.data.tier === tier) || start.isPending) return;
+    start.mutate({ workspaceId: workspace.id, tier });
     // Once per open; the mutation object changes identity on every state change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startRequested, workspace, tier]);
@@ -165,8 +157,6 @@ export function AwsConnectDialog({
       if (complete.data || start.error) start.reset();
       complete.reset();
       setRoleArn("");
-      tab?.current?.close();
-      if (tab) tab.current = null;
     }
   }
 
@@ -218,29 +208,10 @@ export function AwsConnectDialog({
             {start.error.message}
           </p>
         ) : !info ? (
-          <p className="text-muted-foreground">Preparing your CloudFormation link</p>
+          <p className="text-muted-foreground">Preparing this workspace&apos;s parameters</p>
         ) : (
           <div className="space-y-5">
-            {info.console_url ? (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2.5">
-                <p className="text-[12.5px] text-muted-foreground">
-                  AWS CloudFormation opened in a new tab with the stack filled in.
-                </p>
-                <Button asChild size="sm" variant="outline">
-                  <a href={info.console_url} target="_blank" rel="noreferrer">
-                    Open it again
-                    <ExternalLink aria-hidden="true" />
-                  </a>
-                </Button>
-              </div>
-            ) : (
-              <p role="status" className="rounded-md border border-dashed px-3 py-2.5 text-[12.5px] text-muted-foreground">
-                One-click setup is not available on this server yet. An admin runs{" "}
-                <span className="font-mono">make publish-connect-template</span> and sets{" "}
-                <span className="font-mono">AWS_CONNECT_TEMPLATE_URL</span>. Until then, use the AWS CLI below.
-              </p>
-            )}
-            {info.console_url && <Steps region={info.region} />}
+            <UploadSteps info={info} />
             <form onSubmit={verify} className="space-y-2">
               <Label htmlFor="role-arn">RoleArn</Label>
               <div className="flex gap-2">
@@ -274,7 +245,7 @@ export function AwsConnectDialog({
                 ))}
               </ul>
             </Disclosure>
-            <OtherWays info={info} defaultOpen={!info.console_url} />
+            <OtherWays info={info} />
           </div>
         )}
       </DialogContent>

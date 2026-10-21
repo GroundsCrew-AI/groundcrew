@@ -707,6 +707,13 @@
             "title": "External Id",
             "type": "string"
           },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/StackParameter"
+            },
+            "title": "Parameters",
+            "type": "array"
+          },
           "principal_arn": {
             "title": "Principal Arn",
             "type": "string"
@@ -723,6 +730,10 @@
             "title": "Stack Name",
             "type": "string"
           },
+          "template_download_url": {
+            "title": "Template Download Url",
+            "type": "string"
+          },
           "template_path": {
             "title": "Template Path",
             "type": "string"
@@ -733,6 +744,10 @@
               "deploy"
             ],
             "title": "Tier",
+            "type": "string"
+          },
+          "upload_console_url": {
+            "title": "Upload Console Url",
             "type": "string"
           }
         },
@@ -745,6 +760,9 @@
           "stack_name",
           "console_url",
           "template_path",
+          "template_download_url",
+          "upload_console_url",
+          "parameters",
           "cli_command",
           "role_arn_command"
         ],
@@ -7709,6 +7727,24 @@
           "paused"
         ],
         "title": "SignupsIn",
+        "type": "object"
+      },
+      "StackParameter": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "StackParameter",
         "type": "object"
       },
       "StageFinished": {
