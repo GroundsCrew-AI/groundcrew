@@ -10,9 +10,9 @@ Brief: `docs/prompts/phase6.md`. Plan: `docs/phase6-plan.md`. Re-read both after
 | P6.2 Code hardening | done 2026-10-21 | draft PR #57 (`phase6-hardening`, stacked on #56) |
 | P6.3 Email sign-in, production GitHub App, AWS connect by upload | done 2026-10-22 | draft PR #58 (`phase6-email-github`, stacked on #57) |
 | P6.4 Terraform | applied 2026-10-22 | draft PR #60 (`phase6-terraform`, stacked on #58) |
-| P6.5 Host setup | done 2026-10-22, waiting for review | draft PR (`phase6-host`, stacked on #60) |
-| P6.6 Release pipeline | not started | |
-| P6.7 First production deploy | not started | |
+| P6.5 Host setup | done 2026-10-22 | draft PR #61 (`phase6-host`, stacked on #60) |
+| P6.6 Release pipeline | skipped on 2026-10-22 (no GitHub Actions or GHCR for now): manual deploy from source instead | |
+| P6.7 First production deploy | done 2026-10-22: https://groundkrew.com live | draft PR (`phase6-deploy`, stacked on #61) |
 | P6.8 End-to-end on production | not started | |
 | P6.9 Runbook, final report | not started | |
 
@@ -203,12 +203,60 @@ Open issues:
 - `gc-certs issue` accepts the Let's Encrypt Subscriber Agreement only with `--agree-tos`, which needs
   your OK in P6.7.
 
+## Change of plan (2026-10-22): manual deploys from source, then P6.7
+
+P6.6 (GitHub Actions, GHCR, pull-based updater) is skipped for now. Instead:
+- `infra/platform/bin/deploy <ref>` / `rollback` (our wrappers in `ops/bin/`, git-ignored): `git archive`
+  over SSH, `gc-release` builds the images on the host, migrates, rolls out worker, api, web with health
+  checks, checks HTTPS, and rolls back on failure; 3 releases kept; going back runs no migrations.
+- Production web image (`apps/web/Dockerfile`, standalone, uid 10001) and `/api/health`.
+- SSH is a list of admin addresses (Terraform `admin_cidrs`, ufw follows through `push.sh`).
+
+## P6.7 First production deploy (2026-10-22)
+
+Steps, each OK'd in chat:
+1. Security group: SSH also from the new admin address (Terraform, 1 added, 1 changed in place). ufw on
+   the host still allowed only the old one; recovered by stop, a one-line `bootcmd` user data, start
+   (the host came back with everything running). The original user data is saved; put it back at the
+   next planned stop.
+2. Secrets on the host: `SMTP_PASSWORD` (set by you), `TOKEN_FACTORY_API_KEY` and `TAVILY_API_KEY` (piped
+   from the local `.env`, never printed).
+3. Certificates: `gc-certs issue` for groundkrew.com, www, api (Let's Encrypt, expires 2027-01-19,
+   renewed by certbot's timer, weekly dry run). Fixed on the way: Ubuntu's own `ssl_protocols` made the
+   site a duplicate; TLS settings now live at http level, so TLS 1.1 is refused on every server; a
+   default HTTPS server refuses the handshake for other names; `/signin` no longer redirects; no duplicate
+   HSTS. OCSP stapling: the certificate has no OCSP URL (Let's Encrypt dropped OCSP), so there is nothing
+   to staple; the setting stays for a certificate that has one.
+4. Deploy `13196e0a74bc`: all migrations on a fresh database, worker, api, web healthy, HTTPS checks
+   passed.
+
+Checks over HTTPS from outside: landing, sign-in, Terms 200; `/aws-connect.yaml` 200; private pages
+redirect to sign-in; `/api/gc/*` 401 without a session, 403 for a cross-origin write; on
+api.groundkrew.com only `/ready`, `/health`, the run stream (401 with a bad token) and the webhook (503
+until its secret is set) answer, everything else 404; HTTP and www redirect to https://groundkrew.com;
+TLS 1.2 and 1.3 only; CSP with nonce, HSTS, X-Frame-Options DENY, nosniff, Referrer-Policy,
+Permissions-Policy, COOP; cookies `__Host-`/`__Secure-`, HttpOnly, Secure, SameSite=Lax.
+
+On the host: `gc-isolation-check` passes against the real Postgres (172.30.0.2:5432) and API
+(172.30.0.4:8000) as well as the metadata service, host addresses, loopback, and the Docker bridge; the
+internet works from builds; builds run on gVisor's kernel. The worker's AWS identity is
+`assumed-role/groundcrew-platform` (no keys); the web container cannot reach the metadata service. All
+app containers run as uid 10001, Postgres as 999; Postgres has no published port.
+
+Open issues:
+- The production GitHub App does not exist yet: sign-in is by email link until it does
+  (settings in `docs/self-hosting.md`); `/github/webhook` answers 503 until its secret is set.
+- The automatic rollback path has unit-level logic only; it has not been exercised live (a deploy of a
+  commit that fails its health check would show it).
+- Restore the instance's original user data at the next stop (saved in the session scratchpad and in
+  Terraform: `terraform apply -replace` would also rebuild it).
+
 ## Cost
 
 | Item | Monthly |
 |---|---|
 | Planned run rate (t3.large unlimited, 80 GiB gp3, Elastic IP) | about $71, up to about $81 with many builds |
-| Spent so far in Phase 6 | the platform host runs from 2026-10-22: about $2.35 a day (instance, volume, IPv4) |
+| Spent so far in Phase 6 | the platform host runs from 2026-10-22: about $2.35 a day (instance, volume, IPv4); model calls bounded by the caps |
 
 ## How to resume
 

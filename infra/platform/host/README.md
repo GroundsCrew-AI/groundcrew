@@ -24,6 +24,25 @@ Commands on the host (`/opt/groundcrew/bin`, on the PATH for login shells):
 | `gc-certs issue --email E --agree-tos / status / dry-run` | Let's Encrypt for groundkrew.com, www, api |
 | `gc-status / restart / logs SERVICE` | services, health, disk; rolling restart |
 | `gc-isolation-check` | live proof that builds cannot reach internal services or the metadata service |
+| `gc-release deploy SHA < source.tar / rollback [SHA] / list` | build on the host, migrate, roll out with health checks, roll back |
+
+## Deploying
+
+From your machine, for a commit you want live (the server needs no repository access):
+
+```bash
+GC_HOST=<server> GC_SSH_KEY=~/.ssh/<key> GC_CONFIG_FILE=<settings.env> infra/platform/bin/deploy <git-ref>
+GC_HOST=<server> GC_SSH_KEY=~/.ssh/<key> infra/platform/bin/rollback          # previous release
+GC_HOST=<server> GC_SSH_KEY=~/.ssh/<key> infra/platform/bin/rollback --list   # the last 3
+```
+
+`deploy` sends `git archive` of the commit over SSH; `gc-release` builds `groundcrew/api:<sha>` and
+`groundcrew/web:<sha>` on the host's main Docker daemon (the web image takes the API's public URL from
+`web.env` at build time), runs the migrations, which must be additive, then replaces worker, api and
+web one at a time, each until its health check passes, and finally checks `/ready` and `/api/health`
+over HTTPS through nginx. Any failure puts the previous release back the same way, without
+migrations. `GC_CONFIG_FILE` (optional) becomes `/etc/groundcrew/config.env`: the non-secret
+settings (models, SMTP host, regions). Secrets stay in `gc-secrets`.
 | `gc-firewall apply / show` | the rules above |
 
 How builds are isolated, and what the spike on this host found: docs/phase6-plan.md, section 6.

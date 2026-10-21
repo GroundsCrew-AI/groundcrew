@@ -99,8 +99,9 @@ def test_nginx_exposes_only_the_apis_public_routes() -> None:
     ]
     assert "return 404;" in api.split("location / {")[1]
     assert "proxy_buffering off;" in api and "proxy_read_timeout 3600s;" in api
-    assert "ssl_protocols TLSv1.2 TLSv1.3;" in conf
-    assert conf.count("Strict-Transport-Security") >= 3
+    common_tls = (HOST / "nginx" / "groundcrew-common.conf").read_text()
+    assert "ssl_protocols TLSv1.2 TLSv1.3;" in common_tls
+    assert conf.count("Strict-Transport-Security") >= 2
     # The client address is the connection's, never what a client sends.
     assert "$proxy_add_x_forwarded_for" not in conf
     assert "proxy_set_header X-Forwarded-For $remote_addr;" in conf
