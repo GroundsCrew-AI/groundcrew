@@ -435,8 +435,9 @@ export interface paths {
         post?: never;
         /**
          * Delete Connection
-         * @description Remove the connection, its stored secret, and every resource it discovered (with their
-         *     edges). Access on the customer's side is removed by them: see `cleanup`.
+         * @description Remove the connection, its stored secret, every resource it discovered (with their
+         *     edges), and the telemetry read for them (app.deletion). Access on the customer's side is
+         *     removed by them: see `cleanup`.
          */
         delete: operations["delete_connection_connections__connection_id__delete"];
         options?: never;
@@ -799,7 +800,13 @@ export interface paths {
         get: operations["me_me_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete My Account
+         * @description Delete your account: your sign-in identities, memberships, and the workspaces only you
+         *     are in, with everything in them. Shared workspaces stay; your name stays on what you
+         *     approved there. Signs you out everywhere.
+         */
+        delete: operations["delete_my_account_me_delete"];
         options?: never;
         head?: never;
         /**
@@ -807,6 +814,23 @@ export interface paths {
          * @description Change your display name.
          */
         patch: operations["update_me_me_patch"];
+        trace?: never;
+    };
+    "/me/account-deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Account Deletion Preview */
+        get: operations["account_deletion_preview_me_account_deletion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/me/password": {
@@ -1008,7 +1032,13 @@ export interface paths {
         get: operations["get_workspace_workspaces__workspace_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Workspace
+         * @description Delete the workspace and everything Groundcrew stored for it (owners): members, invites,
+         *     connections and their credentials, the graph, runs, approvals, incidents, usage, and the
+         *     audit log. Nothing changes in the connected accounts; `cleanup` says what to remove there.
+         */
+        delete: operations["delete_workspace_workspaces__workspace_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -1250,6 +1280,23 @@ export interface components {
              * @default check_email
              */
             status: string;
+        };
+        /** AccountDelete */
+        AccountDelete: {
+            /** Confirm */
+            confirm: string;
+        };
+        /**
+         * AccountDeletionOut
+         * @description What deleting your account would do.
+         */
+        AccountDeletionOut: {
+            /** Blocked By */
+            blocked_by: components["schemas"]["WorkspaceRef"][];
+            /** Deletes */
+            deletes: components["schemas"]["WorkspaceRef"][];
+            /** Leaves */
+            leaves: components["schemas"]["WorkspaceRef"][];
         };
         /**
          * ActionPlan
@@ -1687,6 +1734,15 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ConnectionCleanup */
+        ConnectionCleanup: {
+            /** Connection */
+            connection: string;
+            /** Kind */
+            kind: string;
+            /** Steps */
+            steps: string[];
+        };
         /** ConnectionDeleted */
         ConnectionDeleted: {
             /** Cleanup */
@@ -1706,6 +1762,8 @@ export interface components {
         ConnectionKind: "aws" | "github" | "vercel" | "azure" | "k8s";
         /** ConnectionOut */
         ConnectionOut: {
+            /** Access */
+            access?: string[];
             /** Account */
             account?: string | null;
             /** Capabilities */
@@ -4409,6 +4467,21 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** WorkspaceDelete */
+        WorkspaceDelete: {
+            /** Confirm Name */
+            confirm_name: string;
+        };
+        /** WorkspaceDeleted */
+        WorkspaceDeleted: {
+            /** Cleanup */
+            cleanup: components["schemas"]["ConnectionCleanup"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
         /** WorkspaceDetail */
         WorkspaceDetail: {
             /**
@@ -4441,6 +4514,16 @@ export interface components {
             /** Name */
             name: string;
             role: components["schemas"]["WorkspaceRole"];
+        };
+        /** WorkspaceRef */
+        WorkspaceRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
         };
         /**
          * WorkspaceRole
@@ -5959,6 +6042,46 @@ export interface operations {
             };
         };
     };
+    delete_my_account_me_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountDelete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description You are the only owner of a shared workspace. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_me_me_patch: {
         parameters: {
             query?: never;
@@ -5981,6 +6104,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    account_deletion_preview_me_account_deletion_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDeletionOut"];
                 };
             };
             /** @description Validation Error */
@@ -6316,6 +6470,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_workspace_workspaces__workspace_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceDelete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceDeleted"];
                 };
             };
             /** @description Validation Error */

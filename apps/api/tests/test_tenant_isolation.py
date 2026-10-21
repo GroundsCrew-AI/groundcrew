@@ -65,6 +65,11 @@ def _none(_: Tenant) -> None:
 # (method, OpenAPI path) -> (method, concrete URL, JSON body)
 CROSS_TENANT: dict[tuple[str, str], Request] = {
     ("GET", "/workspaces/{workspace_id}"): ("GET", lambda t: f"/workspaces/{t.workspace}", _none),
+    ("DELETE", "/workspaces/{workspace_id}"): (
+        "DELETE",
+        lambda t: f"/workspaces/{t.workspace}",
+        lambda t: {"confirm_name": "alice's workspace"},
+    ),
     ("PATCH", "/workspaces/{workspace_id}"): (
         "PATCH",
         lambda t: f"/workspaces/{t.workspace}",
@@ -291,6 +296,8 @@ NOT_WORKSPACE_SCOPED = {
     ("GET", "/me"): "the caller's own account",
     ("PATCH", "/me"): "the caller's own account",
     ("POST", "/me/password"): "the caller's own account",
+    ("DELETE", "/me"): "the caller's own account (test_deletion.py)",
+    ("GET", "/me/account-deletion"): "the caller's own account",
     ("POST", "/workspaces"): "creates a workspace the caller owns",
     ("GET", "/connections/aws/template"): "the public connect template",
     ("GET", "/connections/aws/template-url"): "the public connect template URL",

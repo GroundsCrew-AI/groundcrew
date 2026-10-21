@@ -13,6 +13,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 import app.routes.connections as connections_routes
+from app import deletion
 from app.config import Settings, get_settings
 from app.connectors.aws import AwsError, CallerIdentity
 from app.connectors.vercel import VercelClient
@@ -81,6 +82,8 @@ def secrets_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 def sessions(monkeypatch: pytest.MonkeyPatch) -> FakeSessions:
     fake = FakeSessions()
     monkeypatch.setattr(connections_routes, "get_sessions", lambda: fake)
+    # Deleting a connection or a workspace drops cached sessions there.
+    monkeypatch.setattr(deletion, "get_sessions", lambda: fake)
     return fake
 
 
