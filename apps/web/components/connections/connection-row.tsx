@@ -178,7 +178,7 @@ export function ConnectionRow({
           </p>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:justify-end">
         {connection.status === "pending" &&
         connection.kind === "aws" &&
         onResume ? (

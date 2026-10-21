@@ -96,9 +96,8 @@ export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onO
           </div>
         ) : !data.configured ? (
           <p className="rounded-md border border-dashed px-3 py-2.5 text-[12.5px] text-muted-foreground">
-            GitHub is not set up on this Groundcrew server yet. An admin adds the Groundcrew GitHub App&apos;s ID
-            and private key (<span className="font-mono">GITHUB_APP_ID</span>,{" "}
-            <span className="font-mono">GITHUB_APP_PRIVATE_KEY_PATH</span>; see docs/self-hosting.md).
+            GitHub is not set up on this Groundcrew server yet. Ask the person who runs it to add the Groundcrew GitHub
+            App.
           </p>
         ) : data.error ? (
           <Problem onRetry={() => void installations.refetch()}>

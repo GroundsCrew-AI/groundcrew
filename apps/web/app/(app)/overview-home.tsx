@@ -33,7 +33,7 @@ function Metric({
       {children && <div className="mt-2.5">{children}</div>}
     </>
   );
-  const className = "block min-w-0 bg-card px-5 py-4";
+  const className = "block min-w-0 bg-card px-4 py-4 sm:px-5";
   return href ? (
     <Link href={href} className={`${className} hover:bg-accent/50 focus-visible:bg-accent/50`}>
       {body}
@@ -104,13 +104,13 @@ export function OverviewHome() {
         ) : (
           <section
             aria-label="At a glance"
-            className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2 lg:grid-cols-4"
+            className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-4"
           >
             {summary.data ? (
               <Metrics summary={summary.data} />
             ) : (
               [0, 1, 2, 3].map((i) => (
-                <div key={i} className="space-y-2 bg-card px-5 py-4">
+                <div key={i} className="space-y-2 bg-card px-4 py-4 sm:px-5">
                   <Skeleton className="h-3 w-24" />
                   <Skeleton className="h-6 w-12" />
                   <Skeleton className="h-3 w-32" />
