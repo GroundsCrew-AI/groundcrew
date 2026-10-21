@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { AuthShell } from "@/components/auth/auth-shell";
 import { FormMessage, ResetPasswordForm } from "@/components/auth/forms";
@@ -10,6 +11,8 @@ export const metadata: Metadata = { title: "Choose a new password" };
 export default async function ResetPasswordPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { token } = await searchParams;
   const options = await authOptions();
+  // Email and password is off on this server (PASSWORD_AUTH_ENABLED): only the sign-in page.
+  if (!options.password) redirect("/signin");
   return (
     <AuthShell title="Choose a new password">
       {token ? (

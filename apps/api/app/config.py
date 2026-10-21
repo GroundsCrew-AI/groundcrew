@@ -299,7 +299,10 @@ class Settings(BaseSettings):
 
     # Accounts. Email and password sign-up next to GitHub and Google (the web app enables those
     # when their OAuth credentials are set). New passwords need PASSWORD_MIN_LENGTH characters.
-    password_auth_enabled: bool = True
+    # Unset: on in dev and test, off in staging and production (GitHub and email links only);
+    # set either to true to offer it on a hosted instance.
+    password_auth_enabled: bool | None = None
+    google_auth_enabled: bool | None = None
     password_min_length: int = 10
     # Password accounts sign in only after opening the link sent to their address.
     auth_require_verified_email: bool = True
@@ -328,6 +331,20 @@ class Settings(BaseSettings):
     job_retention_days: int = 7
     failed_job_retention_days: int = 30
 
+    @property
+    def password_auth(self) -> bool:
+        """Email and password accounts are offered (PASSWORD_AUTH_ENABLED, else dev and test)."""
+        if self.password_auth_enabled is not None:
+            return self.password_auth_enabled
+        return self.app_env in ("dev", "test")
+
+    @property
+    def google_auth(self) -> bool:
+        """Google sign-in is accepted (GOOGLE_AUTH_ENABLED, else dev and test)."""
+        if self.google_auth_enabled is not None:
+            return self.google_auth_enabled
+        return self.app_env in ("dev", "test")
+
     def production_problems(self) -> list[str]:
         """What a staging or production instance is missing. Dev and test may run without
         these; a hosted instance must not (secrets would be unset or derived)."""
@@ -343,7 +360,14 @@ class Settings(BaseSettings):
             problems.append("INTERNAL_JWT_SECRET is shorter than 32 characters")
         if "localhost" in self.web_origin or "127.0.0.1" in self.web_origin:
             problems.append("WEB_ORIGIN still points at localhost")
-        if self.password_auth_enabled and not self.smtp_host:
+        # Dev-only switches must not be set at all on a hosted instance (each is also refused
+        # at the place it is used).
+        for name in ("live_script_self_approve", "pipeline_fake", "k8s_allow_private_servers"):
+            if getattr(self, name):
+                problems.append(f"{name.upper()} is a local development setting")
+        if self.deploy_fixtures_dir:
+            problems.append("DEPLOY_FIXTURES_DIR is a local development setting")
+        if self.password_auth and not self.smtp_host:
             problems.append(
                 "SMTP_HOST is not set, so email sign-up cannot send verification links "
                 "(set it, or PASSWORD_AUTH_ENABLED=false)"

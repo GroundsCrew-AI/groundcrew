@@ -140,6 +140,7 @@ class Accepted(BaseModel):
 
 class Options(BaseModel):
     password: bool
+    google: bool
     require_verified_email: bool
     password_min_length: int
 
@@ -165,15 +166,21 @@ def _check_password(password: str, min_length: int, email: str | None = None) ->
 async def options(settings: SettingsDep) -> Options:
     """What the sign-in page offers."""
     return Options(
-        password=settings.password_auth_enabled,
+        password=settings.password_auth,
+        google=settings.google_auth,
         require_verified_email=settings.auth_require_verified_email,
         password_min_length=settings.password_min_length,
     )
 
 
 @router.post("/oauth")
-async def oauth(body: OAuthProfile, session: SessionDep) -> AuthUser:
-    """A GitHub or Google sign-in: the user, linked or created."""
+async def oauth(body: OAuthProfile, session: SessionDep, settings: SettingsDep) -> AuthUser:
+    """A GitHub or Google sign-in: the user, linked or created. Google only where it is on
+    (GOOGLE_AUTH_ENABLED; off on hosted instances by default)."""
+    if body.provider == "google" and not settings.google_auth:
+        raise AuthFlowError(
+            status.HTTP_403_FORBIDDEN, "disabled", "Google sign-in is turned off on this server."
+        )
     return AuthUser.of(await accounts.oauth_sign_in(session, body))
 
 
@@ -185,7 +192,7 @@ async def sign_in(
     settings: SettingsDep,
     x_client_ip: ClientIp = None,
 ) -> AuthUser:
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _limit(f"sign-in:ip:{_client(request, x_client_ip)}", 30, 600)
     _limit(f"sign-in:email:{body.email}", 10, 900)
     try:
@@ -222,7 +229,7 @@ async def sign_up(
     """Create a password account and send the confirmation link. For an address that already
     has an account, its owner gets an email saying so (or a new link, if they never
     confirmed); the answer here is the same."""
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _check_password(body.password, settings.password_min_length, body.email)
     _limit(f"sign-up:ip:{_client(request, x_client_ip)}", 10, 3600)
     name = (body.name or "").strip() or None
@@ -259,7 +266,7 @@ async def resend_verification(
     mailer: MailerDep,
     x_client_ip: ClientIp = None,
 ) -> Accepted:
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _limit(f"links:ip:{_client(request, x_client_ip)}", 20, 3600)
     _limit(f"verify:email:{body.email}", 5, 3600)
     user = await accounts.user_by_email(session, body.email)
@@ -273,9 +280,11 @@ async def verify_email(
     body: LinkWithPassword,
     request: Request,
     session: SessionDep,
+    settings: SettingsDep,
     x_client_ip: ClientIp = None,
 ) -> AuthUser:
     """Confirm the address from the link; the account's password proves it is theirs."""
+    _require_password_auth(settings.password_auth)
     _limit(f"link:ip:{_client(request, x_client_ip)}", 30, 3600)
     try:
         user = await accounts.verify_email(session, body.token, body.password)
@@ -301,7 +310,7 @@ async def forgot_password(
 ) -> Accepted:
     """Send a reset link if the address has an account (GitHub and Google accounts too: the
     link adds a password)."""
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _limit(f"links:ip:{_client(request, x_client_ip)}", 20, 3600)
     _limit(f"reset:email:{body.email}", 5, 3600)
     user = await accounts.user_by_email(session, body.email)
@@ -328,7 +337,7 @@ async def reset_password(
     x_client_ip: ClientIp = None,
 ) -> AuthUser:
     """Choose a new password from a reset link. Every existing session ends."""
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _check_password(body.password, settings.password_min_length)
     _limit(f"link:ip:{_client(request, x_client_ip)}", 30, 3600)
     try:

@@ -150,7 +150,16 @@ With `APP_ENV=staging` or `production`, the API and worker refuse to start until
 | `INTERNAL_JWT_SECRET` | 32+ characters, shared with the web app |
 | `APPROVAL_TOKEN_KEY` | Signs single-use approved-action tokens |
 | `WEB_ORIGIN` | The public web URL (not localhost): CORS and links in emails |
-| `SMTP_HOST` (and the other `SMTP_*`) | Confirmation and reset emails, unless `PASSWORD_AUTH_ENABLED=false` |
+| `SMTP_HOST` (and the other `SMTP_*`) | Confirmation and reset emails, when `PASSWORD_AUTH_ENABLED=true` |
+
+They also refuse to start with any local development switch set: `LIVE_SCRIPT_SELF_APPROVE`,
+`PIPELINE_FAKE`, `K8S_ALLOW_PRIVATE_SERVERS`, `DEPLOY_FIXTURES_DIR`. Each of those, the dev evidence
+endpoint, deploy fixtures, the e2e test user, and the local kind cluster as a deploy target are
+also refused where they are used (`tests/test_production_lockout.py`).
+
+Sign-in on a hosted instance is GitHub only until email links are set up: email and password and
+Google are off unless `PASSWORD_AUTH_ENABLED=true` or `GOOGLE_AUTH_ENABLED=true` (set the latter for
+the web app too).
 
 The web app needs `AUTH_SECRET`, `INTERNAL_JWT_SECRET`, and `API_INTERNAL_URL`, plus the OAuth
 credentials of the providers you offer. `GET /ready` answers 200 once the database is reachable

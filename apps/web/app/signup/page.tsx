@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { AuthShell } from "@/components/auth/auth-shell";
-import { FormMessage, SignUpForm } from "@/components/auth/forms";
+import { SignUpForm } from "@/components/auth/forms";
 import { OrDivider, ProviderButtons } from "@/components/auth/provider-buttons";
 import { authOptions } from "@/lib/auth-api";
 import { enabledOAuthProviders } from "@/lib/auth-providers";
@@ -17,6 +17,8 @@ export default async function SignUpPage({ searchParams }: { searchParams: Promi
   const { email } = await searchParams;
   const providers = enabledOAuthProviders();
   const options = await authOptions();
+  // Email and password is off on this server (PASSWORD_AUTH_ENABLED): only the sign-in page.
+  if (!options.password) redirect("/signin");
   return (
     <AuthShell
       title="Create your Groundcrew account"
@@ -31,15 +33,8 @@ export default async function SignUpPage({ searchParams }: { searchParams: Promi
       }
     >
       <ProviderButtons next="/" providers={providers} />
-      {options.password ? (
-        <>
-          {(providers.github || providers.google) && <OrDivider />}
-          <SignUpForm defaultEmail={email} minLength={options.password_min_length} />
-        </>
-      ) : (
-        !providers.github &&
-        !providers.google && <FormMessage>Sign-up is not available on this server. Ask its administrator.</FormMessage>
-      )}
+      {(providers.github || providers.google) && <OrDivider />}
+      <SignUpForm defaultEmail={email} minLength={options.password_min_length} />
     </AuthShell>
   );
 }

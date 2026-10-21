@@ -56,7 +56,8 @@ export interface paths {
         put?: never;
         /**
          * Oauth
-         * @description A GitHub or Google sign-in: the user, linked or created.
+         * @description A GitHub or Google sign-in: the user, linked or created. Google only where it is on
+         *     (GOOGLE_AUTH_ENABLED; off on hosted instances by default).
          */
         post: operations["oauth_auth_oauth_post"];
         delete?: never;
@@ -3048,6 +3049,11 @@ export interface components {
         };
         /** MeOut */
         MeOut: {
+            /**
+             * Password Auth
+             * @default false
+             */
+            password_auth: boolean;
             user: components["schemas"]["UserOut"];
             /** Workspaces */
             workspaces: components["schemas"]["WorkspaceOut"][];
@@ -3228,6 +3234,8 @@ export interface components {
         };
         /** Options */
         Options: {
+            /** Google */
+            google: boolean;
             /** Password */
             password: boolean;
             /** Password Min Length */
