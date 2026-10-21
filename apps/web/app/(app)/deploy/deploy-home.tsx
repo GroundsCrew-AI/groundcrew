@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useConnections } from "@/lib/discovery";
 import { useCreateDeploy, useDeploys } from "@/lib/deploys";
 import { useWorkspace } from "@/lib/workspace";
+import { canAct, VIEWER_READ_ONLY } from "@/lib/workspace-admin";
 
 export function DeployHome() {
   const router = useRouter();
@@ -39,6 +40,8 @@ export function DeployHome() {
               <Skeleton className="h-9 w-full" />
               <Skeleton className="h-16 w-full" />
             </div>
+          ) : !canAct(workspace.role) ? (
+            <p className="text-[13px] text-muted-foreground">{VIEWER_READ_ONLY}</p>
           ) : (
             <DeployForm
               key={workspace.id}

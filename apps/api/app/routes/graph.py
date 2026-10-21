@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 
 from app.accounts import NotFoundError, member_workspace
-from app.db.models import Edge, Resource, Run, RunStatus, Workspace
+from app.db.models import Edge, Resource, Run, RunStatus, Workspace, WorkspaceRole
 from app.discovery.engine import AGENT, start_discovery
 from app.routes.deps import CurrentUser, SessionDep
 from app.routes.discovery_schemas import (
@@ -26,9 +26,14 @@ from app.routes.schemas import RunCreated
 router = APIRouter(tags=["graph"])
 
 
-async def _check_member(session: SessionDep, user: CurrentUser, workspace_id: uuid.UUID) -> None:
+async def _check_member(
+    session: SessionDep,
+    user: CurrentUser,
+    workspace_id: uuid.UUID,
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
+) -> None:
     try:
-        await member_workspace(session, user, workspace_id)
+        await member_workspace(session, user, workspace_id, minimum)
     except NotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.") from None
 
@@ -39,7 +44,7 @@ async def discover_workspace(
 ) -> RunCreated:
     """Discover every connection, rebuild the graph, and write the system summary. Runs as a
     normal run: open /runs/{id} to watch it live."""
-    await _check_member(session, user, workspace_id)
+    await _check_member(session, user, workspace_id, WorkspaceRole.approver)
     active = await session.scalar(
         select(Run.id).where(
             Run.workspace_id == workspace_id,

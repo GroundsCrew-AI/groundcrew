@@ -4,6 +4,7 @@ import { Lock, Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { AccountSection } from "@/components/settings/account-section";
+import { AuditSection } from "@/components/settings/audit-section";
 import { LeaveWorkspace } from "@/components/settings/leave-workspace";
 import { MembersSection } from "@/components/settings/members-section";
 import { NotificationsSection } from "@/components/settings/notifications-section";
@@ -17,7 +18,15 @@ import { Button } from "@/components/ui/button";
 import { formatTimestamp } from "@/lib/format";
 import { useSummary } from "@/lib/queries";
 import { useWorkspace } from "@/lib/workspace";
-import { OWNER_ONLY, ownerCount, roleLabel, useMembers, useWorkspaceDetail } from "@/lib/workspace-admin";
+import {
+  OWNER_ONLY,
+  ownerCount,
+  ROLE_DESCRIPTION,
+  roleLabel,
+  useMembers,
+  useWorkspaceDetail,
+  withArticle,
+} from "@/lib/workspace-admin";
 
 function NoWorkspace() {
   const [open, setOpen] = useState(false);
@@ -38,8 +47,8 @@ function NoWorkspace() {
   );
 }
 
-/** Workspace name and settings, members and invites, and leaving. Owners change things;
- * members see the same page read-only, with the reason. */
+/** Workspace name and settings, members and invites, the audit log, and leaving. Owners
+ * change things; approvers and viewers see the same page read-only, with the reason. */
 export default function SettingsPage() {
   const { workspace, me, isLoading, error: workspaceError, refetch } = useWorkspace();
   const detail = useWorkspaceDetail(workspace?.id);
@@ -79,8 +88,8 @@ export default function SettingsPage() {
           >
             <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              You are a member of {data.name}. Owners change its name, settings, members, and connections. You can
-              see everything here, run discovery, report incidents, and approve pull requests and deploys.
+              You are {withArticle(data.role)} in {data.name}. Owners change its name, settings, members, and
+              connections. {ROLE_DESCRIPTION[data.role]}
             </span>
           </p>
         )}
@@ -133,7 +142,7 @@ export default function SettingsPage() {
           title="Members"
           description={
             owner
-              ? "Owners manage connections, members, and settings. Members see everything and approve pull requests and deploys."
+              ? `${ROLE_DESCRIPTION.owner} ${ROLE_DESCRIPTION.approver} ${ROLE_DESCRIPTION.viewer}`
               : OWNER_ONLY.members
           }
         >
@@ -150,6 +159,14 @@ export default function SettingsPage() {
               <RowsSkeleton rows={2} />
             </div>
           )}
+        </SettingsSection>
+
+        <SettingsSection
+          id="settings-activity"
+          title="Activity"
+          description="Who approved what and when, and every change to members, connections, and settings."
+        >
+          <AuditSection workspaceId={data.id} />
         </SettingsSection>
 
         {me && (

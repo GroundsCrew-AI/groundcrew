@@ -98,8 +98,8 @@ export function WorkspaceSettingsForm({
       <fieldset className="space-y-2">
         <legend className="mb-1 text-[13px] font-medium">Who can approve emergency actions</legend>
         <p className="mb-2 text-[12px] text-muted-foreground">
-          Rollbacks, restarts, and other actions that change production at once. Anyone can reject them, and any
-          member can approve pull requests and deploy plans.
+          Rollbacks, restarts, and other actions that change production at once. Owners and approvers can always
+          reject them and approve pull requests and deploy plans; viewers never approve.
         </p>
         <RadioOption
           name={`${id}-approvers`}
@@ -111,11 +111,11 @@ export function WorkspaceSettingsForm({
         />
         <RadioOption
           name={`${id}-approvers`}
-          value="members"
-          checked={draft.emergencyApprovers === "members"}
+          value="approvers"
+          checked={draft.emergencyApprovers === "approvers"}
           disabled={locked}
-          onChange={() => set({ emergencyApprovers: "members" })}
-          title="Any member"
+          onChange={() => set({ emergencyApprovers: "approvers" })}
+          title="Owners and approvers"
         />
       </fieldset>
 

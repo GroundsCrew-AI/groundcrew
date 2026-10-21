@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/auth";
+import { clientIp } from "@/lib/auth-api";
 import { signInternalToken } from "@/lib/internal-jwt";
 
 /**
@@ -46,6 +47,9 @@ async function proxy(request: NextRequest, context: Context): Promise<Response> 
   const headers: Record<string, string> = { authorization: `Bearer ${token}` };
   const contentType = request.headers.get("content-type");
   if (contentType) headers["content-type"] = contentType;
+  // For per-address rate limits and the audit log.
+  const ip = await clientIp();
+  if (ip) headers["x-client-ip"] = ip;
 
   let upstream: Response;
   try {

@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.accounts import NotFoundError, require_member
-from app.db.models import Approval, Run
+from app.audit import record
+from app.db.models import Approval, Run, WorkspaceRole
 from app.policy.engine import (
     ApprovalForbiddenError,
     ApprovalNotFoundError,
@@ -15,7 +16,7 @@ from app.policy.engine import (
     decide_approval,
 )
 from app.policy.self_approve import self_approve, self_approve_allowed
-from app.routes.deps import CurrentUser, SessionDep, SettingsDep
+from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.schemas import ApprovalOut, DecideIn
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -23,14 +24,15 @@ router = APIRouter(prefix="/approvals", tags=["approvals"])
 
 @router.post("/{approval_id}/decide")
 async def decide(
-    approval_id: uuid.UUID, body: DecideIn, user: CurrentUser, session: SessionDep
+    approval_id: uuid.UUID, body: DecideIn, user: CurrentUser, session: SessionDep, ip: ClientIp
 ) -> ApprovalOut:
     """Record the signed-in user's decision and resume the run."""
     approval = await session.get(Approval, approval_id)
     try:
         if approval is None:
             raise NotFoundError
-        await require_member(session, user.id, approval.workspace_id)
+        # Approvals are for owners and approvers; viewers get a 403.
+        await require_member(session, user.id, approval.workspace_id, WorkspaceRole.approver)
     except NotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Approval not found.") from None
     await session.commit()  # end the read; decide_approval locks the rows itself
@@ -44,6 +46,22 @@ async def decide(
     except ApprovalForbiddenError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from None
     run = await session.get_one(Run, approval.run_id)
+    record(
+        session,
+        workspace_id=approval.workspace_id,
+        actor=user,
+        action=f"approval.{approval.status}",
+        target_type="approval",
+        target_id=approval.id,
+        detail={
+            "tool": approval.tool_name,
+            "policy": str(approval.policy),
+            "run_id": str(run.id),
+            "agent": run.agent,
+        },
+        ip=ip,
+    )
+    await session.commit()
     return ApprovalOut.build(approval, run, user)
 
 

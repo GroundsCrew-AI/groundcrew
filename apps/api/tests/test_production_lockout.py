@@ -3,13 +3,14 @@ and a production instance refuses to start with any dev-only switch set."""
 
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
 from pydantic import SecretStr
 
 from app.config import Settings, get_settings
+from app.connectors.credentials import CredentialsProvider
 from app.connectors.kubernetes import UnsafeKubeconfigError, check_kubeconfig
 from app.db.models import Approval, Run, RunStatus, ToolPolicy
 from app.db.session import SessionFactory, get_session_factory
@@ -131,28 +132,21 @@ async def test_deploy_fixtures_are_refused(client: httpx.AsyncClient, alice: Mem
     assert "local dev only" in r.json()["detail"]
 
 
+def _k8s(settings: Settings, server: str | None) -> K8sTarget:
+    # The registry check reads only settings, deploy settings, and the server address.
+    no_credentials = cast(CredentialsProvider, None)
+    return K8sTarget(
+        settings, no_credentials, uuid.uuid4(), cluster="kind", deploy=None, server=server
+    )
+
+
 async def test_local_kind_target_is_refused() -> None:
     for server in (None, "https://127.0.0.1:6443", "https://groundcrew-control-plane:6443"):
-        target = K8sTarget(
-            _prod(),
-            None,
-            uuid.uuid4(),
-            cluster="kind-groundcrew",
-            deploy=None,
-            server=server,  # type: ignore[arg-type]
-        )
-        check = target._registry_check()
+        check = _k8s(_prod(), server)._registry_check()
         assert check.status == "fail", server
         assert "deploy settings" in check.detail
     # Local dev keeps deploying to kind.
-    dev = K8sTarget(
-        _settings(app_env="dev"),
-        None,
-        uuid.uuid4(),
-        cluster="kind",
-        deploy=None,
-        server=None,  # type: ignore[arg-type]
-    )
+    dev = _k8s(_settings(app_env="dev"), None)
     assert dev._registry_check().status == "pass"
 
 

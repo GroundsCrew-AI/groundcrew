@@ -80,8 +80,12 @@ class ToolPolicy(enum.StrEnum):
 
 
 class WorkspaceRole(enum.StrEnum):
+    """owner: everything, including members, connections, and settings. approver: approves
+    deploys and fixes and starts work. viewer: reads only."""
+
     owner = "owner"
-    member = "member"
+    approver = "approver"
+    viewer = "viewer"
 
 
 class JobStatus(enum.StrEnum):
@@ -198,7 +202,7 @@ class WorkspaceMember(TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     role: Mapped[WorkspaceRole] = mapped_column(
-        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.member
+        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.viewer
     )
 
 
@@ -221,7 +225,7 @@ class WorkspaceInvite(TimestampMixin, Base):
     github_login: Mapped[str | None] = mapped_column(String(100), index=True)
     email: Mapped[str | None] = mapped_column(String(320), index=True)
     role: Mapped[WorkspaceRole] = mapped_column(
-        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.member
+        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.viewer
     )
     invited_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
@@ -502,6 +506,32 @@ class Approval(TimestampMixin, Base):
     # Set instead of decided_by when no signed-in user decided: "script:<name> (dev)" for the
     # dev-only self-approve path (app/policy/self_approve.py).
     decided_via: Mapped[str | None] = mapped_column(String(100))
+
+
+class AuditEvent(Base):
+    """Who did what to a workspace, and when: approvals, members and invites, connections,
+    settings, deletions. Rows are only ever added. `actor_label` keeps the name after the
+    user is deleted; platform events (signups paused) have no workspace."""
+
+    __tablename__ = "audit_events"
+    __table_args__ = (Index("ix_audit_events_workspace_created", "workspace_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE")
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    actor_label: Mapped[str] = mapped_column(String(320))
+    # Dotted name: approval.approved, member.role_changed, connection.deleted, ...
+    action: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str | None] = mapped_column(String(32))
+    target_id: Mapped[str | None] = mapped_column(String(64))
+    # Short, non-secret facts (role from/to, tool name, connection kind).
+    detail: Mapped[JSON] = mapped_column(default=dict)
+    ip: Mapped[str | None] = mapped_column(String(64))
 
 
 class Event(TimestampMixin, Base):

@@ -35,10 +35,12 @@ export type OAuthProfile = {
   avatar_url?: string | null;
 };
 
-async function clientIp(): Promise<string | undefined> {
+/** The browser's address: X-Real-IP, which nginx sets from the connection (and overwrites if
+ * a client sends one), else the first X-Forwarded-For entry (local dev). */
+export async function clientIp(): Promise<string | undefined> {
   try {
     const h = await headers();
-    return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || undefined;
+    return h.get("x-real-ip") || h.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
   } catch {
     return undefined; // outside a request (build time)
   }

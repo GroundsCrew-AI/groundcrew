@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useCreateRun } from "@/lib/queries";
 import { useWorkspace } from "@/lib/workspace";
+import { canAct, VIEWER_READ_ONLY } from "@/lib/workspace-admin";
 
 const AGENTS = [
   {
@@ -63,7 +64,12 @@ export function NewRunDialog({ trigger }: { trigger?: ReactNode }) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {trigger ?? (
-          <Button size="sm" variant="outline" disabled={!workspace}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!workspace || !canAct(workspace.role)}
+            title={workspace && !canAct(workspace.role) ? VIEWER_READ_ONLY : undefined}
+          >
             <FlaskConical aria-hidden="true" />
             Test run
           </Button>

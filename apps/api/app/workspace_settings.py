@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.db.models import Workspace
 from app.security.crypto import DecryptionError, SecretsKeyError, decrypt, encrypt
@@ -43,9 +43,16 @@ class NotificationConfig(BaseModel):
 class WorkspaceConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    @field_validator("emergency_approvers", mode="before")
+    @classmethod
+    def _old_role_name(cls, value: object) -> object:
+        # Saved before roles had names: "members" meant every member, who are approvers now.
+        return "approvers" if value == "members" else value
+
     # Who may approve emergency actions (rollbacks, restarts, secret rollbacks, deleting a
-    # deployment). Write actions (fix PRs, deploy plans) can be approved by any member.
-    emergency_approvers: Literal["owners", "members"] = "owners"
+    # deployment): owners only, or approvers too. Write actions (fix PRs, deploy plans) can be
+    # approved by owners and approvers; viewers never approve.
+    emergency_approvers: Literal["owners", "approvers"] = "owners"
     # Let the incident watcher open incidents for this workspace (needs the platform's
     # INCIDENT_WATCH_ENABLED too). Off: incidents are only opened by a person.
     incident_watch: bool = True

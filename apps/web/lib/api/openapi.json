@@ -399,6 +399,108 @@
         "title": "AttemptModelCall",
         "type": "object"
       },
+      "AuditEventOut": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "target_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Type"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "actor",
+          "actor_id",
+          "action",
+          "target_type",
+          "target_id",
+          "detail"
+        ],
+        "title": "AuditEventOut",
+        "type": "object"
+      },
+      "AuditPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEventOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          }
+        },
+        "required": [
+          "items",
+          "next_before"
+        ],
+        "title": "AuditPage",
+        "type": "object"
+      },
       "AuthUser": {
         "description": "Who signed in. The web server keeps `id` in its session and sends it with each call.",
         "properties": {
@@ -5084,7 +5186,7 @@
           },
           "role": {
             "$ref": "#/components/schemas/WorkspaceRole",
-            "default": "member"
+            "default": "viewer"
           }
         },
         "title": "MemberAdd",
@@ -8343,7 +8445,7 @@
             "default": "owners",
             "enum": [
               "owners",
-              "members"
+              "approvers"
             ],
             "title": "Emergency Approvers",
             "type": "string"
@@ -8438,9 +8540,11 @@
         "type": "object"
       },
       "WorkspaceRole": {
+        "description": "owner: everything, including members, connections, and settings. approver: approves\ndeploys and fixes and starts work. viewer: reads only.",
         "enum": [
           "owner",
-          "member"
+          "approver",
+          "viewer"
         ],
         "title": "WorkspaceRole",
         "type": "string"
@@ -12013,6 +12117,95 @@
         ]
       }
     },
+    "/workspaces/{workspace_id}/audit": {
+      "get": {
+        "description": "Who did what in this workspace, newest first (every member).",
+        "operationId": "audit_log_workspaces__workspace_id__audit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Audit Log",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
     "/workspaces/{workspace_id}/discover": {
       "post": {
         "description": "Discover every connection, rebuild the graph, and write the system summary. Runs as a\nnormal run: open /runs/{id} to watch it live.",
@@ -12447,7 +12640,7 @@
         ]
       },
       "patch": {
-        "description": "Change a member's role (owners). The last owner cannot be made a member.",
+        "description": "Change a member's role (owners). The last owner stays an owner.",
         "operationId": "update_member_workspaces__workspace_id__members__user_id__patch",
         "parameters": [
           {

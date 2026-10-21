@@ -1002,6 +1002,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspace_id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit Log
+         * @description Who did what in this workspace, newest first (every member).
+         */
+        get: operations["audit_log_workspaces__workspace_id__audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspace_id}/discover": {
         parameters: {
             query?: never;
@@ -1102,7 +1122,7 @@ export interface paths {
         head?: never;
         /**
          * Update Member
-         * @description Change a member's role (owners). The last owner cannot be made a member.
+         * @description Change a member's role (owners). The last owner stays an owner.
          */
         patch: operations["update_member_workspaces__workspace_id__members__user_id__patch"];
         trace?: never;
@@ -1336,6 +1356,40 @@ export interface components {
              * @enum {string}
              */
             task: "write_dockerfile" | "fix_build";
+        };
+        /** AuditEventOut */
+        AuditEventOut: {
+            /** Action */
+            action: string;
+            /** Actor */
+            actor: string;
+            /** Actor Id */
+            actor_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Target Id */
+            target_id: string | null;
+            /** Target Type */
+            target_type: string | null;
+        };
+        /** AuditPage */
+        AuditPage: {
+            /** Items */
+            items: components["schemas"]["AuditEventOut"][];
+            /** Next Before */
+            next_before: string | null;
         };
         /**
          * AuthUser
@@ -3070,7 +3124,7 @@ export interface components {
             email?: string | null;
             /** Github Login */
             github_login?: string | null;
-            /** @default member */
+            /** @default viewer */
             role: components["schemas"]["WorkspaceRole"];
         };
         /** MemberOut */
@@ -4226,7 +4280,7 @@ export interface components {
              * @default owners
              * @enum {string}
              */
-            emergency_approvers: "owners" | "members";
+            emergency_approvers: "owners" | "approvers";
             /**
              * Incident Watch
              * @default true
@@ -4274,9 +4328,11 @@ export interface components {
         };
         /**
          * WorkspaceRole
+         * @description owner: everything, including members, connections, and settings. approver: approves
+         *     deploys and fixes and starts work. viewer: reads only.
          * @enum {string}
          */
-        WorkspaceRole: "owner" | "member";
+        WorkspaceRole: "owner" | "approver" | "viewer";
         /** WorkspaceSummary */
         WorkspaceSummary: {
             /** Budget Tokens Today */
@@ -6152,6 +6208,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_log_workspaces__workspace_id__audit_get: {
+        parameters: {
+            query?: {
+                before?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPage"];
                 };
             };
             /** @description Validation Error */
