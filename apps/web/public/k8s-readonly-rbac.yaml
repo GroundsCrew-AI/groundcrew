@@ -1,0 +1,124 @@
+# Groundcrew read-only access to a Kubernetes cluster (preview: discovery runs on fixtures until
+# TODO(k8s-live)). Apply, then build a kubeconfig for the service account token and upload it on
+# the Connections page (it is stored encrypted):
+#
+#   kubectl apply -f infra/k8s-readonly-rbac.yaml
+#   kubectl -n groundcrew create token groundcrew-reader --duration=24h
+#
+# The ClusterRole can get/list/watch namespaces, Deployments, ReplicaSets, StatefulSets,
+# ControllerRevisions (a StatefulSet's revisions), Services, Ingresses, Pods, and events, and
+# read pod logs (incident detection and evidence: crash loops, rollouts, error spikes). It has
+# no access to ConfigMaps or Secrets (unless you add the optional blocks at the end) or exec,
+# and no write verb. Emergency fixes need infra/k8s-operate-rbac.yaml on top.
+#
+# ConfigMaps and Secrets, opt-in and metadata only: a ConfigMap or Secret change (with no new
+# revision) is a common cause of a broken Deployment or StatefulSet, so Groundcrew can check
+# when the ones a workload's pods use (envFrom, env valueFrom, volumes) last changed. It asks
+# the API server for a PartialObjectMetadataList (Accept: application/json;
+# as=PartialObjectMetadataList;g=meta.k8s.io;v=v1): names, resourceVersion, creation and
+# managedFields times. The server then returns no data at all, and Groundcrew refuses any
+# response that is not metadata only. RBAC has no metadata-only verb, though: `list` on
+# configmaps or secrets would ALSO let a client that asked differently read their contents.
+# That is why both rules are optional and commented out at the end of this file. Without them,
+# Groundcrew notes in the incident's evidence that those changes are not visible.
+#
+# Remove access with: kubectl delete -f infra/k8s-readonly-rbac.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: groundcrew
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: groundcrew-reader
+  namespace: groundcrew
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: groundcrew-reader
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "services", "pods", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "controllerrevisions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: groundcrew-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: groundcrew-reader
+subjects:
+  - kind: ServiceAccount
+    name: groundcrew-reader
+    namespace: groundcrew
+# --- OPTIONAL: ConfigMap changes as incident causes (metadata only) ---------------------------
+# Uncomment, then turn on "Detect ConfigMap changes" on the cluster's connection (Connections
+# page; Groundcrew checks this right first). Groundcrew then sees when a ConfigMap a workload
+# uses changed. It only ever requests ConfigMaps as a PartialObjectMetadataList (name,
+# resourceVersion, managedFields times) and never reads, stores, or shows their contents; but
+# this `list` right GRANTS READ ACCESS TO CONFIGMAP CONTENTS to anyone holding the token, so
+# only add it if you accept that. To limit it, use a RoleBinding in your app's namespaces
+# instead of the ClusterRoleBinding.
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRole
+# metadata:
+#   name: groundcrew-configmaps-metadata
+# rules:
+#   - apiGroups: [""]
+#     resources: ["configmaps"]
+#     verbs: ["list"]
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRoleBinding
+# metadata:
+#   name: groundcrew-configmaps-metadata
+# roleRef:
+#   apiGroup: rbac.authorization.k8s.io
+#   kind: ClusterRole
+#   name: groundcrew-configmaps-metadata
+# subjects:
+#   - kind: ServiceAccount
+#     name: groundcrew-reader
+#     namespace: groundcrew
+# --- OPTIONAL: Secret changes as incident causes (metadata only) ------------------------------
+# Uncomment to let Groundcrew see when a Secret a workload uses changed. Groundcrew only ever
+# requests Secrets as a PartialObjectMetadataList (name, resourceVersion, managedFields times)
+# and never reads, stores, or shows a value; but this `list` right would technically allow
+# reading values with a different request, so only add it if you accept that. To limit it,
+# use a RoleBinding in your app's namespaces instead of the ClusterRoleBinding.
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRole
+# metadata:
+#   name: groundcrew-secrets-metadata
+# rules:
+#   - apiGroups: [""]
+#     resources: ["secrets"]
+#     verbs: ["list"]
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: ClusterRoleBinding
+# metadata:
+#   name: groundcrew-secrets-metadata
+# roleRef:
+#   apiGroup: rbac.authorization.k8s.io
+#   kind: ClusterRole
+#   name: groundcrew-secrets-metadata
+# subjects:
+#   - kind: ServiceAccount
+#     name: groundcrew-reader
+#     namespace: groundcrew
