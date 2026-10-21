@@ -5,6 +5,7 @@ import Google, { type GoogleProfile } from "next-auth/providers/google";
 
 import { type AuthUser, authApi, type OAuthProfile } from "@/lib/auth-api";
 import { enabledOAuthProviders, signedInUserId } from "@/lib/auth-providers";
+import { isOpenPath } from "@/lib/public-paths";
 import { TEST_USER, testAuthEnabled } from "@/lib/test-auth";
 
 /**
@@ -132,6 +133,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       : []),
   ],
   pages: { signIn: "/signin", error: "/signin" },
+  // Over HTTPS the session cookie is __Secure-, Secure, HttpOnly, and SameSite=Lax (Auth.js
+  // defaults once this is on); local http://localhost keeps plain cookies.
+  useSecureCookies: (process.env.AUTH_URL ?? "").startsWith("https://"),
   session: { strategy: "jwt" },
   callbacks: {
     jwt({ token, user, account }) {
@@ -152,8 +156,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.authAt = token.authAt ?? 0;
       return session;
     },
-    authorized({ auth: session }) {
-      return Boolean(session?.user?.id);
+    // Middleware: pages need a session unless they are public (lib/public-paths.ts).
+    authorized({ auth: session, request }) {
+      return Boolean(session?.user?.id) || isOpenPath(request.nextUrl.pathname);
     },
   },
 });

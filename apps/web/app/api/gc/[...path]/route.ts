@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 import { clientIp } from "@/lib/auth-api";
+import { appOrigin, crossSiteRefusal } from "@/lib/csrf";
 import { signInternalToken } from "@/lib/internal-jwt";
 
 /**
@@ -20,6 +21,8 @@ const MAX_BODY_BYTES = 1_048_576;
 type Context = { params: Promise<{ path: string[] }> };
 
 async function proxy(request: NextRequest, context: Context): Promise<Response> {
+  const refused = crossSiteRefusal(request.method, request.headers, appOrigin(request.nextUrl.origin));
+  if (refused) return NextResponse.json({ detail: refused }, { status: 403 });
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ detail: "Sign in required." }, { status: 401 });

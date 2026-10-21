@@ -8,7 +8,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api/client";
 
-export function Providers({ children }: { children: ReactNode }) {
+/** `nonce`: this request's CSP nonce, for next-themes' inline theme script. */
+export function Providers({ children, nonce }: { children: ReactNode; nonce?: string }) {
   const [client] = useState(
     () =>
       new QueryClient({
@@ -23,7 +24,7 @@ export function Providers({ children }: { children: ReactNode }) {
       }),
   );
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange nonce={nonce}>
       <QueryClientProvider client={client}>
         <TooltipProvider delayDuration={300}>
           {children}

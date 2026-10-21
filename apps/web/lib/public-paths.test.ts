@@ -15,3 +15,15 @@ describe("isPublicPath", () => {
     }
   });
 });
+
+describe("isOpenPath", () => {
+  it("opens the landing page, the sign-in pages, and public pages", async () => {
+    const { isOpenPath } = await import("./public-paths");
+    for (const path of ["/", "/signin", "/signup", "/signout", "/welcome", "/docs/connect/aws", "/aws-connect.yaml"]) {
+      expect(isOpenPath(path), path).toBe(true);
+    }
+    for (const path of ["/runs", "/settings", "/incidents/1", "/deploy", "/connections"]) {
+      expect(isOpenPath(path), path).toBe(false);
+    }
+  });
+});
