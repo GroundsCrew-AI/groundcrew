@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useGitHubInstallations, useLinkGitHub } from "@/lib/discovery";
+import { useGitHubAuthorize, useGitHubInstallations, useLinkGitHub } from "@/lib/discovery";
 import { useWorkspace } from "@/lib/workspace";
 
 function Problem({ children, onRetry }: { children: React.ReactNode; onRetry: () => void }) {
@@ -33,6 +33,7 @@ export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onO
   const { workspace } = useWorkspace();
   const installations = useGitHubInstallations(workspace?.id, open);
   const link = useLinkGitHub();
+  const authorize = useGitHubAuthorize();
   const [picked, setPicked] = useState<Record<number, Set<string>>>({});
 
   const data = installations.data;
@@ -49,6 +50,15 @@ export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onO
     if (on) next.add(repo);
     else next.delete(repo);
     setPicked({ ...picked, [installationId]: next });
+  }
+
+  /** To GitHub to confirm which installations this person can reach; back on the callback page. */
+  function findInstallations() {
+    if (!workspace) return;
+    authorize.mutate(workspace.id, {
+      onSuccess: (result) => window.location.assign(result.authorize_url),
+      onError: (error) => toast.error(error.message),
+    });
   }
 
   function save(installationId: number) {
@@ -96,21 +106,24 @@ export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onO
           </Problem>
         ) : data.installations.length === 0 ? (
           <div className="space-y-3 rounded-md border border-dashed px-4 py-4">
-            <p className="text-[13px]">
-              First, install the Groundcrew GitHub App and choose the repositories it may read. Then come back
-              here and pick them.
-            </p>
+            <ol className="list-decimal space-y-1.5 pl-5 text-[13px]">
+              <li>Install the Groundcrew GitHub App on your account or organization, and choose its repositories.</li>
+              <li>
+                Show Groundcrew which installations you can reach. GitHub confirms it for you; Groundcrew keeps no
+                GitHub password or token.
+              </li>
+            </ol>
             <div className="flex flex-wrap gap-2">
               {data.install_url && (
-                <Button asChild size="sm">
-                  <a href={data.install_url} target="_blank" rel="noreferrer">
+                <Button asChild size="sm" variant="outline">
+                  <a href={data.install_url}>
                     Install the GitHub App
                     <ExternalLink aria-hidden="true" />
                   </a>
                 </Button>
               )}
-              <Button size="sm" variant="outline" onClick={() => void installations.refetch()}>
-                {installations.isFetching ? "Checking" : "I installed it"}
+              <Button size="sm" disabled={authorize.isPending} onClick={findInstallations}>
+                {authorize.isPending ? "Opening GitHub" : "Find my installations"}
               </Button>
             </div>
           </div>
@@ -153,17 +166,24 @@ export function GitHubConnectDialog({ open, onOpenChange }: { open: boolean; onO
             })}
           </div>
         )}
-        {data?.install_url && data.installations.length > 0 && (
-          <DialogFooter className="sm:justify-start">
-            <a
-              href={data.install_url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground underline-offset-2 hover:underline"
+        {data && data.installations.length > 0 && (
+          <DialogFooter className="gap-3 sm:justify-start">
+            {data.install_url && (
+              <a
+                href={data.install_url}
+                className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground underline-offset-2 hover:underline"
+              >
+                Install the app on more repositories
+                <ExternalLink aria-hidden="true" className="size-3" />
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={findInstallations}
+              className="text-[12.5px] text-muted-foreground underline-offset-2 hover:underline"
             >
-              Install the app on more repositories
-              <ExternalLink aria-hidden="true" className="size-3" />
-            </a>
+              Find installations on another account
+            </button>
           </DialogFooter>
         )}
       </DialogContent>

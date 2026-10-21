@@ -30,6 +30,7 @@ from app.routes import (
     connections,
     deploys,
     evidence,
+    github_webhook,
     graph,
     incidents,
     runs,
@@ -271,6 +272,7 @@ app.include_router(deploys.router)
 app.include_router(incidents.router)
 app.include_router(evidence.router)
 app.include_router(admin.router)
+app.include_router(github_webhook.router)
 
 
 def _openapi() -> dict[str, Any]:

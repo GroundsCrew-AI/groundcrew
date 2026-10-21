@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -15,6 +16,7 @@ from sqlalchemy import select
 import app.routes.connections as connections_routes
 from app import deletion
 from app.config import Settings, get_settings
+from app.connectors import github_claims
 from app.connectors.aws import AwsError, CallerIdentity
 from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Job, Resource, Run, Workspace
@@ -39,6 +41,7 @@ def _settings(**overrides: Any) -> Settings:
         "internal_jwt_secret": SecretStr(TEST_JWT_SECRET),
         "model_nano": "test/nano",
         "discovery_regions": ["us-east-2"],
+        "github_app_client_id": "Iv1.groundcrew",
         **overrides,
     }
     return Settings(_env_file=None, **values)
@@ -499,7 +502,49 @@ def gh(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(connections_routes, "get_github_app", lambda: fixture_app)
 
 
-async def test_github_picker_and_link(client: httpx.AsyncClient, alice: Member, gh: None) -> None:
+async def claim_installations(
+    client: httpx.AsyncClient,
+    member: Member,
+    monkeypatch: pytest.MonkeyPatch,
+    found: list[dict[str, Any]],
+) -> httpx.Response:
+    """Go through GitHub authorization as `member`, with GitHub answering `found`."""
+
+    async def fake(_settings: Any, code: str, **_: Any) -> list[dict[str, Any]]:
+        assert code == "c0de"
+        return found
+
+    monkeypatch.setattr(github_claims, "user_installations", fake)
+    started = await client.get(
+        "/connections/github/authorize",
+        params={"workspace_id": str(member.workspace_id)},
+        headers=member.headers,
+    )
+    assert started.status_code == 200, started.text
+    state = parse_qs(urlparse(started.json()["authorize_url"]).query)["state"][0]
+    return await client.post(
+        "/connections/github/claim",
+        json={"code": "c0de", "state": state},
+        headers=member.headers,
+    )
+
+
+async def test_github_picker_and_link(
+    client: httpx.AsyncClient, alice: Member, gh: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Nothing is listed until an owner proves access on GitHub.
+    first = (
+        await client.get(
+            "/connections/github/installations",
+            params={"workspace_id": str(alice.workspace_id)},
+            headers=alice.headers,
+        )
+    ).json()
+    assert first["needs_authorization"] is True and first["installations"] == []
+    claimed = await claim_installations(
+        client, alice, monkeypatch, [{"id": 168436777, "account": "GroundsCrew-AI"}]
+    )
+    assert claimed.status_code == 200, claimed.text
     listed = (
         await client.get(
             "/connections/github/installations",
