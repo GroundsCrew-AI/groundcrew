@@ -33,11 +33,14 @@ Findings that shape the plan:
 - No GitHub webhook receiver exists yet (P6.3).
 - No production web image exists (only `Dockerfile.dev`; P6.6).
 
-Decisions: waiting for answers to 6.1 to 6.6 (plan section 11).
+Decisions (2026-10-21, plan section 11): GitHub and magic links only in production; build daemon always
+rootless, gVisor where it works; private GHCR with a read-only pull token until the repository is public;
+existing state bucket, key `groundcrew/platform.tfstate`; Trivy fails on fixable criticals, HIGH as warnings;
+`t3.large`.
 
 Open issues:
 - Let's Encrypt is ending OCSP; stapling may have nothing to staple. Checked in P6.7.
-- Terraform state location (decision 6.4).
+- The state bucket's name is found read-only in P6.4.
 
 ## Cost
 

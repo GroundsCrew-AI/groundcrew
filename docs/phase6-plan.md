@@ -358,7 +358,8 @@ is the worse failure, and the worker parses untrusted repositories.
 ## 7. Releases
 
 - **CI** (`.github/workflows/release.yml`, on tags `v*` and manual dispatch): build `api` and `web` images
-  (amd64), Trivy scan (`--severity CRITICAL --exit-code 1`, decision 6.5 on `--ignore-unfixed`), push to
+  (amd64), Trivy scan (`--severity CRITICAL --ignore-unfixed --exit-code 1`; HIGH listed as warnings), a secret scan of
+  the image layers (Trivy `--scanners secret`, fails on any finding), push to
   `ghcr.io/groundscrew-ai/groundcrew-api:<tag>` and `-web:<tag>`, sign both with cosign keyless (GitHub OIDC),
   then create a GitHub Release whose asset `release.json` lists each image **by digest** plus the git SHA and
   whether it has migrations. Only `permissions: packages: write, contents: write, id-token: write`; no AWS
@@ -366,7 +367,8 @@ is the worse failure, and the worker parses untrusted repositories.
 - **Immutable:** the server only ever pulls `image@sha256:...` from `release.json`, so a re-pushed tag
   changes nothing. CI refuses to push a tag that already exists in GHCR.
 - **Updater** (`gc-update`, systemd timer every 5 minutes, root):
-  1. read the latest non-prerelease release from the GitHub API (public, no token; 12 calls an hour);
+  1. read the latest non-prerelease release from the GitHub API (with the read-only token while the repository
+     is private; 12 calls an hour);
   2. if newer than `current.json`: download `release.json`, verify the cosign signatures against the repo's
      workflow identity, `docker pull` by digest;
   3. run `migrate` with the new api image (migrations must be additive: expand, deploy, then contract in a
@@ -426,7 +428,7 @@ limits, `409 quota_exceeded` with the quota name for quotas), and Settings, Usag
 | P6.3 | DNS for mail | SPF, DKIM, DMARC records (exact values in P6.3 once the provider is known; DMARC starts at `p=none` with reports to an address you choose, then `quarantine`) |
 | P6.3 | Production GitHub App | create it with the settings I list in P6.3 (public, callback `https://groundkrew.com/api/auth/callback/github`, setup URL, webhook `https://api.groundkrew.com/github/webhook` with a secret, the same permissions as the dev app), generate a private key, send me nothing: you paste values into `gc-secrets set` on the server |
 | P6.4 | OK to apply Terraform | after reading the plan |
-| P6.6 | GitHub repo settings | allow Actions to create releases and write packages; make the two GHCR packages public (decision 6.3) |
+| P6.6 | GitHub repo settings | allow Actions to create releases and write packages; create a read-only GHCR pull token (classic PAT with only `read:packages`, or a fine-grained token if GHCR supports it by then) and paste it with `gc-secrets set GHCR_PULL_TOKEN` (decision 6.3) |
 | P6.7 | DNS A records | at the registrar, TTL 300: `groundkrew.com` A `<EIP>`, `www.groundkrew.com` A `<EIP>`, `api.groundkrew.com` A `<EIP>`. Optional and recommended: `groundkrew.com` CAA `0 issue "letsencrypt.org"`. No AAAA records. Remove any existing A/AAAA/CNAME for those names (parking pages) |
 | P6.7 | Production keys on the server | `TOKEN_FACTORY_API_KEY`, `TAVILY_API_KEY` (ideally separate from dev keys, so their usage and caps are separate), through `gc-secrets set` over SSH |
 | P6.8 | Move existing AWS connections | update each `groundcrew-read-only` stack's `GroundcrewPrincipalArn` to `arn:aws:iam::881050425883:role/groundcrew-platform` (CloudFormation Update, use current template, change one parameter), then Verify in Connections. Then delete the IAM user's access keys and the user |
@@ -434,16 +436,16 @@ limits, `409 quota_exceeded` with the quota name for quotas), and Settings, Usag
 | P6.9 | Legal text | read the Terms of Service and Privacy Policy I draft and have them checked; they are product text, not legal advice |
 | Any time | A contact address | for the Security and Privacy pages (for example `security@groundkrew.com`, which needs a mailbox or forwarding at your registrar) |
 
-## 11. Decisions for you
+## 11. Decisions (answered 2026-10-21)
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
-| 6.1 | Email and password accounts and Google sign-in exist today. The brief asks for GitHub and magic links. | Production offers **GitHub and magic links only** (`PASSWORD_AUTH_ENABLED=false`, Google unset). The code stays; existing password users can sign in by magic link to the same verified address |
-| 6.2 | Build isolation fallback if the spike fails | **A** (section 6.6): rootless everywhere, gVisor where it works. You hear the spike result before P6.5 code is written |
-| 6.3 | GHCR images public or private | **Public** (the repository is public; no pull token on the server). Private needs a read-only token in `/etc/groundcrew/` |
-| 6.4 | Terraform state | Use the existing state bucket in 881050425883 with key `groundcrew/platform.tfstate` and its lock (I find its name read-only in P6.4 and show you). The brief's "no S3" is about the running platform; say if you want local state instead (then the state file lives only on your machine) |
-| 6.5 | Trivy on CRITICAL: also fail on vulnerabilities that have no fix yet? | `--ignore-unfixed`: a critical with no fixed version cannot be acted on and would block every release; they are listed in the job summary |
-| 6.6 | Instance | `t3.large` unlimited. If the spike shows builds under gVisor are much slower, `t3.xlarge` (about $61 more a month) |
+| 6.1 | Sign-in in production | **GitHub and email magic links only.** Password and Google sign-in are off in production: no UI, and their endpoints refuse. The code stays behind config (`PASSWORD_AUTH_ENABLED`, `AUTH_GOOGLE_*`) |
+| 6.2 | Build isolation fallback | **The build daemon is always rootless; gVisor wherever it works. Never a root daemon** (option B in 6.6 is ruled out) |
+| 6.3 | GHCR images | **Private for now**, pulled with a read-only token kept in `/etc/groundcrew/ghcr.env` (0600) on the server; images go public and the token is dropped when the repository goes public. A CI check verifies the images hold no secrets either way |
+| 6.4 | Terraform state | The existing state bucket in 881050425883, key `groundcrew/platform.tfstate` |
+| 6.5 | Trivy | Fail on CRITICAL with a fix available (`--ignore-unfixed`); HIGH reported as warnings in the job summary |
+| 6.6 | Instance | `t3.large`; revisit only with measured build pressure |
 
 ## 12. Order and size of the remaining milestones
 
