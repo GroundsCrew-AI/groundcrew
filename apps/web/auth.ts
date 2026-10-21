@@ -110,6 +110,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return toUser(result.data);
       },
     }),
+    // An emailed sign-in link's token (the button on /signin/email); the API checks and spends it.
+    Credentials({
+      id: "email-link",
+      name: "Email link",
+      credentials: { token: { type: "text" } },
+      async authorize(credentials) {
+        const token = typeof credentials?.token === "string" ? credentials.token : "";
+        if (!token) throw new SignInFailed("invalid_link");
+        const result = await authApi<AuthUser>("email-link/verify", { body: { token } });
+        if (!result.ok) throw new SignInFailed(result.code);
+        return toUser(result.data);
+      },
+    }),
     // Playwright only (APP_ENV=dev and E2E_TEST_AUTH=1): a fixed test user, lib/test-auth.ts.
     ...(testAuthEnabled()
       ? [

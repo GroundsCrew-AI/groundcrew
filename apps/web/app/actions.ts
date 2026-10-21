@@ -94,6 +94,28 @@ export async function resetPasswordAction(_prev: FormState, formData: FormData):
   return passwordSignIn(result.data.email, password, "/");
 }
 
+/** Email a sign-in link. The page says the same whether or not the address has an account. */
+export async function emailLinkAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const email = field(formData, "email").trim();
+  if (!email) return { error: "Enter your email address.", field: "email" };
+  const result = await authApi("email-link", { body: { email } });
+  if (!result.ok) return { error: result.detail, code: result.code, email };
+  return { done: true, email };
+}
+
+/** Sign in with the emailed link's token (a button on /signin/email, so opening the link alone
+ * does not use it up). */
+export async function signInWithEmailLink(_prev: FormState, formData: FormData): Promise<FormState> {
+  try {
+    await signIn("email-link", { token: field(formData, "token"), redirectTo: "/" });
+  } catch (error) {
+    if (error instanceof CredentialsSignin) return { error: signInMessage(error.code), code: error.code };
+    if (error instanceof AuthError) return { error: signInMessage("error") };
+    throw error; // the redirect after a successful sign-in
+  }
+  return {};
+}
+
 /** Playwright's sign-in (APP_ENV=dev and E2E_TEST_AUTH=1 only). */
 export async function signInAsTestUser() {
   if (!testAuthEnabled()) throw new Error("Test sign-in is off.");

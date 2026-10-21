@@ -406,6 +406,89 @@ async def issue_link(
     return raw
 
 
+async def links_sent_to(
+    session: AsyncSession, email: str, purpose: AuthTokenPurpose, within: timedelta
+) -> int:
+    """Links of this kind sent to this address recently (accounts or not)."""
+    return int(
+        await session.scalar(
+            select(func.count(AuthToken.id)).where(
+                AuthToken.email == normalize_email(email),
+                AuthToken.purpose == purpose.value,
+                AuthToken.created_at > _now() - within,
+            )
+        )
+        or 0
+    )
+
+
+async def issue_sign_in_link(session: AsyncSession, email: str, ttl: timedelta) -> str:
+    """A single-use sign-in link token for `email`, whether or not it has an account yet. The
+    caller commits and sends it."""
+    email = normalize_email(email)
+    user = await user_by_email(session, email)
+    raw = secrets.token_urlsafe(32)
+    session.add(
+        AuthToken(
+            user_id=user.id if user else None,
+            purpose=AuthTokenPurpose.sign_in.value,
+            token_hash=_token_hash(raw),
+            email=email,
+            expires_at=_now() + ttl,
+        )
+    )
+    await session.flush()
+    return raw
+
+
+async def email_link_sign_in(
+    session: AsyncSession, raw: str, *, settings: Settings | None = None, ip: str | None = None
+) -> User:
+    """Sign in with an emailed link: the link proves the address. The account with that
+    address (same verified email = same user), or a new one with a workspace (after the
+    sign-up checks). Every other unused sign-in link to the address stops working. Commits."""
+    row = await session.scalar(
+        select(AuthToken)
+        .where(
+            AuthToken.token_hash == _token_hash(raw),
+            AuthToken.purpose == AuthTokenPurpose.sign_in.value,
+        )
+        .with_for_update()
+    )
+    now = _now()
+    if row is None or row.used_at is not None or row.expires_at <= now:
+        raise LinkError("This link is invalid or has expired.")
+    email = row.email
+    await session.execute(
+        update(AuthToken)
+        .where(
+            AuthToken.email == email,
+            AuthToken.purpose == AuthTokenPurpose.sign_in.value,
+            AuthToken.used_at.is_(None),
+        )
+        .values(used_at=now)
+    )
+    user = await user_by_email(session, email)
+    if user is None:
+        if settings is not None:
+            await check_signup(session, settings, ip=ip, verified_email=email, github_login=None)
+        user = User(email=email, email_verified_at=now)
+        session.add(user)
+        await session.flush()
+        await _activate(session, user)
+    elif user.email_verified_at is None:
+        # Whoever signed up with this address never proved it; this link does.
+        user.password_hash = None
+        user.sessions_valid_after = now
+        user.email_verified_at = now
+        user.failed_sign_ins, user.locked_until = 0, None
+        await _activate(session, user)
+    else:
+        await apply_invites(session, user)
+    await session.commit()
+    return user
+
+
 async def _open_link(
     session: AsyncSession, raw: str, purpose: AuthTokenPurpose
 ) -> tuple[AuthToken, User]:
@@ -414,7 +497,7 @@ async def _open_link(
         .where(AuthToken.token_hash == _token_hash(raw), AuthToken.purpose == purpose.value)
         .with_for_update()
     )
-    if row is None or row.used_at is not None or row.expires_at <= _now():
+    if row is None or row.used_at is not None or row.expires_at <= _now() or row.user_id is None:
         raise LinkError("This link is invalid or has expired.")
     user = await session.get(User, row.user_id)
     if user is None or normalize_email(user.email or "") != row.email:

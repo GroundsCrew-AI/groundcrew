@@ -69,7 +69,7 @@ async def signups_last_hour(session: AsyncSession) -> int:
     )
 
 
-async def _invited(session: AsyncSession, email: str | None, github_login: str | None) -> bool:
+async def invited(session: AsyncSession, email: str | None, github_login: str | None) -> bool:
     targets = []
     if email:
         targets.append(WorkspaceInvite.email == email.lower())
@@ -92,7 +92,7 @@ async def check_signup(
 ) -> None:
     """Raise SignupRefusedError unless a new account may be created now. An invite (to this
     verified address or GitHub login) gets through a pause, not the rate limits."""
-    if await signups_paused(session) and not await _invited(session, verified_email, github_login):
+    if await signups_paused(session) and not await invited(session, verified_email, github_login):
         raise SignupRefusedError(
             "signups_paused",
             "New sign-ups are paused for now. If someone invited you, sign in with the address "

@@ -140,6 +140,23 @@ def verification_mail(settings: Settings, to: str, token: str) -> Mail:
     )
 
 
+def sign_in_mail(settings: Settings, to: str, token: str) -> Mail:
+    """The sign-in link opens a page with a Sign in button; opening the link alone (as mail
+    scanners do) does not use it up."""
+    link = _link(settings, "/signin/email", token=token)
+    minutes = settings.email_link_minutes
+    return Mail(
+        to=to,
+        subject="Your Groundcrew sign-in link",
+        text=(
+            f"Open this link to sign in to Groundcrew:\n\n{link}\n\nIt works once and expires in "
+            f"{minutes} minutes. If this is your first sign-in, it creates your account and a "
+            "workspace of your own. If you did not ask for it, ignore this email; nothing happens "
+            "without the link.\n"
+        ),
+    )
+
+
 def reset_mail(settings: Settings, to: str, token: str) -> Mail:
     link = _link(settings, "/reset-password", token=token)
     minutes = settings.password_reset_minutes

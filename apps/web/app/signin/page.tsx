@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { signInAsTestUser } from "@/app/actions";
 import { auth } from "@/auth";
 import { AuthShell } from "@/components/auth/auth-shell";
-import { FormMessage, PasswordSignInForm } from "@/components/auth/forms";
+import { EmailLinkForm, FormMessage, PasswordSignInForm } from "@/components/auth/forms";
 import { OrDivider, ProviderButtons } from "@/components/auth/provider-buttons";
 import { Button } from "@/components/ui/button";
 import { authOptions } from "@/lib/auth-api";
@@ -51,7 +51,9 @@ export default async function SignInPage({
               Create an account
             </Link>
           </>
-        ) : undefined
+        ) : (
+          "New to Groundcrew? Sign in either way: your account and a workspace are made the first time."
+        )
       }
     >
       {notice && (
@@ -60,13 +62,22 @@ export default async function SignInPage({
         </div>
       )}
       <ProviderButtons next={next} providers={providers} />
+      {options.email_link && (
+        <>
+          {(providers.github || providers.google) && <OrDivider />}
+          <EmailLinkForm
+            defaultEmail={params.email}
+            label={options.password ? "Email for a sign-in link" : "Email"}
+          />
+        </>
+      )}
       {options.password && (
         <>
           {(providers.github || providers.google) && <OrDivider />}
           <PasswordSignInForm next={next} defaultEmail={params.email} />
         </>
       )}
-      {!options.password && !providers.github && !providers.google && (
+      {!options.password && !options.email_link && !providers.github && !providers.google && (
         <FormMessage>No way to sign in is configured on this server. Ask its administrator.</FormMessage>
       )}
       {testAuthEnabled() && (

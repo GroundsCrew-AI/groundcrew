@@ -344,6 +344,10 @@ class Settings(BaseSettings):
     auth_lockout_attempts: int = 10
     auth_lockout_minutes: int = 15
     email_verification_hours: int = 48
+    # Sign-in by an emailed link (single use, EMAIL_LINK_MINUTES): on wherever email can be
+    # sent. A hosted instance needs SMTP_HOST while it is on.
+    email_link_auth_enabled: bool = True
+    email_link_minutes: int = 15
     password_reset_minutes: int = 60
 
     # Outgoing email (verification links, password resets, invites). Without SMTP_HOST, dev and
@@ -406,6 +410,11 @@ class Settings(BaseSettings):
                 problems.append(f"{name.upper()} is a local development setting")
         if self.deploy_fixtures_dir:
             problems.append("DEPLOY_FIXTURES_DIR is a local development setting")
+        if self.email_link_auth_enabled and not self.smtp_host:
+            problems.append(
+                "SMTP_HOST is not set, so email sign-in links cannot be sent "
+                "(set it, or EMAIL_LINK_AUTH_ENABLED=false)"
+            )
         if self.password_auth and not self.smtp_host:
             problems.append(
                 "SMTP_HOST is not set, so email sign-up cannot send verification links "
