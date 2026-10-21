@@ -294,6 +294,8 @@ NOT_WORKSPACE_SCOPED = {
     ("POST", "/workspaces"): "creates a workspace the caller owns",
     ("GET", "/connections/aws/template"): "the public connect template",
     ("GET", "/connections/aws/template-url"): "the public connect template URL",
+    ("GET", "/admin/platform"): "platform operators only, 404 for others (test_abuse.py)",
+    ("PUT", "/admin/platform/signups"): "platform operators only, 404 for others (test_abuse.py)",
 }
 # /auth/* takes only the web server's service token (tests/test_auth.py).
 SERVICE_ONLY_PREFIX = "/auth/"

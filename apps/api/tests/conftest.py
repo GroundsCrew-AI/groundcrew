@@ -140,3 +140,12 @@ async def workspace(session_factory: SessionFactory) -> Workspace:
         session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role=WorkspaceRole.owner))
         await session.commit()
         return ws
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits() -> None:
+    """In-process limits start empty in every test."""
+    from app.security.ratelimit import limiter, streams
+
+    limiter.reset()
+    streams.reset()

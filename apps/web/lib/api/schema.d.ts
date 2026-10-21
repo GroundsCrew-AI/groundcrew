@@ -4,6 +4,43 @@
  */
 
 export interface paths {
+    "/admin/platform": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Platform */
+        get: operations["get_platform_admin_platform_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/platform/signups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Signups
+         * @description Pause or resume new sign-ups. Invited people can still join while paused.
+         */
+        put: operations["set_signups_admin_platform_signups_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/approvals/{approval_id}/decide": {
         parameters: {
             query?: never;
@@ -3125,6 +3162,11 @@ export interface components {
              * @default false
              */
             password_auth: boolean;
+            /**
+             * Platform Admin
+             * @default false
+             */
+            platform_admin: boolean;
             user: components["schemas"]["UserOut"];
             /** Workspaces */
             workspaces: components["schemas"]["WorkspaceOut"][];
@@ -3368,6 +3410,19 @@ export interface components {
             kind: string;
             /** Name */
             name: string;
+        };
+        /** PlatformOut */
+        PlatformOut: {
+            /** Signups Changed At */
+            signups_changed_at: string | null;
+            /** Signups Last Hour */
+            signups_last_hour: number;
+            /** Signups Paused */
+            signups_paused: boolean;
+            /** Signups Per Hour */
+            signups_per_hour: number;
+            /** Users */
+            users: number;
         };
         /** PreflightCheck */
         PreflightCheck: {
@@ -4001,6 +4056,11 @@ export interface components {
              */
             rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
         };
+        /** SignupsIn */
+        SignupsIn: {
+            /** Paused */
+            paused: boolean;
+        };
         /** StageFinished */
         StageFinished: {
             /**
@@ -4437,6 +4497,72 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_platform_admin_platform_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_signups_admin_platform_signups_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignupsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     decide_approvals__approval_id__decide_post: {
         parameters: {
             query?: never;
@@ -4514,6 +4640,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "x-client-ip"?: string | null;
                 authorization?: string | null;
             };
             path?: never;

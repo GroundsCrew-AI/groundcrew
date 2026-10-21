@@ -5134,6 +5134,11 @@
             "title": "Password Auth",
             "type": "boolean"
           },
+          "platform_admin": {
+            "default": false,
+            "title": "Platform Admin",
+            "type": "boolean"
+          },
           "user": {
             "$ref": "#/components/schemas/UserOut"
           },
@@ -5755,6 +5760,47 @@
           "action"
         ],
         "title": "PlannedResource",
+        "type": "object"
+      },
+      "PlatformOut": {
+        "properties": {
+          "signups_changed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signups Changed At"
+          },
+          "signups_last_hour": {
+            "title": "Signups Last Hour",
+            "type": "integer"
+          },
+          "signups_paused": {
+            "title": "Signups Paused",
+            "type": "boolean"
+          },
+          "signups_per_hour": {
+            "title": "Signups Per Hour",
+            "type": "integer"
+          },
+          "users": {
+            "title": "Users",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "signups_paused",
+          "signups_changed_at",
+          "signups_last_hour",
+          "signups_per_hour",
+          "users"
+        ],
+        "title": "PlatformOut",
         "type": "object"
       },
       "PreflightCheck": {
@@ -7476,6 +7522,20 @@
         "title": "Signal",
         "type": "object"
       },
+      "SignupsIn": {
+        "additionalProperties": false,
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "SignupsIn",
+        "type": "object"
+      },
       "StageFinished": {
         "properties": {
           "agent": {
@@ -8761,6 +8821,115 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/admin/platform": {
+      "get": {
+        "operationId": "get_platform_admin_platform_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Platform",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/platform/signups": {
+      "put": {
+        "description": "Pause or resume new sign-ups. Invited people can still join while paused.",
+        "operationId": "set_signups_admin_platform_signups_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Signups",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/approvals/{approval_id}/decide": {
       "post": {
         "description": "Record the signed-in user's decision and resume the run.",
@@ -8912,6 +9081,22 @@
         "description": "A GitHub or Google sign-in: the user, linked or created. Google only where it is on\n(GOOGLE_AUTH_ENABLED; off on hosted instances by default).",
         "operationId": "oauth_auth_oauth_post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",

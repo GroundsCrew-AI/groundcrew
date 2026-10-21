@@ -40,7 +40,14 @@ from app.db.models import (
 from app.db.session import SessionFactory
 from app.incidents.store import close_for_stopped_run
 from app.pipeline.events import DEPLOY_EVENT_NAMES
-from app.routes.deps import ClientIp, CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
+from app.routes.deps import (
+    ClientIp,
+    CurrentUser,
+    SessionDep,
+    SessionFactoryDep,
+    SettingsDep,
+    too_many_requests,
+)
 from app.routes.schemas import (
     ApprovalOut,
     ApprovalStepEvent,
@@ -53,6 +60,7 @@ from app.routes.schemas import (
     StreamToken,
 )
 from app.security.auth import AuthConfigError, AuthError, create_stream_token, verify_stream_token
+from app.security.ratelimit import limiter, streams
 from app.steps import record_step
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -156,6 +164,10 @@ async def stream_token(
     run_id: uuid.UUID, user: CurrentUser, session: SessionDep, settings: SettingsDep
 ) -> StreamToken:
     """A 60-second token for GET /runs/{id}/events, bound to this run and user."""
+    if not limiter.allow(
+        f"stream-token:{user.id}", settings.rate_limit_stream_tokens_per_minute, 60
+    ):
+        raise too_many_requests()
     await member_run(session, user, run_id)
     token, expires_at = create_stream_token(user.id, run_id, settings)
     return StreamToken(token=token, expires_at=expires_at)
@@ -331,15 +343,29 @@ async def run_events(
         except NotFoundError:
             raise _not_found() from None
 
-    stream = _event_stream(
-        session_factory,
-        run_id,
-        request,
-        _resume_after(last_event_id, after),
-        settings.sse_poll_interval_ms / 1000,
-    )
+    key = f"stream:{user_id}"
+    if not streams.acquire(key, settings.max_open_streams_per_user):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"You have {settings.max_open_streams_per_user} live views open. Close one and "
+            "try again.",
+        )
+
+    async def counted() -> AsyncIterator[str]:
+        try:
+            async for chunk in _event_stream(
+                session_factory,
+                run_id,
+                request,
+                _resume_after(last_event_id, after),
+                settings.sse_poll_interval_ms / 1000,
+            ):
+                yield chunk
+        finally:
+            streams.release(key)
+
     return StreamingResponse(
-        stream,
+        counted(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

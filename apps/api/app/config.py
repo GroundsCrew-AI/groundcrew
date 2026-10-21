@@ -265,6 +265,28 @@ class Settings(BaseSettings):
     quota_max_build_seconds: int = 900
     quota_connections_per_workspace: int = 10
 
+    # Abuse limits in the API (nginx limits each client address in front of it). Per user: API
+    # calls a minute, stream tokens a minute, and live streams open at once. Request bodies
+    # larger than MAX_REQUEST_BYTES are refused (413).
+    rate_limit_user_per_minute: int = 300
+    rate_limit_stream_tokens_per_minute: int = 30
+    max_open_streams_per_user: int = 10
+    max_request_bytes: int = 1_048_576
+    # New accounts: at most this many an hour in total and a day per client address. An
+    # operator can pause sign-ups (`python -m app.admin_cli signups pause`, or Settings for
+    # PLATFORM_ADMINS); people with a pending invite can still join.
+    signups_per_hour: int = 30
+    signups_per_ip_day: int = 5
+    # Emails or GitHub logins (comma separated) who see the platform switches in Settings.
+    platform_admins: Annotated[list[str], NoDecode] = []
+
+    @field_validator("platform_admins", mode="before")
+    @classmethod
+    def _split_admins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [a.strip().lower().lstrip("@") for a in value.split(",") if a.strip()]
+        return value
+
     # Token and call limits. Unset daily token budget or per-incident Ultra limit = no limit.
     daily_token_budget: int | None = None
     max_ultra_calls_per_incident: int | None = None
