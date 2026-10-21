@@ -9,6 +9,7 @@ import { UsageSection } from "@/components/settings/usage-section";
 import { LeaveWorkspace } from "@/components/settings/leave-workspace";
 import { MembersSection } from "@/components/settings/members-section";
 import { NotificationsSection } from "@/components/settings/notifications-section";
+import { PlatformSection } from "@/components/settings/platform-section";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { WorkspaceNameForm, WorkspaceSettingsForm } from "@/components/settings/workspace-forms";
 import { CreateWorkspaceDialog } from "@/components/settings/create-workspace-dialog";
@@ -199,6 +200,18 @@ export default function SettingsPage() {
           <div>
             <GroupTitle>Account</GroupTitle>
             <AccountSection me={me} />
+          </div>
+        )}
+        {me?.platform_admin && (
+          <div>
+            <GroupTitle>Platform</GroupTitle>
+            <SettingsSection
+              id="settings-platform"
+              title="Sign-ups"
+              description="Applies to everyone on this Groundcrew server. You see this because you are a platform operator."
+            >
+              <PlatformSection />
+            </SettingsSection>
           </div>
         )}
         <div>

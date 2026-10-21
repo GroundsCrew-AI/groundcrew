@@ -30,6 +30,7 @@ from app.mail import (
     reset_mail,
     verification_mail,
 )
+from app.platform import SignupRefusedError
 from app.routes.deps import SessionDep, SettingsDep, bearer_token
 from app.security.auth import AuthConfigError, AuthError, verify_service_token
 from app.security.passwords import MAX_LENGTH, hash_password_async, password_problem
@@ -173,15 +174,36 @@ async def options(settings: SettingsDep) -> Options:
     )
 
 
+def _signup_refused(exc: SignupRefusedError) -> AuthFlowError:
+    paused = exc.code == "signups_paused"
+    return AuthFlowError(
+        status.HTTP_403_FORBIDDEN if paused else status.HTTP_429_TOO_MANY_REQUESTS,
+        exc.code,
+        str(exc),
+    )
+
+
 @router.post("/oauth")
-async def oauth(body: OAuthProfile, session: SessionDep, settings: SettingsDep) -> AuthUser:
+async def oauth(
+    body: OAuthProfile,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    x_client_ip: ClientIp = None,
+) -> AuthUser:
     """A GitHub or Google sign-in: the user, linked or created. Google only where it is on
     (GOOGLE_AUTH_ENABLED; off on hosted instances by default)."""
     if body.provider == "google" and not settings.google_auth:
         raise AuthFlowError(
             status.HTTP_403_FORBIDDEN, "disabled", "Google sign-in is turned off on this server."
         )
-    return AuthUser.of(await accounts.oauth_sign_in(session, body))
+    try:
+        user = await accounts.oauth_sign_in(
+            session, body, settings=settings, ip=_client(request, x_client_ip)
+        )
+    except SignupRefusedError as exc:
+        raise _signup_refused(exc) from None
+    return AuthUser.of(user)
 
 
 @router.post("/sign-in")
@@ -233,9 +255,17 @@ async def sign_up(
     _check_password(body.password, settings.password_min_length, body.email)
     _limit(f"sign-up:ip:{_client(request, x_client_ip)}", 10, 3600)
     name = (body.name or "").strip() or None
-    user, created = await accounts.password_sign_up(
-        session, body.email, await hash_password_async(body.password), name
-    )
+    try:
+        user, created = await accounts.password_sign_up(
+            session,
+            body.email,
+            await hash_password_async(body.password),
+            name,
+            settings=settings,
+            ip=_client(request, x_client_ip),
+        )
+    except SignupRefusedError as exc:
+        raise _signup_refused(exc) from None
     if created or (user.email_verified_at is None and user.password_hash is not None):
         await _send_verification(session, user, settings, mailer)
     else:

@@ -590,6 +590,22 @@ class LlmWorkspaceUsage(Base):
     )
 
 
+class PlatformSetting(Base):
+    """A switch for the whole platform, changed by an operator at run time (app.platform):
+    `signups_paused`."""
+
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[JSON] = mapped_column(default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
 class WorkspaceQuotaUsage(Base):
     """What a workspace used of a daily quota (app.quotas): `kind` is tavily or builds."""
 

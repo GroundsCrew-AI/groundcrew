@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import time
@@ -23,6 +24,7 @@ from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
 from app.quotas import QuotaExceededError
 from app.routes import (
+    admin,
     approvals,
     auth,
     connections,
@@ -87,6 +89,56 @@ class RequestIdMiddleware:
             request_id_var.reset(token)
 
 
+class BodySizeLimitMiddleware:
+    """Refuse request bodies over MAX_REQUEST_BYTES with 413: by Content-Length up front, and
+    while reading for bodies sent without one. nginx has the same limit in front of this."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        limit = get_settings().max_request_bytes
+        length = dict(scope["headers"]).get(b"content-length")
+        if length is not None and (not length.isdigit() or int(length) > limit):
+            await _too_large(send, limit)
+            return
+        seen = 0
+        refused = False
+
+        async def counted() -> Message:
+            # Past the limit: answer 413 now and tell the app the client went away.
+            nonlocal seen, refused
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > limit and not refused:
+                    refused = True
+                    await _too_large(send, limit)
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def guarded(message: Message) -> None:
+            if not refused:
+                await send(message)
+
+        await self.app(scope, counted, guarded)
+
+
+async def _too_large(send: Send, limit: int) -> None:
+    body = json.dumps({"detail": f"The request is larger than {limit // 1024} KB."}).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -107,6 +159,7 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["Last-Event-ID"],
 )
+app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
 # Request fields whose raw input must never come back in a 422 (POST /deploys env values,
@@ -174,6 +227,7 @@ app.include_router(graph.router)
 app.include_router(deploys.router)
 app.include_router(incidents.router)
 app.include_router(evidence.router)
+app.include_router(admin.router)
 
 
 def _openapi() -> dict[str, Any]:

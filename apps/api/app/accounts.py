@@ -47,6 +47,7 @@ from app.db.models import (
     WorkspaceMember,
     WorkspaceRole,
 )
+from app.platform import check_signup
 from app.security.passwords import hash_password_async, needs_rehash, verify_password_async
 
 
@@ -197,7 +198,9 @@ def _apply_profile(user: User, profile: OAuthProfile) -> None:
         user.avatar_url = profile.avatar_url
 
 
-async def _oauth_sign_in(session: AsyncSession, profile: OAuthProfile) -> User:
+async def _oauth_sign_in(
+    session: AsyncSession, profile: OAuthProfile, settings: Settings | None, ip: str | None
+) -> User:
     email = normalize_email(profile.email) if profile.email else None
     verified = bool(email and profile.email_verified)
     now = _now()
@@ -239,6 +242,14 @@ async def _oauth_sign_in(session: AsyncSession, profile: OAuthProfile) -> User:
                 user.email_verified_at = now
     created = user is None
     if user is None:
+        if settings is not None:
+            await check_signup(
+                session,
+                settings,
+                ip=ip,
+                verified_email=email if verified else None,
+                github_login=profile.login if profile.provider == "github" else None,
+            )
         taken = email is not None and await user_by_email(session, email) is not None
         user = User(
             email=None if taken else email,
@@ -268,30 +279,47 @@ async def _oauth_sign_in(session: AsyncSession, profile: OAuthProfile) -> User:
     return user
 
 
-async def oauth_sign_in(session: AsyncSession, profile: OAuthProfile) -> User:
+async def oauth_sign_in(
+    session: AsyncSession,
+    profile: OAuthProfile,
+    *,
+    settings: Settings | None = None,
+    ip: str | None = None,
+) -> User:
     """The user for this provider account: found, linked by verified email, or created with a
-    workspace. Commits."""
+    workspace. With `settings`, a new account must pass the sign-up switch and limits
+    (app.platform.SignupRefusedError). Commits."""
     try:
-        user = await _oauth_sign_in(session, profile)
+        user = await _oauth_sign_in(session, profile, settings, ip)
         await session.commit()
         return user
     except IntegrityError:
         # Two first sign-ins raced; the other one created the rows.
         await session.rollback()
-        user = await _oauth_sign_in(session, profile)
+        user = await _oauth_sign_in(session, profile, None, ip)
         await session.commit()
         return user
 
 
 async def password_sign_up(
-    session: AsyncSession, email: str, password_hash: str, name: str | None
+    session: AsyncSession,
+    email: str,
+    password_hash: str,
+    name: str | None,
+    *,
+    settings: Settings | None = None,
+    ip: str | None = None,
 ) -> tuple[User, bool]:
     """(user, created). An address that already has an account is not changed: the caller
-    tells its owner by email instead, so nobody learns here which addresses exist."""
+    tells its owner by email instead, so nobody learns here which addresses exist. A new
+    account must pass the sign-up switch and limits (with `settings`)."""
     email = normalize_email(email)
     existing = await user_by_email(session, email)
     if existing is not None:
         return existing, False
+    if settings is not None:
+        # The address is not proven yet, so an email invite does not get through a pause.
+        await check_signup(session, settings, ip=ip, verified_email=None, github_login=None)
     user = User(email=email, name=name, password_hash=password_hash)
     session.add(user)
     try:

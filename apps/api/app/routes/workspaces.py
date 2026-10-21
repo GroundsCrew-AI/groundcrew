@@ -35,6 +35,7 @@ from app.db.models import (
 )
 from app.incidents.store import OPEN_STATUSES
 from app.llm.budget import usage_totals, workspace_daily_cap, workspace_usage_today
+from app.platform import is_platform_admin
 from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.runs import rejected_counts
 from app.routes.schemas import (
@@ -70,6 +71,7 @@ async def _me(session: SessionDep, user: User, settings: Settings) -> MeOut:
         user=UserOut.build(user, await sign_in_methods(session, user)),
         workspaces=[WorkspaceOut.build(w, r) for w, r in workspaces],
         password_auth=settings.password_auth,
+        platform_admin=is_platform_admin(user, settings),
     )
 
 

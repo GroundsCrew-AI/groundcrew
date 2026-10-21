@@ -13,7 +13,9 @@ const API_BASE = (process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_UR
   /\/+$/,
   "",
 );
-const FORWARDED_RESPONSE_HEADERS = ["content-type", "x-request-id"];
+const FORWARDED_RESPONSE_HEADERS = ["content-type", "x-request-id", "retry-after"];
+// Same as the API's MAX_REQUEST_BYTES default; bigger bodies are refused before they are read.
+const MAX_BODY_BYTES = 1_048_576;
 
 type Context = { params: Promise<{ path: string[] }> };
 
@@ -44,6 +46,10 @@ async function proxy(request: NextRequest, context: Context): Promise<Response> 
 
   const target = `${API_BASE}/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
   const hasBody = !["GET", "HEAD"].includes(request.method);
+  const length = Number(request.headers.get("content-length") ?? "0");
+  if (hasBody && (!Number.isFinite(length) || length > MAX_BODY_BYTES)) {
+    return NextResponse.json({ detail: "The request is too large." }, { status: 413 });
+  }
   const headers: Record<string, string> = { authorization: `Bearer ${token}` };
   const contentType = request.headers.get("content-type");
   if (contentType) headers["content-type"] = contentType;
@@ -56,10 +62,13 @@ async function proxy(request: NextRequest, context: Context): Promise<Response> 
     upstream = await fetch(target, {
       method: request.method,
       headers,
-      body: hasBody ? await request.text() : undefined,
+      body: hasBody ? await boundedText(request) : undefined,
       cache: "no-store",
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BodyTooLarge) {
+      return NextResponse.json({ detail: "The request is too large." }, { status: 413 });
+    }
     return NextResponse.json({ detail: "The API is not reachable." }, { status: 502 });
   }
 
@@ -70,5 +79,14 @@ async function proxy(request: NextRequest, context: Context): Promise<Response> 
   }
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }
+
+/** The body as text, or a 413 error once it passes MAX_BODY_BYTES (chunked uploads too). */
+async function boundedText(request: NextRequest): Promise<string> {
+  const text = await request.text();
+  if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) throw new BodyTooLarge();
+  return text;
+}
+
+class BodyTooLarge extends Error {}
 
 export { proxy as DELETE, proxy as GET, proxy as PATCH, proxy as POST, proxy as PUT };
