@@ -268,6 +268,15 @@ All public pages and docs return 200 on https://groundkrew.com, no console error
 - Unconfirmed in the docs: Slack error names in notifications troubleshooting, and the limits page
   pointing people to the Security page contact to ask for higher limits.
 
+Deploy fix (2026-10-22): release `5aa49f3d7482` live, `57f18be6afa5` kept for rollback.
+- Deploys failed at the first clone with EACCES on /scratch: a named volume Docker created owned by
+  root, while the worker runs as uid 10001 on a read-only root filesystem.
+- /scratch is now a tmpfs owned by the service uid (worker 512m, api 64m), TMPDIR and HOME point at
+  it, worker mem_limit 1280m. API and worker refuse to start when TMPDIR is not writable.
+- Checked on the server: worker /scratch is tmpfs 10001:10001 0700, a clone of
+  GroundsCrew-AI/legacy-flask-app lands there. A deploy from the Deploy page still to be run.
+- The unused `groundcrew_worker-scratch` volume is still on the server (remove later).
+
 Open issues:
 - The automatic rollback path has unit-level logic only; it has not been exercised live (a deploy of a
   commit that fails its health check would show it).
