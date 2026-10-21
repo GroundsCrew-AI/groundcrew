@@ -52,6 +52,12 @@ as_build systemctl --user daemon-reload
 as_build systemctl --user enable docker >/dev/null 2>&1
 as_build systemctl --user restart docker
 for _ in $(seq 1 30); do [ -S /run/user/$UID_/docker.sock ] && break; sleep 1; done
+# The worker bind-mounts the socket file, which stays pinned to the one that existed when it
+# started; the restart above made a new one. Restarting the worker mounts the new socket.
+if docker inspect groundcrew-worker-1 >/dev/null 2>&1; then
+  docker restart groundcrew-worker-1 >/dev/null
+  echo "worker restarted to pick up the new build daemon socket"
+fi
 # The previous data root, if any, is not used any more.
 rm -rf "$HOME_/.local/share/docker"
 
