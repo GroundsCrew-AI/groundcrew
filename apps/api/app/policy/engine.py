@@ -45,7 +45,8 @@ class ApprovalNotFoundError(ApprovalStateError):
 
 
 class ApprovalForbiddenError(Exception):
-    """The workspace lets only owners approve emergency actions, and the decider is not one."""
+    """The decider's role may not decide this approval: viewers never do, and a workspace can
+    keep emergency actions for owners."""
 
 
 class RunStoppedError(Exception):
@@ -203,6 +204,18 @@ async def _waiting_for(session: AsyncSession, run: Run, approval: Approval) -> s
     return None
 
 
+async def _check_approver(
+    session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
+    """Only owners and approvers decide approvals (routes check it too)."""
+    from app.accounts import member_role, role_allows
+    from app.db.models import WorkspaceRole
+
+    role = await member_role(session, user_id, workspace_id)
+    if role is None or not role_allows(role, WorkspaceRole.approver):
+        raise ApprovalForbiddenError("Only owners and approvers can approve or reject actions.")
+
+
 async def _check_emergency_approver(
     session: AsyncSession, workspace_id: uuid.UUID, user_id: uuid.UUID
 ) -> None:
@@ -211,7 +224,7 @@ async def _check_emergency_approver(
     from app.workspace_settings import get_config
 
     workspace = await session.get_one(Workspace, workspace_id)
-    if get_config(workspace).emergency_approvers == "members":
+    if get_config(workspace).emergency_approvers == "approvers":
         return
     if await member_role(session, user_id, workspace_id) != WorkspaceRole.owner:
         raise ApprovalForbiddenError(
@@ -239,8 +252,10 @@ async def decide_approval(
     run = await session.get_one(Run, approval.run_id, with_for_update=True)
     if run.status in TERMINAL_RUN_STATUSES:
         raise ApprovalStateError(f"The run is already {run.status}.")
-    # Rejecting is always allowed; approving an emergency action may need an owner.
-    # (No decided_by: the dev-only self-approve for live scripts.)
+    # Owners and approvers decide; rejecting needs nothing more, approving an emergency action
+    # may need an owner. (No decided_by: the dev-only self-approve for live scripts.)
+    if decided_by is not None:
+        await _check_approver(session, approval.workspace_id, decided_by)
     if (
         approval.policy == ToolPolicy.emergency
         and decision == Decision.approve

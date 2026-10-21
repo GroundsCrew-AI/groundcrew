@@ -26,11 +26,14 @@ import {
   type Members,
   ownerCount,
   parseInvitee,
+  ROLE_DESCRIPTION,
+  ROLES,
   roleLabel,
   useAddMember,
   useCancelInvite,
   useRemoveMember,
   useUpdateMemberRole,
+  withArticle,
   type WorkspaceRole,
 } from "@/lib/workspace-admin";
 
@@ -63,8 +66,11 @@ function RoleSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="owner">Owner</SelectItem>
-        <SelectItem value="member">Member</SelectItem>
+        {ROLES.map((r) => (
+          <SelectItem key={r} value={r}>
+            {roleLabel(r)}
+          </SelectItem>
+        ))}
       </SelectContent>
     </Select>
   );
@@ -87,14 +93,15 @@ function MemberRow({
 }) {
   const updateRole = useUpdateMemberRole(workspaceId);
   const remove = useRemoveMember(workspaceId);
-  const [confirmDemote, setConfirmDemote] = useState(false);
+  // The lower role you picked for yourself, waiting for confirmation.
+  const [demoteTo, setDemoteTo] = useState<WorkspaceRole | null>(null);
   const name = memberName(member);
 
   function changeRole(role: WorkspaceRole) {
     if (role === member.role) return;
     void toastResult(
       updateRole.mutateAsync({ userId: member.user_id, role }),
-      () => `${name} is now ${role === "owner" ? "an owner" : "a member"}`,
+      () => `${name} is now ${withArticle(role)}`,
     );
   }
 
@@ -122,7 +129,7 @@ function MemberRow({
           label={`Role for ${name}`}
           value={member.role}
           disabled={updateRole.isPending}
-          onChange={(role) => (isMe && role === "member" ? setConfirmDemote(true) : changeRole(role))}
+          onChange={(role) => (isMe && role !== "owner" ? setDemoteTo(role) : changeRole(role))}
         />
       ) : (
         <span className="text-[12.5px] text-muted-foreground">
@@ -156,18 +163,20 @@ function MemberRow({
           </AlertDialogContent>
         </AlertDialog>
       )}
-      <AlertDialog open={confirmDemote} onOpenChange={setConfirmDemote}>
+      <AlertDialog open={demoteTo !== null} onOpenChange={(open) => !open && setDemoteTo(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Make yourself a member?</AlertDialogTitle>
+            <AlertDialogTitle>Make yourself {demoteTo ? withArticle(demoteTo) : ""}?</AlertDialogTitle>
             <AlertDialogDescription>
-              You will no longer be able to change connections, members, or settings in {workspaceName}. Another
-              owner can make you an owner again.
+              {demoteTo ? ROLE_DESCRIPTION[demoteTo] : ""} You will no longer be able to change connections, members,
+              or settings in {workspaceName}. Another owner can make you an owner again.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => changeRole("member")}>Make me a member</AlertDialogAction>
+            <AlertDialogAction onClick={() => demoteTo && changeRole(demoteTo)}>
+              Make me {demoteTo ? withArticle(demoteTo) : ""}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -178,7 +187,7 @@ function MemberRow({
 function AddMemberForm({ workspaceId }: { workspaceId: string }) {
   const add = useAddMember(workspaceId);
   const [who, setWho] = useState("");
-  const [role, setRole] = useState<WorkspaceRole>("member");
+  const [role, setRole] = useState<WorkspaceRole>("viewer");
   const [error, setError] = useState<string | null>(null);
 
   async function submit(event: FormEvent) {
@@ -196,7 +205,7 @@ function AddMemberForm({ workspaceId }: { workspaceId: string }) {
           ? m.email?.toLowerCase() === target.email
           : m.github_login?.toLowerCase() === target.github_login.toLowerCase(),
       );
-      if (joined) return `${label} joined as ${role === "owner" ? "an owner" : "a member"}`;
+      if (joined) return `${label} joined as ${withArticle(role)}`;
       return "email" in target
         ? `Invited ${label}. We emailed them a link; they join once they confirm the address.`
         : `Invited ${label}. They join when they sign in with that GitHub account.`;

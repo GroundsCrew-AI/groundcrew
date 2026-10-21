@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -51,3 +51,13 @@ async def current_user(
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
+
+
+def client_ip(request: Request) -> str | None:
+    """The browser's address, as the web server passes it (X-Client-IP), for rate limits and
+    the audit log. Not part of the API schema."""
+    value = request.headers.get("x-client-ip")
+    return value.strip()[:64] if value else None
+
+
+ClientIp = Annotated[str | None, Depends(client_ip)]

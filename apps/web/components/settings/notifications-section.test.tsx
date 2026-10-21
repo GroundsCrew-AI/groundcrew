@@ -102,8 +102,8 @@ describe("NotificationsSection", () => {
     expect(within(results).getByText(/Sent to 2 people/)).toBeInTheDocument();
   });
 
-  it("is read-only for members", () => {
-    render(<NotificationsSection workspace={workspace({ role: "member", slack_saved: true })} canEdit={false} />);
+  it("is read-only for approvers and viewers", () => {
+    render(<NotificationsSection workspace={workspace({ role: "approver", slack_saved: true })} canEdit={false} />);
     expect(screen.getByText("Saved")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Owners only" })).toBeDisabled();

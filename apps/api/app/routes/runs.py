@@ -25,6 +25,7 @@ from app import queue
 from app.accounts import NotFoundError, member_workspace, require_member
 from app.agents.medic.events import MEDIC_EVENT_NAMES
 from app.agents.registry import AGENTS
+from app.audit import record
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
     Approval,
@@ -34,11 +35,12 @@ from app.db.models import (
     RunStep,
     StopReason,
     User,
+    WorkspaceRole,
 )
 from app.db.session import SessionFactory
 from app.incidents.store import close_for_stopped_run
 from app.pipeline.events import DEPLOY_EVENT_NAMES
-from app.routes.deps import CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
+from app.routes.deps import ClientIp, CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
 from app.routes.schemas import (
     ApprovalOut,
     ApprovalStepEvent,
@@ -64,13 +66,18 @@ def _not_found(what: str = "Run") -> HTTPException:
 
 
 async def member_run(
-    session: AsyncSession, user: User, run_id: uuid.UUID, *, for_update: bool = False
+    session: AsyncSession,
+    user: User,
+    run_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
 ) -> Run:
     run = await session.get(Run, run_id, with_for_update=for_update)
     if run is None:
         raise _not_found()
     try:
-        await require_member(session, user.id, run.workspace_id)
+        await require_member(session, user.id, run.workspace_id, minimum)
     except NotFoundError:
         raise _not_found() from None
     return run
@@ -106,7 +113,7 @@ async def create_run(body: RunCreate, user: CurrentUser, session: SessionDep) ->
             f"Unknown agent {body.agent!r}. Available: {', '.join(sorted(AGENTS))}",
         )
     try:
-        await member_workspace(session, user, body.workspace_id)
+        await member_workspace(session, user, body.workspace_id, WorkspaceRole.approver)
     except NotFoundError:
         raise _not_found("Workspace") from None
 
@@ -152,13 +159,15 @@ async def stream_token(
 
 
 @router.post("/{run_id}/stop")
-async def stop_run(run_id: uuid.UUID, user: CurrentUser, session: SessionDep) -> RunOut:
+async def stop_run(
+    run_id: uuid.UUID, user: CurrentUser, session: SessionDep, ip: ClientIp
+) -> RunOut:
     """Stop a queued, running, or waiting run. Its pending approvals are rejected.
 
     A running agent notices before its next model or tool call and exits without
     overwriting this status.
     """
-    run = await member_run(session, user, run_id, for_update=True)
+    run = await member_run(session, user, run_id, for_update=True, minimum=WorkspaceRole.approver)
     if run.status not in STOPPABLE:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Run is already {run.status}.")
 
@@ -180,6 +189,16 @@ async def stop_run(run_id: uuid.UUID, user: CurrentUser, session: SessionDep) ->
     )
     # A Medic run: its incident is closed too, so it does not wait for approvals forever.
     await close_for_stopped_run(session, run, str(user.github_login or user.id))
+    record(
+        session,
+        workspace_id=run.workspace_id,
+        actor=user,
+        action="run.stopped",
+        target_type="run",
+        target_id=run.id,
+        detail={"agent": run.agent},
+        ip=ip,
+    )
     await session.commit()
     counts = await rejected_counts(session, [run.id])
     return RunOut.build(run, rejected_actions=counts.get(run.id, 0))

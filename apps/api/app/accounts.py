@@ -16,8 +16,10 @@ provider sign-in, or when a password account confirms its address.
 
 Workspace access always goes through `member_workspace` / `require_member`, which raise
 NotFoundError for workspaces the user is not a member of: a 404, never a 403, so other
-workspaces' ids cannot be probed. `require_owner` adds ForbiddenError (403) for members who
-are not owners: they can see the workspace, so a 403 leaks nothing.
+workspaces' ids cannot be probed. Both take the lowest role the action needs (`minimum`):
+viewers read, approvers also start work and decide approvals, owners also manage members,
+connections, and settings (`require_owner`). A member below it gets ForbiddenError (403):
+they can see the workspace, so a 403 leaks nothing.
 
 Invites (by email or GitHub login) become memberships when that person signs in with a
 verified address or that GitHub account.
@@ -53,7 +55,29 @@ class NotFoundError(Exception):
 
 
 class ForbiddenError(Exception):
-    """A member who is not an owner tried an owner-only action. Maps to 403."""
+    """A member tried an action their role does not allow. Maps to 403."""
+
+
+# Each role can do everything the roles below it can.
+ROLE_RANK: dict[WorkspaceRole, int] = {
+    WorkspaceRole.viewer: 0,
+    WorkspaceRole.approver: 1,
+    WorkspaceRole.owner: 2,
+}
+_NEEDS = {
+    WorkspaceRole.approver: "Viewers can look but not change anything. Ask a workspace owner for "
+    "the approver role.",
+    WorkspaceRole.owner: "Only a workspace owner can do this.",
+}
+
+
+def role_allows(role: WorkspaceRole, minimum: WorkspaceRole) -> bool:
+    return ROLE_RANK[role] >= ROLE_RANK[minimum]
+
+
+def check_role(role: WorkspaceRole, minimum: WorkspaceRole) -> None:
+    if not role_allows(role, minimum):
+        raise ForbiddenError(_NEEDS[minimum])
 
 
 SignInCode = Literal["invalid", "unverified", "locked"]
@@ -446,7 +470,10 @@ async def sign_in_methods(session: AsyncSession, user: User) -> list[str]:
 
 
 async def member_workspace(
-    session: AsyncSession, user: User, workspace_id: uuid.UUID
+    session: AsyncSession,
+    user: User,
+    workspace_id: uuid.UUID,
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
 ) -> tuple[Workspace, WorkspaceRole]:
     row = (
         await session.execute(
@@ -457,15 +484,14 @@ async def member_workspace(
     ).first()
     if row is None:
         raise NotFoundError("Workspace not found.")
+    check_role(row[1], minimum)
     return row[0], row[1]
 
 
 async def require_owner(session: AsyncSession, user: User, workspace_id: uuid.UUID) -> Workspace:
     """The workspace when the user owns it. NotFoundError for non-members, ForbiddenError for
     members who are not owners."""
-    workspace, role = await member_workspace(session, user, workspace_id)
-    if role != WorkspaceRole.owner:
-        raise ForbiddenError("Only a workspace owner can do this.")
+    workspace, _ = await member_workspace(session, user, workspace_id, WorkspaceRole.owner)
     return workspace
 
 
@@ -481,15 +507,15 @@ async def member_role(
 
 
 async def require_member(
-    session: AsyncSession, user_id: uuid.UUID, workspace_id: uuid.UUID
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
 ) -> None:
-    found = await session.scalar(
-        select(WorkspaceMember.id).where(
-            WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user_id
-        )
-    )
-    if found is None:
+    role = await member_role(session, user_id, workspace_id)
+    if role is None:
         raise NotFoundError("Not found.")
+    check_role(role, minimum)
 
 
 async def user_workspaces(
