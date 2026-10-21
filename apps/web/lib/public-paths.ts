@@ -11,3 +11,18 @@ export function isPublicPath(pathname: string): boolean {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   return (PUBLIC_PATHS as readonly string[]).includes(path) || path.startsWith("/docs/");
 }
+
+/** Sign-in pages: open without a session (signed-in visitors are sent home, except sign-out). */
+export const AUTH_PAGES: readonly string[] = [
+  "/signin",
+  "/signup",
+  "/verify-email",
+  "/forgot-password",
+  "/reset-password",
+  "/signout",
+];
+
+/** May this path be opened without a session? "/" is (signed-out visitors see the landing page). */
+export function isOpenPath(pathname: string): boolean {
+  return pathname === "/" || AUTH_PAGES.includes(pathname) || isPublicPath(pathname);
+}

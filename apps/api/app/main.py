@@ -89,6 +89,38 @@ class RequestIdMiddleware:
             request_id_var.reset(token)
 
 
+# On every API response. The API serves JSON and event streams only, so nothing may run, load,
+# or frame it. HSTS comes from nginx.
+SECURITY_HEADERS = [
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+    (b"content-security-policy", b"default-src 'none'; frame-ancestors 'none'"),
+    (b"cross-origin-resource-policy", b"same-site"),
+]
+
+
+class SecurityHeadersMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                present = {name.lower() for name, _ in message.get("headers", [])}
+                extra = [(n, v) for n, v in SECURITY_HEADERS if n not in present]
+                if b"cache-control" not in present:
+                    extra.append((b"cache-control", b"no-store"))
+                message["headers"] = [*message.get("headers", []), *extra]
+            await send(message)
+
+        await self.app(scope, receive, with_headers)
+
+
 class BodySizeLimitMiddleware:
     """Refuse request bodies over MAX_REQUEST_BYTES with 413: by Content-Length up front, and
     while reading for bodies sent without one. nginx has the same limit in front of this."""
@@ -149,7 +181,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await get_engine().dispose()
 
 
-app = FastAPI(title="Groundcrew API", version=VERSION, lifespan=lifespan)
+# The interactive docs and the schema are for development; a hosted instance does not serve them
+# (the web app's types come from scripts/export_openapi.py, not from a running server).
+_LOCAL = get_settings().app_env in ("dev", "test")
+app = FastAPI(
+    title="Groundcrew API",
+    version=VERSION,
+    lifespan=lifespan,
+    docs_url="/docs" if _LOCAL else None,
+    redoc_url="/redoc" if _LOCAL else None,
+    openapi_url="/openapi.json" if _LOCAL else None,
+)
 
 # REST calls come through the web app's server-side proxy, so they need no CORS. Only the
 # browser's direct SSE connection (GET /runs/{id}/events) does, and only from WEB_ORIGIN.
@@ -160,6 +202,7 @@ app.add_middleware(
     allow_headers=["Last-Event-ID"],
 )
 app.add_middleware(BodySizeLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
 # Request fields whose raw input must never come back in a 422 (POST /deploys env values,

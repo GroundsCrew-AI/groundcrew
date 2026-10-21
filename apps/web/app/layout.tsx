@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 
 import { Providers } from "@/components/providers";
 
@@ -20,7 +21,10 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  // The middleware's per-request CSP nonce. Reading request headers also renders every page per
+  // request, which a nonce needs (a page built ahead of time could not carry it).
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     // Font variables live on <html> because `font-sans` is applied there.
     <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable}`}>
@@ -31,7 +35,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         >
           Skip to content
         </a>
-        <Providers>{children}</Providers>
+        <Providers nonce={nonce}>{children}</Providers>
       </body>
     </html>
   );
