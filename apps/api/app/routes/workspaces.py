@@ -3,12 +3,15 @@
 import base64
 import binascii
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, or_, select
 
+from app import deletion, quotas
 from app.accounts import (
     NotFoundError,
     SignInError,
@@ -18,7 +21,8 @@ from app.accounts import (
     user_workspaces,
 )
 from app.agents.medic.events import PENDING_FOLLOWUP_STATES
-from app.config import get_settings
+from app.audit import record
+from app.config import Settings, get_settings
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
     Approval,
@@ -29,10 +33,12 @@ from app.db.models import (
     Run,
     RunStep,
     User,
+    Workspace,
 )
 from app.incidents.store import OPEN_STATUSES
 from app.llm.budget import usage_totals, workspace_daily_cap, workspace_usage_today
-from app.routes.deps import CurrentUser, SessionDep, SettingsDep
+from app.platform import is_platform_admin
+from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.runs import rejected_counts
 from app.routes.schemas import (
     ApprovalOut,
@@ -61,25 +67,29 @@ async def _check_member(session: SessionDep, user: User, workspace_id: uuid.UUID
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.") from None
 
 
-async def _me(session: SessionDep, user: User) -> MeOut:
+async def _me(session: SessionDep, user: User, settings: Settings) -> MeOut:
     workspaces = await user_workspaces(session, user)
     return MeOut(
         user=UserOut.build(user, await sign_in_methods(session, user)),
         workspaces=[WorkspaceOut.build(w, r) for w, r in workspaces],
+        password_auth=settings.password_auth,
+        platform_admin=is_platform_admin(user, settings),
     )
 
 
 @router.get("/me")
-async def me(user: CurrentUser, session: SessionDep) -> MeOut:
-    return await _me(session, user)
+async def me(user: CurrentUser, session: SessionDep, settings: SettingsDep) -> MeOut:
+    return await _me(session, user, settings)
 
 
 @router.patch("/me")
-async def update_me(body: ProfileUpdate, user: CurrentUser, session: SessionDep) -> MeOut:
+async def update_me(
+    body: ProfileUpdate, user: CurrentUser, session: SessionDep, settings: SettingsDep
+) -> MeOut:
     """Change your display name."""
     user.name = body.name.strip() or user.name
     await session.commit()
-    return await _me(session, user)
+    return await _me(session, user, settings)
 
 
 @router.post("/me/password", status_code=status.HTTP_204_NO_CONTENT)
@@ -88,7 +98,7 @@ async def change_my_password(
 ) -> None:
     """Change your password, or add one to a GitHub or Google account (it then signs in with
     its email too). Every session ends, this one included: sign in again with the new one."""
-    if not settings.password_auth_enabled:
+    if not settings.password_auth:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Email sign-in is turned off on this server."
         )
@@ -250,3 +260,150 @@ async def summary(
         pending_permanent_fixes=int(pending_fixes or 0),
         open_incidents=int(open_incidents or 0),
     )
+
+
+class QuotaOut(BaseModel):
+    # tavily, builds, concurrent_runs, connections
+    name: str
+    label: str
+    used: int
+    limit: int
+    # Counted per UTC day (resets at `resets_at`); otherwise a live count.
+    daily: bool
+
+
+class UsageOut(BaseModel):
+    """What this workspace used of its limits, for Settings."""
+
+    day: date
+    resets_at: datetime
+    usd_today: float
+    daily_usd_cap: float
+    # Groundcrew's own daily or total model spend limit is reached for every workspace.
+    platform_paused: bool
+    max_build_seconds: int
+    quotas: list[QuotaOut]
+
+
+_QUOTA_LABELS = {
+    "tavily": "Web research calls today",
+    "builds": "Deploy builds today",
+    "concurrent_runs": "Runs going at once",
+    "connections": "Connections",
+}
+
+
+@router.get("/workspaces/{workspace_id}/usage")
+async def workspace_usage(
+    workspace_id: uuid.UUID, user: CurrentUser, session: SessionDep, settings: SettingsDep
+) -> UsageOut:
+    try:
+        workspace, _ = await member_workspace(session, user, workspace_id)
+    except NotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.") from None
+    today_all, total_all = await usage_totals(session)
+    spent = await workspace_usage_today(session, workspace_id)
+    used = await quotas.usage(session, workspace, settings)
+    return UsageOut(
+        day=quotas.today(),
+        resets_at=quotas.next_reset(),
+        usd_today=float(spent.usd),
+        daily_usd_cap=float(await workspace_daily_cap(session, workspace_id, settings)),
+        platform_paused=today_all.usd >= Decimal(str(settings.llm_daily_usd_cap))
+        or total_all >= Decimal(str(settings.llm_total_usd_cap)),
+        max_build_seconds=int(settings.build_timeout_seconds),
+        quotas=[
+            QuotaOut(
+                name=name,
+                label=_QUOTA_LABELS[name],
+                used=q.used,
+                limit=q.limit,
+                daily=name in ("tavily", "builds"),
+            )
+            for name, q in used.items()
+        ],
+    )
+
+
+class WorkspaceRef(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class AccountDeletionOut(BaseModel):
+    """What deleting your account would do."""
+
+    # Workspaces only you are in: deleted with everything in them.
+    deletes: list[WorkspaceRef]
+    # Shared workspaces you leave.
+    leaves: list[WorkspaceRef]
+    # Shared workspaces where you are the only owner: make someone else an owner first.
+    blocked_by: list[WorkspaceRef]
+
+
+class AccountDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Must be exactly "delete my account".
+    confirm: str = Field(max_length=40)
+
+
+def _deletion_out(plan: deletion.AccountPlan) -> AccountDeletionOut:
+    def refs(items: list[Workspace]) -> list[WorkspaceRef]:
+        return [WorkspaceRef(id=w.id, name=w.name) for w in items]
+
+    return AccountDeletionOut(
+        deletes=refs(plan.delete), leaves=refs(plan.leave), blocked_by=refs(plan.blocked)
+    )
+
+
+@router.get("/me/account-deletion")
+async def account_deletion_preview(user: CurrentUser, session: SessionDep) -> AccountDeletionOut:
+    return _deletion_out(await deletion.account_plan(session, user))
+
+
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={409: {"description": "You are the only owner of a shared workspace."}},
+)
+async def delete_my_account(
+    body: AccountDelete, user: CurrentUser, session: SessionDep, ip: ClientIp
+) -> None:
+    """Delete your account: your sign-in identities, memberships, and the workspaces only you
+    are in, with everything in them. Shared workspaces stay; your name stays on what you
+    approved there. Signs you out everywhere."""
+    if body.confirm.strip().lower() != "delete my account":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, 'Type "delete my account" to confirm.'
+        )
+    plan = await deletion.account_plan(session, user)
+    if plan.blocked:
+        names = ", ".join(w.name for w in plan.blocked)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"You are the only owner of {names}. Make someone else an owner there first, or "
+            "delete the workspace.",
+        )
+    for workspace in plan.leave:
+        record(
+            session,
+            workspace_id=workspace.id,
+            actor=user,
+            action="member.left",
+            target_type="user",
+            target_id=user.id,
+            detail={"reason": "account_deleted"},
+            ip=ip,
+        )
+    record(
+        session,
+        workspace_id=None,
+        actor=user,
+        action="account.deleted",
+        target_type="user",
+        target_id=user.id,
+        detail={"workspaces_deleted": len(plan.delete)},
+        ip=ip,
+    )
+    await deletion.delete_account(session, user, plan)
+    await session.commit()

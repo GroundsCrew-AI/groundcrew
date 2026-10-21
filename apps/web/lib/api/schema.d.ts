@@ -4,6 +4,43 @@
  */
 
 export interface paths {
+    "/admin/platform": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Platform */
+        get: operations["get_platform_admin_platform_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/platform/signups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Signups
+         * @description Pause or resume new sign-ups. Invited people can still join while paused.
+         */
+        put: operations["set_signups_admin_platform_signups_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/approvals/{approval_id}/decide": {
         parameters: {
             query?: never;
@@ -56,7 +93,8 @@ export interface paths {
         put?: never;
         /**
          * Oauth
-         * @description A GitHub or Google sign-in: the user, linked or created.
+         * @description A GitHub or Google sign-in: the user, linked or created. Google only where it is on
+         *     (GOOGLE_AUTH_ENABLED; off on hosted instances by default).
          */
         post: operations["oauth_auth_oauth_post"];
         delete?: never;
@@ -397,8 +435,9 @@ export interface paths {
         post?: never;
         /**
          * Delete Connection
-         * @description Remove the connection, its stored secret, and every resource it discovered (with their
-         *     edges). Access on the customer's side is removed by them: see `cleanup`.
+         * @description Remove the connection, its stored secret, every resource it discovered (with their
+         *     edges), and the telemetry read for them (app.deletion). Access on the customer's side is
+         *     removed by them: see `cleanup`.
          */
         delete: operations["delete_connection_connections__connection_id__delete"];
         options?: never;
@@ -761,7 +800,13 @@ export interface paths {
         get: operations["me_me_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete My Account
+         * @description Delete your account: your sign-in identities, memberships, and the workspaces only you
+         *     are in, with everything in them. Shared workspaces stay; your name stays on what you
+         *     approved there. Signs you out everywhere.
+         */
+        delete: operations["delete_my_account_me_delete"];
         options?: never;
         head?: never;
         /**
@@ -769,6 +814,23 @@ export interface paths {
          * @description Change your display name.
          */
         patch: operations["update_me_me_patch"];
+        trace?: never;
+    };
+    "/me/account-deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Account Deletion Preview */
+        get: operations["account_deletion_preview_me_account_deletion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/me/password": {
@@ -970,7 +1032,13 @@ export interface paths {
         get: operations["get_workspace_workspaces__workspace_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Workspace
+         * @description Delete the workspace and everything Groundcrew stored for it (owners): members, invites,
+         *     connections and their credentials, the graph, runs, approvals, incidents, usage, and the
+         *     audit log. Nothing changes in the connected accounts; `cleanup` says what to remove there.
+         */
+        delete: operations["delete_workspace_workspaces__workspace_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -993,6 +1061,26 @@ export interface paths {
          * @description Pending approvals only list runs that can still resume (not stopped or finished).
          */
         get: operations["list_approvals_workspaces__workspace_id__approvals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspace_id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit Log
+         * @description Who did what in this workspace, newest first (every member).
+         */
+        get: operations["audit_log_workspaces__workspace_id__audit_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1101,7 +1189,7 @@ export interface paths {
         head?: never;
         /**
          * Update Member
-         * @description Change a member's role (owners). The last owner cannot be made a member.
+         * @description Change a member's role (owners). The last owner stays an owner.
          */
         patch: operations["update_member_workspaces__workspace_id__members__user_id__patch"];
         trace?: never;
@@ -1164,6 +1252,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspace_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace Usage */
+        get: operations["workspace_usage_workspaces__workspace_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1175,6 +1280,23 @@ export interface components {
              * @default check_email
              */
             status: string;
+        };
+        /** AccountDelete */
+        AccountDelete: {
+            /** Confirm */
+            confirm: string;
+        };
+        /**
+         * AccountDeletionOut
+         * @description What deleting your account would do.
+         */
+        AccountDeletionOut: {
+            /** Blocked By */
+            blocked_by: components["schemas"]["WorkspaceRef"][];
+            /** Deletes */
+            deletes: components["schemas"]["WorkspaceRef"][];
+            /** Leaves */
+            leaves: components["schemas"]["WorkspaceRef"][];
         };
         /**
          * ActionPlan
@@ -1335,6 +1457,40 @@ export interface components {
              * @enum {string}
              */
             task: "write_dockerfile" | "fix_build";
+        };
+        /** AuditEventOut */
+        AuditEventOut: {
+            /** Action */
+            action: string;
+            /** Actor */
+            actor: string;
+            /** Actor Id */
+            actor_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Target Id */
+            target_id: string | null;
+            /** Target Type */
+            target_type: string | null;
+        };
+        /** AuditPage */
+        AuditPage: {
+            /** Items */
+            items: components["schemas"]["AuditEventOut"][];
+            /** Next Before */
+            next_before: string | null;
         };
         /**
          * AuthUser
@@ -1578,6 +1734,15 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** ConnectionCleanup */
+        ConnectionCleanup: {
+            /** Connection */
+            connection: string;
+            /** Kind */
+            kind: string;
+            /** Steps */
+            steps: string[];
+        };
         /** ConnectionDeleted */
         ConnectionDeleted: {
             /** Cleanup */
@@ -1597,6 +1762,8 @@ export interface components {
         ConnectionKind: "aws" | "github" | "vercel" | "azure" | "k8s";
         /** ConnectionOut */
         ConnectionOut: {
+            /** Access */
+            access?: string[];
             /** Account */
             account?: string | null;
             /** Capabilities */
@@ -3048,6 +3215,16 @@ export interface components {
         };
         /** MeOut */
         MeOut: {
+            /**
+             * Password Auth
+             * @default false
+             */
+            password_auth: boolean;
+            /**
+             * Platform Admin
+             * @default false
+             */
+            platform_admin: boolean;
             user: components["schemas"]["UserOut"];
             /** Workspaces */
             workspaces: components["schemas"]["WorkspaceOut"][];
@@ -3064,7 +3241,7 @@ export interface components {
             email?: string | null;
             /** Github Login */
             github_login?: string | null;
-            /** @default member */
+            /** @default viewer */
             role: components["schemas"]["WorkspaceRole"];
         };
         /** MemberOut */
@@ -3228,6 +3405,8 @@ export interface components {
         };
         /** Options */
         Options: {
+            /** Google */
+            google: boolean;
             /** Password */
             password: boolean;
             /** Password Min Length */
@@ -3289,6 +3468,19 @@ export interface components {
             kind: string;
             /** Name */
             name: string;
+        };
+        /** PlatformOut */
+        PlatformOut: {
+            /** Signups Changed At */
+            signups_changed_at: string | null;
+            /** Signups Last Hour */
+            signups_last_hour: number;
+            /** Signups Paused */
+            signups_paused: boolean;
+            /** Signups Per Hour */
+            signups_per_hour: number;
+            /** Users */
+            users: number;
         };
         /** PreflightCheck */
         PreflightCheck: {
@@ -3398,6 +3590,19 @@ export interface components {
             repo: string;
             /** Title */
             title: string;
+        };
+        /** QuotaOut */
+        QuotaOut: {
+            /** Daily */
+            daily: boolean;
+            /** Label */
+            label: string;
+            /** Limit */
+            limit: number;
+            /** Name */
+            name: string;
+            /** Used */
+            used: number;
         };
         /** Ready */
         Ready: {
@@ -3909,6 +4114,11 @@ export interface components {
              */
             rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
         };
+        /** SignupsIn */
+        SignupsIn: {
+            /** Paused */
+            paused: boolean;
+        };
         /** StageFinished */
         StageFinished: {
             /**
@@ -4100,6 +4310,32 @@ export interface components {
              */
             ref: string | null;
         };
+        /**
+         * UsageOut
+         * @description What this workspace used of its limits, for Settings.
+         */
+        UsageOut: {
+            /** Daily Usd Cap */
+            daily_usd_cap: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Max Build Seconds */
+            max_build_seconds: number;
+            /** Platform Paused */
+            platform_paused: boolean;
+            /** Quotas */
+            quotas: components["schemas"]["QuotaOut"][];
+            /**
+             * Resets At
+             * Format: date-time
+             */
+            resets_at: string;
+            /** Usd Today */
+            usd_today: number;
+        };
         /** UserOut */
         UserOut: {
             /** Avatar Url */
@@ -4218,7 +4454,7 @@ export interface components {
              * @default owners
              * @enum {string}
              */
-            emergency_approvers: "owners" | "members";
+            emergency_approvers: "owners" | "approvers";
             /**
              * Incident Watch
              * @default true
@@ -4230,6 +4466,21 @@ export interface components {
         WorkspaceCreate: {
             /** Name */
             name: string;
+        };
+        /** WorkspaceDelete */
+        WorkspaceDelete: {
+            /** Confirm Name */
+            confirm_name: string;
+        };
+        /** WorkspaceDeleted */
+        WorkspaceDeleted: {
+            /** Cleanup */
+            cleanup: components["schemas"]["ConnectionCleanup"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
         };
         /** WorkspaceDetail */
         WorkspaceDetail: {
@@ -4264,11 +4515,23 @@ export interface components {
             name: string;
             role: components["schemas"]["WorkspaceRole"];
         };
+        /** WorkspaceRef */
+        WorkspaceRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /**
          * WorkspaceRole
+         * @description owner: everything, including members, connections, and settings. approver: approves
+         *     deploys and fixes and starts work. viewer: reads only.
          * @enum {string}
          */
-        WorkspaceRole: "owner" | "member";
+        WorkspaceRole: "owner" | "approver" | "viewer";
         /** WorkspaceSummary */
         WorkspaceSummary: {
             /** Budget Tokens Today */
@@ -4317,6 +4580,72 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_platform_admin_platform_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_signups_admin_platform_signups_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignupsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     decide_approvals__approval_id__decide_post: {
         parameters: {
             query?: never;
@@ -4394,6 +4723,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "x-client-ip"?: string | null;
                 authorization?: string | null;
             };
             path?: never;
@@ -5712,6 +6042,46 @@ export interface operations {
             };
         };
     };
+    delete_my_account_me_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountDelete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description You are the only owner of a shared workspace. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_me_me_patch: {
         parameters: {
             query?: never;
@@ -5734,6 +6104,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    account_deletion_preview_me_account_deletion_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDeletionOut"];
                 };
             };
             /** @description Validation Error */
@@ -6082,6 +6483,43 @@ export interface operations {
             };
         };
     };
+    delete_workspace_workspaces__workspace_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceDelete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_workspace_workspaces__workspace_id__patch: {
         parameters: {
             query?: never;
@@ -6144,6 +6582,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    audit_log_workspaces__workspace_id__audit_get: {
+        parameters: {
+            query?: {
+                before?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditPage"];
                 };
             };
             /** @description Validation Error */
@@ -6492,6 +6966,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    workspace_usage_workspaces__workspace_id__usage_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageOut"];
                 };
             };
             /** @description Validation Error */

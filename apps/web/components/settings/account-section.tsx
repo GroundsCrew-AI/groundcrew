@@ -169,18 +169,18 @@ export function AccountSection({ me }: { me: Me }) {
       </SettingsSection>
       <SettingsSection
         id="settings-sign-in"
-        title="Sign-in and password"
+        title={me.password_auth ? "Sign-in and password" : "Sign-in"}
         description={
           <>
             You sign in with{" "}
             {(user.sign_in_methods ?? []).length
               ? (user.sign_in_methods ?? []).map((m) => SIGN_IN_METHOD_LABEL[m] ?? m).join(", ")
               : "a provider"}
-            . Google and GitHub accounts with your confirmed address are linked automatically.
+            . Accounts with your confirmed address are linked automatically.
           </>
         }
       >
-        <PasswordForm user={user} />
+        {me.password_auth && <PasswordForm user={user} />}
       </SettingsSection>
     </div>
   );

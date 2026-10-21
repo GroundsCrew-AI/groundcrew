@@ -45,7 +45,8 @@ from app.workspace_settings import get_config
 logger = logging.getLogger("groundcrew.incidents")
 
 WATCH_JOB: Final = "watch_incidents"
-WATCH_TYPES = ("ecs:service", "rds:db", "lambda:function", "ec2:instance")
+ALB = "elasticloadbalancing:loadbalancer/app"
+WATCH_TYPES = ("ecs:service", "rds:db", "rds:cluster", "lambda:function", "ec2:instance", ALB)
 K8S_WATCH_TYPES = ("k8s:deployment", "k8s:statefulset")
 CHECK_TIMEOUT_SECONDS = 30.0
 

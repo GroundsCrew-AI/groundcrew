@@ -16,7 +16,12 @@ export type AuthUser = {
   image: string | null;
 };
 
-export type AuthOptions = { password: boolean; require_verified_email: boolean; password_min_length: number };
+export type AuthOptions = {
+  password: boolean;
+  google: boolean;
+  require_verified_email: boolean;
+  password_min_length: number;
+};
 
 export type AuthResult<T> = { ok: true; data: T } | { ok: false; status: number; code: string; detail: string };
 
@@ -30,10 +35,12 @@ export type OAuthProfile = {
   avatar_url?: string | null;
 };
 
-async function clientIp(): Promise<string | undefined> {
+/** The browser's address: X-Real-IP, which nginx sets from the connection (and overwrites if
+ * a client sends one), else the first X-Forwarded-For entry (local dev). */
+export async function clientIp(): Promise<string | undefined> {
   try {
     const h = await headers();
-    return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || undefined;
+    return h.get("x-real-ip") || h.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
   } catch {
     return undefined; // outside a request (build time)
   }
@@ -81,8 +88,9 @@ export async function authApi<T>(path: string, init: { method?: "GET" | "POST"; 
   return { ok: true, data: body as T };
 }
 
-/** What the sign-in page offers; email sign-in stays on when the API cannot be asked. */
+/** What the sign-in page offers; email and password stays off when the API cannot be asked. */
 export async function authOptions(): Promise<AuthOptions> {
   const result = await authApi<AuthOptions>("options", { method: "GET" });
-  return result.ok ? result.data : { password: true, require_verified_email: true, password_min_length: 10 };
+  // Unreachable API: offer only provider sign-in (fail closed).
+  return result.ok ? result.data : { password: false, google: false, require_verified_email: true, password_min_length: 10 };
 }

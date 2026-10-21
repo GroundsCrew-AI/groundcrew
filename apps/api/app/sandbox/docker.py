@@ -90,11 +90,11 @@ class DockerSandbox:
                 f"{RUN_LABEL}={run_id}",
                 str(context_dir),
             ],
-            timeout=self.settings.sandbox_build_timeout_seconds,
+            timeout=self.settings.build_timeout_seconds,
         )
         log = result.output
         if result.timed_out:
-            limit = self.settings.sandbox_build_timeout_seconds
+            limit = self.settings.build_timeout_seconds
             log += f"\n[groundcrew] build timed out after {limit:.0f}s"
         ok = result.ok
         return BuildResult(

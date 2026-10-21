@@ -15,10 +15,12 @@ from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import deletion, quotas
 from app.accounts import NotFoundError, member_workspace, require_owner
+from app.audit import record
 from app.config import Settings, get_settings
 from app.connectors import kubernetes as kube
 from app.connectors.aws import (
@@ -32,10 +34,10 @@ from app.connectors.deploy_infra import deploy_role_arn, operate_role_arn
 from app.connectors.github import GitHubError, check_repo_name, get_github_app
 from app.connectors.kubernetes import kubeconfig_summary
 from app.connectors.vercel import VercelClient, VercelError
-from app.db.models import Connection, Resource, RunStatus, User
+from app.db.models import Connection, Resource, RunStatus, User, WorkspaceRole
 from app.discovery.engine import start_discovery
 from app.discovery.types import ConnectorError
-from app.routes.deps import CurrentUser, SessionDep, SettingsDep
+from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.discovery_schemas import (
     AwsCompleteIn,
     AwsOperateIn,
@@ -104,6 +106,7 @@ async def member_connection(
     *,
     for_update: bool = False,
     owner: bool = False,
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
 ) -> Connection:
     conn = await session.get(Connection, connection_id, with_for_update=for_update)
     if conn is None:
@@ -112,10 +115,27 @@ async def member_connection(
         if owner:
             await require_owner(session, user, conn.workspace_id)
         else:
-            await member_workspace(session, user, conn.workspace_id)
+            await member_workspace(session, user, conn.workspace_id, minimum)
     except NotFoundError:
         raise _not_found() from None
     return conn
+
+
+async def _audit(
+    session: AsyncSession, user: User, conn: Connection, action: str, ip: str | None
+) -> None:
+    """connection.<action> in the audit log, with the connection's kind and name."""
+    await session.flush()  # a new connection gets its id
+    record(
+        session,
+        workspace_id=conn.workspace_id,
+        actor=user,
+        action=f"connection.{action}",
+        target_type="connection",
+        target_id=conn.id,
+        detail={"kind": conn.kind, "name": conn.name},
+        ip=ip,
+    )
 
 
 async def _counts(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
@@ -197,7 +217,11 @@ async def aws_template(_user: CurrentUser) -> PlainTextResponse:
 
 @router.post("/aws/start")
 async def aws_start(
-    body: AwsStartIn, user: CurrentUser, session: SessionDep, settings: SettingsDep
+    body: AwsStartIn,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
 ) -> AwsStartOut:
     """Start (or resume) connecting an AWS account: a fresh ExternalId and the stack link for
     the chosen tier (stored on the connection; complete verifies the deploy role for deploy)."""
@@ -214,7 +238,9 @@ async def aws_start(
         )
     )
     region = settings.discovery_regions[0]
+    created = conn is None
     if conn is None:
+        await quotas.check_can_add_connection(session, body.workspace_id, settings)
         conn = Connection(
             workspace_id=body.workspace_id,
             kind="aws",
@@ -232,6 +258,8 @@ async def aws_start(
     elif conn.config.get("tier") != body.tier:
         conn.config = {**conn.config, "tier": body.tier}
     external_id = str(conn.config["external_id"])
+    if created:
+        await _audit(session, user, conn, "created", ip)
     await session.commit()
     params = (
         f"ParameterKey=GroundcrewPrincipalArn,ParameterValue={principal} "
@@ -335,7 +363,11 @@ def _verify_deploy_role(account: str, external_id: str) -> str:
 
 @router.post("/{connection_id}/aws/tier")
 async def aws_set_tier(
-    connection_id: uuid.UUID, body: AwsTierIn, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    body: AwsTierIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
 ) -> ConnectionOut:
     """Switch a connected AWS account between observe and deploy after its stack was updated.
     deploy: verifies the groundcrew-deploy role first (nothing changes if it cannot be used).
@@ -356,6 +388,7 @@ async def aws_set_tier(
         get_sessions().forget(deploy_role_arn(account), external_id)
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     conn.config = {**conn.config, "tier": body.tier, "deploy_role_arn": deploy_role}
+    await _audit(session, user, conn, "tier_changed", ip)
     await session.commit()
     return await _out(session, conn)
 
@@ -376,7 +409,11 @@ def _verify_operate_role(account: str, external_id: str) -> str:
 
 @router.put("/{connection_id}/aws/regions")
 async def aws_set_regions(
-    connection_id: uuid.UUID, body: AwsRegionsIn, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    body: AwsRegionsIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
 ) -> ConnectionOut:
     """Choose the regions Groundcrew discovers, watches, and acts in for this AWS account (owner
     only). An empty list goes back to the platform default (DISCOVERY_REGIONS). The read-only
@@ -386,13 +423,18 @@ async def aws_set_regions(
     if conn.kind != "aws":
         raise _unprocessable("Only an AWS connection has regions.")
     conn.config = {**conn.config, "regions": body.regions}
+    await _audit(session, user, conn, "regions_changed", ip)
     await session.commit()
     return await _out(session, conn)
 
 
 @router.post("/{connection_id}/aws/operate")
 async def aws_set_operate(
-    connection_id: uuid.UUID, body: AwsOperateIn, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    body: AwsOperateIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
 ) -> ConnectionOut:
     """Turn approved emergency fixes on or off for a connected AWS account. On: verifies the
     groundcrew-operate role first (nothing changes if it cannot be used). Off: Groundcrew stops
@@ -413,6 +455,7 @@ async def aws_set_operate(
         get_sessions().forget(operate_role_arn(account), external_id)
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     conn.config = {**conn.config, "operate_role_arn": role}
+    await _audit(session, user, conn, "operate_changed", ip)
     await session.commit()
     return await _out(session, conn)
 
@@ -466,7 +509,11 @@ async def _k8s_operate_namespaces(conn: Connection, namespaces: list[str]) -> li
 
 @router.post("/{connection_id}/k8s/operate")
 async def k8s_set_operate(
-    connection_id: uuid.UUID, body: K8sOperateIn, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    body: K8sOperateIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
 ) -> ConnectionOut:
     """Turn approved emergency fixes on or off for a connected cluster. On: checks (with
     SelfSubjectAccessReviews) that the kubeconfig's identity may patch Deployments and list
@@ -498,6 +545,7 @@ async def k8s_set_operate(
         "operate": bool(body.enabled),
         "operate_namespaces": allowed if body.enabled else [],
     }
+    await _audit(session, user, conn, "operate_changed", ip)
     await session.commit()
     return await _out(session, conn)
 
@@ -521,7 +569,11 @@ async def _k8s_may_list_configmaps(conn: Connection, namespaces: list[str]) -> b
 
 @router.put("/{connection_id}/k8s/configmap-changes")
 async def k8s_set_configmap_changes(
-    connection_id: uuid.UUID, body: K8sConfigMapChangesIn, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    body: K8sConfigMapChangesIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
 ) -> ConnectionOut:
     """Opt in to (or out of) ConfigMap changes as incident causes (owner only). Off by default:
     the `list configmaps` right Groundcrew needs for it would also let a client read ConfigMap
@@ -548,6 +600,7 @@ async def k8s_set_configmap_changes(
             )
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
     conn.config = {**conn.config, kube.CONFIGMAP_CHANGES_KEY: bool(body.enabled)}
+    await _audit(session, user, conn, "configmap_changes_changed", ip)
     await session.commit()
     return await _out(session, conn)
 
@@ -567,6 +620,7 @@ async def k8s_set_deploy_settings(
     user: CurrentUser,
     session: SessionDep,
     settings: SettingsDep,
+    ip: ClientIp,
 ) -> ConnectionOut:
     """Where this cluster's deploys go: the image registry (push credentials optional, the
     token stored encrypted and never returned), an optional imagePullSecret, the Ingress class,
@@ -611,13 +665,17 @@ async def k8s_set_deploy_settings(
     except DeploySettingsError as exc:
         raise _unprocessable(str(exc)) from None
     conn.config = {**conn.config, DEPLOY_SETTINGS_KEY: new.to_config()}
+    await _audit(session, user, conn, "deploy_settings_changed", ip)
     await session.commit()
     return await _out(session, conn)
 
 
 @router.delete("/{connection_id}/k8s/deploy-settings")
 async def k8s_clear_deploy_settings(
-    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
 ) -> ConnectionOut:
     """Forget the deploy settings (and the saved registry token): back to the local kind
     defaults."""
@@ -625,6 +683,7 @@ async def k8s_clear_deploy_settings(
     if conn.kind != "k8s":
         raise _unprocessable("Only a Kubernetes cluster has deploy settings.")
     conn.config = {k: v for k, v in conn.config.items() if k != DEPLOY_SETTINGS_KEY}
+    await _audit(session, user, conn, "deploy_settings_cleared", ip)
     await session.commit()
     return await _out(session, conn)
 
@@ -683,7 +742,13 @@ async def github_installations(
 
 
 @router.post("/github")
-async def github_link(body: GitHubLinkIn, user: CurrentUser, session: SessionDep) -> ConnectionOut:
+async def github_link(
+    body: GitHubLinkIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
+    settings: SettingsDep,
+) -> ConnectionOut:
     """Link repositories of one installation to the workspace (replaces that connection's
     repo list). Only repositories the installation can see are accepted."""
     await _check_owner(session, user, body.workspace_id)
@@ -712,10 +777,12 @@ async def github_link(body: GitHubLinkIn, user: CurrentUser, session: SessionDep
         )
     )
     if conn is None:
+        await quotas.check_can_add_connection(session, body.workspace_id, settings)
         conn = Connection(workspace_id=body.workspace_id, kind="github", name=f"GitHub {owner}")
         session.add(conn)
     conn.config = {"installation_id": body.installation_id, "account": owner, "repos": wanted}
     conn.status = "connected"
+    await _audit(session, user, conn, "created", ip)
     await session.commit()
     return await _out(session, conn)
 
@@ -725,10 +792,15 @@ async def github_link(body: GitHubLinkIn, user: CurrentUser, session: SessionDep
 
 @router.post("/vercel")
 async def vercel_connect(
-    body: VercelConnectIn, user: CurrentUser, session: SessionDep, settings: SettingsDep
+    body: VercelConnectIn,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
 ) -> ConnectionOut:
     """Check the token (team and projects are readable), then store it encrypted."""
     await _check_owner(session, user, body.workspace_id)
+    await quotas.check_can_add_connection(session, body.workspace_id, settings)
     token = body.token.strip()
     team_id = (body.team_id or "").strip() or None
     await session.commit()
@@ -752,6 +824,7 @@ async def vercel_connect(
         secret_encrypted=_encrypt(token),
     )
     session.add(conn)
+    await _audit(session, user, conn, "created", ip)
     await session.commit()
     return await _out(session, conn)
 
@@ -781,11 +854,16 @@ def _vercel_problem(exc: VercelError, team_id: str | None) -> str:
 
 @router.post("/azure")
 async def azure_connect(
-    body: AzureConnectIn, user: CurrentUser, session: SessionDep
+    body: AzureConnectIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
+    settings: SettingsDep,
 ) -> ConnectionOut:
     """Preview: stores the service principal (secret encrypted). Live discovery is not built
     yet (TODO(azure-live)); the connection shows as Preview."""
     await _check_owner(session, user, body.workspace_id)
+    await quotas.check_can_add_connection(session, body.workspace_id, settings)
     conn = Connection(
         workspace_id=body.workspace_id,
         kind="azure",
@@ -800,18 +878,24 @@ async def azure_connect(
         secret_encrypted=_encrypt(body.client_secret),
     )
     session.add(conn)
+    await _audit(session, user, conn, "created", ip)
     await session.commit()
     return await _out(session, conn)
 
 
 @router.post("/k8s")
 async def k8s_connect(
-    body: KubernetesConnectIn, user: CurrentUser, session: SessionDep
+    body: KubernetesConnectIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
+    settings: SettingsDep,
 ) -> ConnectionOut:
     """Verifies the kubeconfig by listing namespaces with it, then stores it encrypted and
     keeps the cluster name, server, and namespace count as config. Nothing is stored when the
     cluster cannot be read."""
     await _check_owner(session, user, body.workspace_id)
+    await quotas.check_can_add_connection(session, body.workspace_id, settings)
     try:
         kube.check_kubeconfig(body.kubeconfig)
         summary = kubeconfig_summary(body.kubeconfig)
@@ -835,6 +919,7 @@ async def k8s_connect(
         secret_encrypted=_encrypt(body.kubeconfig),
     )
     session.add(conn)
+    await _audit(session, user, conn, "created", ip)
     await session.commit()
     return await _out(session, conn)
 
@@ -844,9 +929,13 @@ async def k8s_connect(
 
 @router.post("/{connection_id}/discover", status_code=status.HTTP_202_ACCEPTED)
 async def discover_connection(
-    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
 ) -> RunCreated:
-    conn = await member_connection(session, user, connection_id)
+    conn = await member_connection(session, user, connection_id, minimum=WorkspaceRole.approver)
+    await quotas.check_can_start_run(session, conn.workspace_id, settings)
     if conn.status != "connected":
         raise HTTPException(status.HTTP_409_CONFLICT, "Finish connecting before running discovery.")
     run = await start_discovery(session, conn.workspace_id, connection=conn)
@@ -854,7 +943,8 @@ async def discover_connection(
     return RunCreated(id=run.id, status=RunStatus.queued)
 
 
-def _cleanup_steps(conn: Connection) -> list[str]:
+def cleanup_steps(conn: Connection) -> list[str]:
+    """What the customer removes on their side to end Groundcrew's access."""
     c = conn.config or {}
     region = c.get("region") or get_settings().discovery_regions[0]
     if conn.kind == "aws":
@@ -886,16 +976,17 @@ def _cleanup_steps(conn: Connection) -> list[str]:
 
 @router.delete("/{connection_id}")
 async def delete_connection(
-    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
 ) -> ConnectionDeleted:
-    """Remove the connection, its stored secret, and every resource it discovered (with their
-    edges). Access on the customer's side is removed by them: see `cleanup`."""
+    """Remove the connection, its stored secret, every resource it discovered (with their
+    edges), and the telemetry read for them (app.deletion). Access on the customer's side is
+    removed by them: see `cleanup`."""
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
-    result = await session.execute(delete(Resource).where(Resource.connection_id == conn.id))
-    removed = int(getattr(result, "rowcount", 0) or 0)
-    steps = _cleanup_steps(conn)
-    if conn.kind == "aws" and conn.config.get("role_arn"):
-        get_sessions().forget(str(conn.config["role_arn"]), str(conn.config.get("external_id")))
-    await session.delete(conn)
+    steps = cleanup_steps(conn)
+    removed = await deletion.delete_connection(session, conn)
+    await _audit(session, user, conn, "deleted", ip)
     await session.commit()
     return ConnectionDeleted(id=connection_id, removed_resources=removed, cleanup=steps)

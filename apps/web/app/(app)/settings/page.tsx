@@ -3,13 +3,18 @@
 import { Lock, Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { AccessSection } from "@/components/settings/access-section";
 import { AccountSection } from "@/components/settings/account-section";
+import { AuditSection } from "@/components/settings/audit-section";
+import { UsageSection } from "@/components/settings/usage-section";
 import { LeaveWorkspace } from "@/components/settings/leave-workspace";
 import { MembersSection } from "@/components/settings/members-section";
 import { NotificationsSection } from "@/components/settings/notifications-section";
+import { PlatformSection } from "@/components/settings/platform-section";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { WorkspaceNameForm, WorkspaceSettingsForm } from "@/components/settings/workspace-forms";
 import { CreateWorkspaceDialog } from "@/components/settings/create-workspace-dialog";
+import { DeleteAccount, DeleteWorkspace } from "@/components/settings/delete-controls";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { SettingsIllustration } from "@/components/states/illustrations";
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states/states";
@@ -17,7 +22,15 @@ import { Button } from "@/components/ui/button";
 import { formatTimestamp } from "@/lib/format";
 import { useSummary } from "@/lib/queries";
 import { useWorkspace } from "@/lib/workspace";
-import { OWNER_ONLY, ownerCount, roleLabel, useMembers, useWorkspaceDetail } from "@/lib/workspace-admin";
+import {
+  OWNER_ONLY,
+  ownerCount,
+  ROLE_DESCRIPTION,
+  roleLabel,
+  useMembers,
+  useWorkspaceDetail,
+  withArticle,
+} from "@/lib/workspace-admin";
 
 function NoWorkspace() {
   const [open, setOpen] = useState(false);
@@ -38,8 +51,8 @@ function NoWorkspace() {
   );
 }
 
-/** Workspace name and settings, members and invites, and leaving. Owners change things;
- * members see the same page read-only, with the reason. */
+/** Workspace name and settings, members and invites, the audit log, and leaving. Owners
+ * change things; approvers and viewers see the same page read-only, with the reason. */
 export default function SettingsPage() {
   const { workspace, me, isLoading, error: workspaceError, refetch } = useWorkspace();
   const detail = useWorkspaceDetail(workspace?.id);
@@ -79,8 +92,8 @@ export default function SettingsPage() {
           >
             <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              You are a member of {data.name}. Owners change its name, settings, members, and connections. You can
-              see everything here, run discovery, report incidents, and approve pull requests and deploys.
+              You are {withArticle(data.role)} in {data.name}. Owners change its name, settings, members, and
+              connections. {ROLE_DESCRIPTION[data.role]}
             </span>
           </p>
         )}
@@ -113,6 +126,14 @@ export default function SettingsPage() {
         </SettingsSection>
 
         <SettingsSection
+          id="settings-usage"
+          title="Usage"
+          description="What this workspace used of its limits. When one is reached, Groundcrew says which and when it resets."
+        >
+          <UsageSection workspaceId={data.id} />
+        </SettingsSection>
+
+        <SettingsSection
           id="settings-notifications"
           title="Notifications"
           description={
@@ -133,7 +154,7 @@ export default function SettingsPage() {
           title="Members"
           description={
             owner
-              ? "Owners manage connections, members, and settings. Members see everything and approve pull requests and deploys."
+              ? `${ROLE_DESCRIPTION.owner} ${ROLE_DESCRIPTION.approver} ${ROLE_DESCRIPTION.viewer}`
               : OWNER_ONLY.members
           }
         >
@@ -152,6 +173,22 @@ export default function SettingsPage() {
           )}
         </SettingsSection>
 
+        <SettingsSection
+          id="settings-access"
+          title="What Groundcrew can access"
+          description="For each connection: what it reads, and what it may change after an approval."
+        >
+          <AccessSection workspaceId={data.id} />
+        </SettingsSection>
+
+        <SettingsSection
+          id="settings-activity"
+          title="Activity"
+          description="Who approved what and when, and every change to members, connections, and settings."
+        >
+          <AuditSection workspaceId={data.id} />
+        </SettingsSection>
+
         {me && (
           <SettingsSection
             id="settings-leave"
@@ -159,6 +196,16 @@ export default function SettingsPage() {
             description="Stop being a member of this workspace. Your other workspaces are not affected."
           >
             <LeaveWorkspace workspaceId={data.id} workspaceName={data.name} userId={me.user.id} onlyOwner={onlyOwner} />
+          </SettingsSection>
+        )}
+
+        {owner && (
+          <SettingsSection
+            id="settings-delete-workspace"
+            title="Delete workspace"
+            description="Removes the workspace and everything Groundcrew stored for it. Nothing changes in your connected accounts."
+          >
+            <DeleteWorkspace key={data.id} workspaceId={data.id} workspaceName={data.name} />
           </SettingsSection>
         )}
       </>
@@ -173,6 +220,25 @@ export default function SettingsPage() {
           <div>
             <GroupTitle>Account</GroupTitle>
             <AccountSection me={me} />
+            <SettingsSection
+              id="settings-delete-account"
+              title="Delete account"
+              description="Your sign-in, your memberships, and the workspaces only you are in."
+            >
+              <DeleteAccount />
+            </SettingsSection>
+          </div>
+        )}
+        {me?.platform_admin && (
+          <div>
+            <GroupTitle>Platform</GroupTitle>
+            <SettingsSection
+              id="settings-platform"
+              title="Sign-ups"
+              description="Applies to everyone on this Groundcrew server. You see this because you are a platform operator."
+            >
+              <PlatformSection />
+            </SettingsSection>
           </div>
         )}
         <div>

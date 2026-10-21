@@ -1,0 +1,43 @@
+# Groundcrew emergency fixes on a Kubernetes cluster (optional, on top of
+# infra/k8s-readonly-rbac.yaml). Lets the groundcrew-reader service account do the two writes
+# Medic's approved fixes make, and nothing else:
+#
+#   - k8s_rollout_undo: put the previous revision's pod template back (kubectl rollout undo)
+#   - k8s_rollout_restart: replace every pod with the same template (kubectl rollout restart)
+#
+# Both are PATCHes on a Deployment or a StatefulSet's pod template, and each one runs only after
+# a person approves it. A Deployment's previous revision is read from its ReplicaSets, a
+# StatefulSet's from its ControllerRevisions. Groundcrew checks these permissions
+# (SelfSubjectAccessReview) when you turn emergency fixes on for the cluster on the Connections
+# page (patch deployments + list replicasets, or patch statefulsets + list controllerrevisions),
+# and again, for the workload's own kind, before it proposes a fix. No ConfigMap or Secret write:
+# when one of those caused an incident, Medic asks you to restore it.
+#
+#   kubectl apply -f infra/k8s-operate-rbac.yaml
+#
+# To limit it to your app's namespaces, replace the ClusterRoleBinding with a RoleBinding per
+# namespace (same ClusterRole). Remove with: kubectl delete -f infra/k8s-operate-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: groundcrew-operator
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["patch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "controllerrevisions"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: groundcrew-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: groundcrew-operator
+subjects:
+  - kind: ServiceAccount
+    name: groundcrew-reader
+    namespace: groundcrew

@@ -30,7 +30,9 @@ async def owner(session_factory: SessionFactory) -> Member:
     return await _member(session_factory, 7001, "olivia")
 
 
-async def _join(client: httpx.AsyncClient, owner: Member, login: str, role: str = "member") -> None:
+async def _join(
+    client: httpx.AsyncClient, owner: Member, login: str, role: str = "approver"
+) -> None:
     r = await client.post(
         f"/workspaces/{owner.workspace_id}/members",
         json={"github_login": login, "role": role},
@@ -55,7 +57,7 @@ async def test_invite_applies_on_first_sign_in(
     assert listed["invites"] == []
     assert [(m["github_login"], m["role"]) for m in listed["members"]] == [
         ("olivia", "owner"),
-        ("Pat-Smith", "member"),
+        ("Pat-Smith", "approver"),
     ]
 
 
@@ -70,8 +72,8 @@ async def test_existing_users_join_at_once_and_owners_are_protected(
     )
     assert dup.status_code == 409
 
-    # A member can read but not change anything.
-    assert (await client.get(f"/workspaces/{ws}", headers=sam.headers)).json()["role"] == "member"
+    # An approver can read but not change the workspace.
+    assert (await client.get(f"/workspaces/{ws}", headers=sam.headers)).json()["role"] == "approver"
     denied = await client.patch(f"/workspaces/{ws}", json={"name": "x"}, headers=sam.headers)
     assert denied.status_code == 403 and "owner" in denied.json()["detail"]
     assert (await client.post(f"/workspaces/{ws}/members", json={"github_login": "zed"},
@@ -79,7 +81,9 @@ async def test_existing_users_join_at_once_and_owners_are_protected(
 
     # The last owner cannot be demoted or removed; with a second owner they can.
     demote = await client.patch(
-        f"/workspaces/{ws}/members/{owner.user_id}", json={"role": "member"}, headers=owner.headers
+        f"/workspaces/{ws}/members/{owner.user_id}",
+        json={"role": "approver"},
+        headers=owner.headers,
     )
     assert demote.status_code == 409
     up = await client.patch(
@@ -117,7 +121,7 @@ async def test_create_workspace_and_settings(client: httpx.AsyncClient, owner: M
     }
     r = await client.patch(
         f"/workspaces/{wid}",
-        json={"settings": {"emergency_approvers": "members", "incident_watch": False,
+        json={"settings": {"emergency_approvers": "approvers", "incident_watch": False,
                            "daily_usd_cap": 1.5}},
         headers=owner.headers,
     )  # fmt: skip
@@ -156,7 +160,7 @@ async def test_emergency_approvals_need_an_owner_by_default(
                           headers=mia.headers)  # fmt: skip
     assert r.status_code == 200 and r.json()["status"] == "rejected"
 
-    await client.patch(f"/workspaces/{ws}", json={"settings": {"emergency_approvers": "members"}},
+    await client.patch(f"/workspaces/{ws}", json={"settings": {"emergency_approvers": "approvers"}},
                        headers=owner.headers)  # fmt: skip
     second = await _emergency_approval(session_factory, ws)
     r = await client.post(f"/approvals/{second}/decide", json={"decision": "approve"},

@@ -30,6 +30,8 @@ TEST_DATABASE_URL = os.environ.get(
 
 # Tests must not depend on a developer's .env, and must never reach Token Factory.
 Settings.model_config["env_file"] = None
+# Like dev, minus dev-only tools; a test that needs production or dev passes app_env itself.
+os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["TOKEN_FACTORY_BASE_URL"] = "http://token-factory.invalid/v1"  # noqa: S105
 os.environ["TOKEN_FACTORY_API_KEY"] = "test-key-not-real"  # noqa: S105
@@ -138,3 +140,12 @@ async def workspace(session_factory: SessionFactory) -> Workspace:
         session.add(WorkspaceMember(workspace_id=ws.id, user_id=user.id, role=WorkspaceRole.owner))
         await session.commit()
         return ws
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits() -> None:
+    """In-process limits start empty in every test."""
+    from app.security.ratelimit import limiter, streams
+
+    limiter.reset()
+    streams.reset()

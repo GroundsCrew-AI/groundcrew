@@ -253,6 +253,40 @@ class Settings(BaseSettings):
     # its settings). Unset: LLM_DAILY_USD_CAP, so one workspace cannot use another's budget.
     llm_workspace_daily_usd_cap: float | None = None
 
+    # Per-workspace quotas (app.quotas). Daily counts reset at 00:00 UTC. A platform operator
+    # can set other limits for one workspace (workspaces.settings["quotas"], with
+    # `python -m app.admin_cli quota`); workspace owners cannot raise them.
+    quota_tavily_per_workspace_day: int = 10
+    # Runs a person starts (runs, deploys, discovery, reported incidents) that are queued or
+    # running at once; the incident watcher's investigations are not held back.
+    quota_concurrent_runs_per_workspace: int = 2
+    # Deploy builds started per day (each up to 5 attempts), and the most one attempt may take.
+    quota_builds_per_workspace_day: int = 10
+    quota_max_build_seconds: int = 900
+    quota_connections_per_workspace: int = 10
+
+    # Abuse limits in the API (nginx limits each client address in front of it). Per user: API
+    # calls a minute, stream tokens a minute, and live streams open at once. Request bodies
+    # larger than MAX_REQUEST_BYTES are refused (413).
+    rate_limit_user_per_minute: int = 300
+    rate_limit_stream_tokens_per_minute: int = 30
+    max_open_streams_per_user: int = 10
+    max_request_bytes: int = 1_048_576
+    # New accounts: at most this many an hour in total and a day per client address. An
+    # operator can pause sign-ups (`python -m app.admin_cli signups pause`, or Settings for
+    # PLATFORM_ADMINS); people with a pending invite can still join.
+    signups_per_hour: int = 30
+    signups_per_ip_day: int = 5
+    # Emails or GitHub logins (comma separated) who see the platform switches in Settings.
+    platform_admins: Annotated[list[str], NoDecode] = []
+
+    @field_validator("platform_admins", mode="before")
+    @classmethod
+    def _split_admins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [a.strip().lower().lstrip("@") for a in value.split(",") if a.strip()]
+        return value
+
     # Token and call limits. Unset daily token budget or per-incident Ultra limit = no limit.
     daily_token_budget: int | None = None
     max_ultra_calls_per_incident: int | None = None
@@ -299,7 +333,10 @@ class Settings(BaseSettings):
 
     # Accounts. Email and password sign-up next to GitHub and Google (the web app enables those
     # when their OAuth credentials are set). New passwords need PASSWORD_MIN_LENGTH characters.
-    password_auth_enabled: bool = True
+    # Unset: on in dev and test, off in staging and production (GitHub and email links only);
+    # set either to true to offer it on a hosted instance.
+    password_auth_enabled: bool | None = None
+    google_auth_enabled: bool | None = None
     password_min_length: int = 10
     # Password accounts sign in only after opening the link sent to their address.
     auth_require_verified_email: bool = True
@@ -328,6 +365,25 @@ class Settings(BaseSettings):
     job_retention_days: int = 7
     failed_job_retention_days: int = 30
 
+    @property
+    def build_timeout_seconds(self) -> float:
+        """How long one sandbox build may run: the sandbox limit, or less by quota."""
+        return min(self.sandbox_build_timeout_seconds, float(self.quota_max_build_seconds))
+
+    @property
+    def password_auth(self) -> bool:
+        """Email and password accounts are offered (PASSWORD_AUTH_ENABLED, else dev and test)."""
+        if self.password_auth_enabled is not None:
+            return self.password_auth_enabled
+        return self.app_env in ("dev", "test")
+
+    @property
+    def google_auth(self) -> bool:
+        """Google sign-in is accepted (GOOGLE_AUTH_ENABLED, else dev and test)."""
+        if self.google_auth_enabled is not None:
+            return self.google_auth_enabled
+        return self.app_env in ("dev", "test")
+
     def production_problems(self) -> list[str]:
         """What a staging or production instance is missing. Dev and test may run without
         these; a hosted instance must not (secrets would be unset or derived)."""
@@ -343,7 +399,14 @@ class Settings(BaseSettings):
             problems.append("INTERNAL_JWT_SECRET is shorter than 32 characters")
         if "localhost" in self.web_origin or "127.0.0.1" in self.web_origin:
             problems.append("WEB_ORIGIN still points at localhost")
-        if self.password_auth_enabled and not self.smtp_host:
+        # Dev-only switches must not be set at all on a hosted instance (each is also refused
+        # at the place it is used).
+        for name in ("live_script_self_approve", "pipeline_fake", "k8s_allow_private_servers"):
+            if getattr(self, name):
+                problems.append(f"{name.upper()} is a local development setting")
+        if self.deploy_fixtures_dir:
+            problems.append("DEPLOY_FIXTURES_DIR is a local development setting")
+        if self.password_auth and not self.smtp_host:
             problems.append(
                 "SMTP_HOST is not set, so email sign-up cannot send verification links "
                 "(set it, or PASSWORD_AUTH_ENABLED=false)"

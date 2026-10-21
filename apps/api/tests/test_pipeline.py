@@ -13,7 +13,17 @@ import pytest
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.db.models import Approval, Connection, Edge, Job, Resource, Run, RunStatus, RunStep
+from app.db.models import (
+    Approval,
+    Connection,
+    Edge,
+    Job,
+    Resource,
+    Run,
+    RunStatus,
+    RunStep,
+    Workspace,
+)
 from app.db.session import SessionFactory, get_session_factory
 from app.graph.sink import GraphResourceSink
 from app.main import app
@@ -628,3 +638,22 @@ def test_an_unresolvable_cluster_says_how_to_fix_it() -> None:
         "https://groundcrew-control-plane:6443", OSError("NameResolutionError: x")
     )
     assert "make dev KIND=1" in message
+
+
+async def test_a_workspace_out_of_builds_stops_before_building(
+    client: httpx.AsyncClient, alice: Member, session_factory: SessionFactory
+) -> None:
+    stack = Stack(session_factory, alice)
+    async with session_factory() as session:
+        ws = await session.get_one(Workspace, alice.workspace_id)
+        ws.settings = {**(ws.settings or {}), "quotas": {"builds": 0}}
+        await session.commit()
+    k8s = await _connection(
+        session_factory, alice.workspace_id, "k8s", "kind", {"cluster": "kind-test"}
+    )
+    deploy_id = await _start(client, alice, k8s, [])
+    await stack.drain()
+    run = await _run(session_factory, deploy_id)
+    assert run.status == RunStatus.failed and run.stop_reason == "budget"
+    assert "limit of 0 deploy builds today" in (run.error or "")
+    assert not [e for e in stack.events if e.startswith("build")]

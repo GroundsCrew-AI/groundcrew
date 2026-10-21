@@ -35,6 +35,8 @@ import {
   formatTokens,
 } from "@/lib/format";
 import { useDecide, useRunDetail, useStopRun } from "@/lib/queries";
+import { useWorkspace } from "@/lib/workspace";
+import { canAct, VIEWER_READ_ONLY } from "@/lib/workspace-admin";
 import { initialTimeline, timelineReducer, totalTokens } from "@/lib/timeline";
 
 import { RunDetails } from "./run-details";
@@ -78,12 +80,28 @@ function StreamIndicator({ state }: { state: StreamState }) {
   );
 }
 
-function StopButton({ runId, onStopped }: { runId: string; onStopped: (run: RunDetail) => void }) {
+function StopButton({
+  runId,
+  workspaceId,
+  onStopped,
+}: {
+  runId: string;
+  workspaceId: string;
+  onStopped: (run: RunDetail) => void;
+}) {
   const stop = useStopRun();
+  const role = useWorkspace().workspaces.find((w) => w.id === workspaceId)?.role;
+  // An unknown role (a workspace not in the list yet) never blocks: the API decides.
+  const readOnly = role !== undefined && !canAct(role);
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm" disabled={stop.isPending}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={stop.isPending || readOnly}
+          title={readOnly ? VIEWER_READ_ONLY : undefined}
+        >
           <Square aria-hidden="true" className="fill-current" />
           Stop
         </Button>
@@ -242,6 +260,7 @@ export function RunView({ runId }: { runId: string }) {
             {live && (
               <StopButton
                 runId={runId}
+                workspaceId={run.workspace_id}
                 onStopped={(stopped) =>
                   dispatch({
                     type: "status",

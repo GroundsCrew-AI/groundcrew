@@ -12,6 +12,54 @@
         "title": "Accepted",
         "type": "object"
       },
+      "AccountDelete": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "maxLength": 40,
+            "title": "Confirm",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "title": "AccountDelete",
+        "type": "object"
+      },
+      "AccountDeletionOut": {
+        "description": "What deleting your account would do.",
+        "properties": {
+          "blocked_by": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRef"
+            },
+            "title": "Blocked By",
+            "type": "array"
+          },
+          "deletes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRef"
+            },
+            "title": "Deletes",
+            "type": "array"
+          },
+          "leaves": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRef"
+            },
+            "title": "Leaves",
+            "type": "array"
+          }
+        },
+        "required": [
+          "deletes",
+          "leaves",
+          "blocked_by"
+        ],
+        "title": "AccountDeletionOut",
+        "type": "object"
+      },
       "ActionPlan": {
         "description": "One emergency action, ready to approve. Shown on the approval card as is.",
         "properties": {
@@ -397,6 +445,108 @@
           "step_seq"
         ],
         "title": "AttemptModelCall",
+        "type": "object"
+      },
+      "AuditEventOut": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "target_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Type"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "actor",
+          "actor_id",
+          "action",
+          "target_type",
+          "target_id",
+          "detail"
+        ],
+        "title": "AuditEventOut",
+        "type": "object"
+      },
+      "AuditPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEventOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          }
+        },
+        "required": [
+          "items",
+          "next_before"
+        ],
+        "title": "AuditPage",
         "type": "object"
       },
       "AuthUser": {
@@ -956,6 +1106,32 @@
         "title": "Claim",
         "type": "object"
       },
+      "ConnectionCleanup": {
+        "properties": {
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connection",
+          "kind",
+          "steps"
+        ],
+        "title": "ConnectionCleanup",
+        "type": "object"
+      },
       "ConnectionDeleted": {
         "properties": {
           "cleanup": {
@@ -996,6 +1172,13 @@
       },
       "ConnectionOut": {
         "properties": {
+          "access": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Access",
+            "type": "array"
+          },
           "account": {
             "anyOf": [
               {
@@ -5027,6 +5210,16 @@
       },
       "MeOut": {
         "properties": {
+          "password_auth": {
+            "default": false,
+            "title": "Password Auth",
+            "type": "boolean"
+          },
+          "platform_admin": {
+            "default": false,
+            "title": "Platform Admin",
+            "type": "boolean"
+          },
           "user": {
             "$ref": "#/components/schemas/UserOut"
           },
@@ -5079,7 +5272,7 @@
           },
           "role": {
             "$ref": "#/components/schemas/WorkspaceRole",
-            "default": "member"
+            "default": "viewer"
           }
         },
         "title": "MemberAdd",
@@ -5500,6 +5693,10 @@
       },
       "Options": {
         "properties": {
+          "google": {
+            "title": "Google",
+            "type": "boolean"
+          },
           "password": {
             "title": "Password",
             "type": "boolean"
@@ -5515,6 +5712,7 @@
         },
         "required": [
           "password",
+          "google",
           "require_verified_email",
           "password_min_length"
         ],
@@ -5643,6 +5841,47 @@
           "action"
         ],
         "title": "PlannedResource",
+        "type": "object"
+      },
+      "PlatformOut": {
+        "properties": {
+          "signups_changed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signups Changed At"
+          },
+          "signups_last_hour": {
+            "title": "Signups Last Hour",
+            "type": "integer"
+          },
+          "signups_paused": {
+            "title": "Signups Paused",
+            "type": "boolean"
+          },
+          "signups_per_hour": {
+            "title": "Signups Per Hour",
+            "type": "integer"
+          },
+          "users": {
+            "title": "Users",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "signups_paused",
+          "signups_changed_at",
+          "signups_last_hour",
+          "signups_per_hour",
+          "users"
+        ],
+        "title": "PlatformOut",
         "type": "object"
       },
       "PreflightCheck": {
@@ -5920,6 +6159,39 @@
           "files"
         ],
         "title": "PullRequestView",
+        "type": "object"
+      },
+      "QuotaOut": {
+        "properties": {
+          "daily": {
+            "title": "Daily",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "used",
+          "limit",
+          "daily"
+        ],
+        "title": "QuotaOut",
         "type": "object"
       },
       "Ready": {
@@ -7331,6 +7603,20 @@
         "title": "Signal",
         "type": "object"
       },
+      "SignupsIn": {
+        "additionalProperties": false,
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "SignupsIn",
+        "type": "object"
+      },
       "StageFinished": {
         "properties": {
           "agent": {
@@ -8027,6 +8313,55 @@
         "title": "TriggeringChange",
         "type": "object"
       },
+      "UsageOut": {
+        "description": "What this workspace used of its limits, for Settings.",
+        "properties": {
+          "daily_usd_cap": {
+            "title": "Daily Usd Cap",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "max_build_seconds": {
+            "title": "Max Build Seconds",
+            "type": "integer"
+          },
+          "platform_paused": {
+            "title": "Platform Paused",
+            "type": "boolean"
+          },
+          "quotas": {
+            "items": {
+              "$ref": "#/components/schemas/QuotaOut"
+            },
+            "title": "Quotas",
+            "type": "array"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "title": "Resets At",
+            "type": "string"
+          },
+          "usd_today": {
+            "title": "Usd Today",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "resets_at",
+          "usd_today",
+          "daily_usd_cap",
+          "platform_paused",
+          "max_build_seconds",
+          "quotas"
+        ],
+        "title": "UsageOut",
+        "type": "object"
+      },
       "UserOut": {
         "properties": {
           "avatar_url": {
@@ -8333,7 +8668,7 @@
             "default": "owners",
             "enum": [
               "owners",
-              "members"
+              "approvers"
             ],
             "title": "Emergency Approvers",
             "type": "string"
@@ -8364,6 +8699,44 @@
           "name"
         ],
         "title": "WorkspaceCreate",
+        "type": "object"
+      },
+      "WorkspaceDelete": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Confirm Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm_name"
+        ],
+        "title": "WorkspaceDelete",
+        "type": "object"
+      },
+      "WorkspaceDeleted": {
+        "properties": {
+          "cleanup": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionCleanup"
+            },
+            "title": "Cleanup",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "cleanup"
+        ],
+        "title": "WorkspaceDeleted",
         "type": "object"
       },
       "WorkspaceDetail": {
@@ -8427,10 +8800,31 @@
         "title": "WorkspaceOut",
         "type": "object"
       },
+      "WorkspaceRef": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "WorkspaceRef",
+        "type": "object"
+      },
       "WorkspaceRole": {
+        "description": "owner: everything, including members, connections, and settings. approver: approves\ndeploys and fixes and starts work. viewer: reads only.",
         "enum": [
           "owner",
-          "member"
+          "approver",
+          "viewer"
         ],
         "title": "WorkspaceRole",
         "type": "string"
@@ -8565,6 +8959,115 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/admin/platform": {
+      "get": {
+        "operationId": "get_platform_admin_platform_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Platform",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/platform/signups": {
+      "put": {
+        "description": "Pause or resume new sign-ups. Invited people can still join while paused.",
+        "operationId": "set_signups_admin_platform_signups_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Signups",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/approvals/{approval_id}/decide": {
       "post": {
         "description": "Record the signed-in user's decision and resume the run.",
@@ -8713,9 +9216,25 @@
     },
     "/auth/oauth": {
       "post": {
-        "description": "A GitHub or Google sign-in: the user, linked or created.",
+        "description": "A GitHub or Google sign-in: the user, linked or created. Google only where it is on\n(GOOGLE_AUTH_ENABLED; off on hosted instances by default).",
         "operationId": "oauth_auth_oauth_post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "x-client-ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Client-Ip"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -9784,7 +10303,7 @@
     },
     "/connections/{connection_id}": {
       "delete": {
-        "description": "Remove the connection, its stored secret, and every resource it discovered (with their\nedges). Access on the customer's side is removed by them: see `cleanup`.",
+        "description": "Remove the connection, its stored secret, every resource it discovered (with their\nedges), and the telemetry read for them (app.deletion). Access on the customer's side is\nremoved by them: see `cleanup`.",
         "operationId": "delete_connection_connections__connection_id__delete",
         "parameters": [
           {
@@ -11138,6 +11657,60 @@
       }
     },
     "/me": {
+      "delete": {
+        "description": "Delete your account: your sign-in identities, memberships, and the workspaces only you\nare in, with everything in them. Shared workspaces stay; your name stays on what you\napproved there. Signs you out everywhere.",
+        "operationId": "delete_my_account_me_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDelete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "You are the only owner of a shared workspace."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete My Account",
+        "tags": [
+          "workspaces"
+        ]
+      },
       "get": {
         "operationId": "me_me_get",
         "parameters": [
@@ -11239,6 +11812,55 @@
           }
         },
         "summary": "Update Me",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/me/account-deletion": {
+      "get": {
+        "operationId": "account_deletion_preview_me_account_deletion_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Account Deletion Preview",
         "tags": [
           "workspaces"
         ]
@@ -11767,6 +12389,74 @@
       }
     },
     "/workspaces/{workspace_id}": {
+      "delete": {
+        "description": "Delete the workspace and everything Groundcrew stored for it (owners): members, invites,\nconnections and their credentials, the graph, runs, approvals, incidents, usage, and the\naudit log. Nothing changes in the connected accounts; `cleanup` says what to remove there.",
+        "operationId": "delete_workspace_workspaces__workspace_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceDelete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceDeleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      },
       "get": {
         "operationId": "get_workspace_workspaces__workspace_id__get",
         "parameters": [
@@ -11998,6 +12688,95 @@
           }
         },
         "summary": "List Approvals",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/audit": {
+      "get": {
+        "description": "Who did what in this workspace, newest first (every member).",
+        "operationId": "audit_log_workspaces__workspace_id__audit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Audit Log",
         "tags": [
           "workspaces"
         ]
@@ -12437,7 +13216,7 @@
         ]
       },
       "patch": {
-        "description": "Change a member's role (owners). The last owner cannot be made a member.",
+        "description": "Change a member's role (owners). The last owner stays an owner.",
         "operationId": "update_member_workspaces__workspace_id__members__user_id__patch",
         "parameters": [
           {
@@ -12717,6 +13496,65 @@
           }
         },
         "summary": "Summary",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/usage": {
+      "get": {
+        "operationId": "workspace_usage_workspaces__workspace_id__usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Usage",
         "tags": [
           "workspaces"
         ]

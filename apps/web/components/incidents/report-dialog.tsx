@@ -24,6 +24,7 @@ import { useGraph } from "@/lib/discovery";
 import { typeLabel } from "@/lib/graph";
 import { type Severity, SEVERITY, useReportIncident } from "@/lib/incidents";
 import { useWorkspace } from "@/lib/workspace";
+import { canAct, VIEWER_READ_ONLY } from "@/lib/workspace-admin";
 
 type Resource = Schemas["ResourceOut"];
 
@@ -80,7 +81,11 @@ export function ReportIncidentDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" disabled={!workspace}>
+        <Button
+          size="sm"
+          disabled={!workspace || !canAct(workspace.role)}
+          title={workspace && !canAct(workspace.role) ? VIEWER_READ_ONLY : undefined}
+        >
           <Siren aria-hidden="true" />
           Report incident
         </Button>

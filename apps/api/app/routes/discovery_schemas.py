@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import get_settings
+from app.connectors.access import access_summary
 from app.connectors.aws import AWS_REGION, MAX_CONNECTION_REGIONS, connection_regions
 from app.connectors.credentials import capabilities
 from app.connectors.kubernetes import CONFIGMAP_CHANGES_KEY
@@ -102,6 +103,8 @@ class ConnectionOut(BaseModel):
     deploy_settings: K8sDeploySettingsOut | None = None
     # Kubernetes: the owner opted in to ConfigMap changes as incident causes. Null: not k8s.
     configmap_changes: bool | None = None
+    # What Groundcrew can read and change through it, in plain sentences (app.connectors.access).
+    access: list[str] = Field(default_factory=list)
     error: str | None = None
     resource_count: int = 0
     last_discovery: LastDiscovery | None = None
@@ -140,6 +143,7 @@ class ConnectionOut(BaseModel):
             namespaces=c.get("namespaces"),
             deploy_settings=K8sDeploySettingsOut(**deploy.public()) if deploy else None,
             configmap_changes=bool(c.get(CONFIGMAP_CHANGES_KEY)) if conn.kind == "k8s" else None,
+            access=access_summary(conn, get_settings()),
             error=c.get("last_error"),
             resource_count=resource_count,
             last_discovery=last,

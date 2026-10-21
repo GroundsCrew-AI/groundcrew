@@ -21,10 +21,11 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import queue
+from app import queue, quotas
 from app.accounts import NotFoundError, member_workspace, require_member
 from app.agents.medic.events import MEDIC_EVENT_NAMES
 from app.agents.registry import AGENTS
+from app.audit import record
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
     Approval,
@@ -34,11 +35,19 @@ from app.db.models import (
     RunStep,
     StopReason,
     User,
+    WorkspaceRole,
 )
 from app.db.session import SessionFactory
 from app.incidents.store import close_for_stopped_run
 from app.pipeline.events import DEPLOY_EVENT_NAMES
-from app.routes.deps import CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
+from app.routes.deps import (
+    ClientIp,
+    CurrentUser,
+    SessionDep,
+    SessionFactoryDep,
+    SettingsDep,
+    too_many_requests,
+)
 from app.routes.schemas import (
     ApprovalOut,
     ApprovalStepEvent,
@@ -51,6 +60,7 @@ from app.routes.schemas import (
     StreamToken,
 )
 from app.security.auth import AuthConfigError, AuthError, create_stream_token, verify_stream_token
+from app.security.ratelimit import limiter, streams
 from app.steps import record_step
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -64,13 +74,18 @@ def _not_found(what: str = "Run") -> HTTPException:
 
 
 async def member_run(
-    session: AsyncSession, user: User, run_id: uuid.UUID, *, for_update: bool = False
+    session: AsyncSession,
+    user: User,
+    run_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
 ) -> Run:
     run = await session.get(Run, run_id, with_for_update=for_update)
     if run is None:
         raise _not_found()
     try:
-        await require_member(session, user.id, run.workspace_id)
+        await require_member(session, user.id, run.workspace_id, minimum)
     except NotFoundError:
         raise _not_found() from None
     return run
@@ -99,16 +114,19 @@ async def run_approvals(session: AsyncSession, run: Run) -> list[ApprovalOut]:
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
-async def create_run(body: RunCreate, user: CurrentUser, session: SessionDep) -> RunCreated:
+async def create_run(
+    body: RunCreate, user: CurrentUser, session: SessionDep, settings: SettingsDep
+) -> RunCreated:
     if body.agent not in AGENTS:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Unknown agent {body.agent!r}. Available: {', '.join(sorted(AGENTS))}",
         )
     try:
-        await member_workspace(session, user, body.workspace_id)
+        await member_workspace(session, user, body.workspace_id, WorkspaceRole.approver)
     except NotFoundError:
         raise _not_found("Workspace") from None
+    await quotas.check_can_start_run(session, body.workspace_id, settings)
 
     run = Run(workspace_id=body.workspace_id, agent=body.agent, goal=body.goal)
     session.add(run)
@@ -146,19 +164,25 @@ async def stream_token(
     run_id: uuid.UUID, user: CurrentUser, session: SessionDep, settings: SettingsDep
 ) -> StreamToken:
     """A 60-second token for GET /runs/{id}/events, bound to this run and user."""
+    if not limiter.allow(
+        f"stream-token:{user.id}", settings.rate_limit_stream_tokens_per_minute, 60
+    ):
+        raise too_many_requests()
     await member_run(session, user, run_id)
     token, expires_at = create_stream_token(user.id, run_id, settings)
     return StreamToken(token=token, expires_at=expires_at)
 
 
 @router.post("/{run_id}/stop")
-async def stop_run(run_id: uuid.UUID, user: CurrentUser, session: SessionDep) -> RunOut:
+async def stop_run(
+    run_id: uuid.UUID, user: CurrentUser, session: SessionDep, ip: ClientIp
+) -> RunOut:
     """Stop a queued, running, or waiting run. Its pending approvals are rejected.
 
     A running agent notices before its next model or tool call and exits without
     overwriting this status.
     """
-    run = await member_run(session, user, run_id, for_update=True)
+    run = await member_run(session, user, run_id, for_update=True, minimum=WorkspaceRole.approver)
     if run.status not in STOPPABLE:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Run is already {run.status}.")
 
@@ -180,6 +204,16 @@ async def stop_run(run_id: uuid.UUID, user: CurrentUser, session: SessionDep) ->
     )
     # A Medic run: its incident is closed too, so it does not wait for approvals forever.
     await close_for_stopped_run(session, run, str(user.github_login or user.id))
+    record(
+        session,
+        workspace_id=run.workspace_id,
+        actor=user,
+        action="run.stopped",
+        target_type="run",
+        target_id=run.id,
+        detail={"agent": run.agent},
+        ip=ip,
+    )
     await session.commit()
     counts = await rejected_counts(session, [run.id])
     return RunOut.build(run, rejected_actions=counts.get(run.id, 0))
@@ -309,15 +343,29 @@ async def run_events(
         except NotFoundError:
             raise _not_found() from None
 
-    stream = _event_stream(
-        session_factory,
-        run_id,
-        request,
-        _resume_after(last_event_id, after),
-        settings.sse_poll_interval_ms / 1000,
-    )
+    key = f"stream:{user_id}"
+    if not streams.acquire(key, settings.max_open_streams_per_user):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"You have {settings.max_open_streams_per_user} live views open. Close one and "
+            "try again.",
+        )
+
+    async def counted() -> AsyncIterator[str]:
+        try:
+            async for chunk in _event_stream(
+                session_factory,
+                run_id,
+                request,
+                _resume_after(last_event_id, after),
+                settings.sse_poll_interval_ms / 1000,
+            ):
+                yield chunk
+        finally:
+            streams.release(key)
+
     return StreamingResponse(
-        stream,
+        counted(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

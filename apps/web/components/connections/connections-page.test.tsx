@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ConnectionsPage from "@/app/(app)/connections/page";
 import { connection } from "@/tests/discovery-fixtures";
 
-const role = vi.hoisted(() => ({ value: "owner" as "owner" | "member" }));
+const role = vi.hoisted(() => ({ value: "owner" as "owner" | "approver" | "viewer" }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/lib/workspace", () => ({
@@ -43,7 +43,7 @@ describe("ConnectionsPage", () => {
   });
 
   it("shows members why connection actions are disabled", () => {
-    role.value = "member";
+    role.value = "approver";
     render(<ConnectionsPage />);
     expect(screen.getByText(new RegExp(REASON))).toBeInTheDocument();
     for (const name of ["Connect AWS", "Pick repositories", "Add token", "Upload kubeconfig", "Enable deploys"]) {

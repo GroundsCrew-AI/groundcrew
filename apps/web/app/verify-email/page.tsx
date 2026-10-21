@@ -1,12 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { AuthShell } from "@/components/auth/auth-shell";
 import { FormMessage, VerifyEmailForm } from "@/components/auth/forms";
+import { authOptions } from "@/lib/auth-api";
 
 export const metadata: Metadata = { title: "Confirm your email" };
 
 export default async function VerifyEmailPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
+  // Email and password is off on this server (PASSWORD_AUTH_ENABLED): only the sign-in page.
+  if (!(await authOptions()).password) redirect("/signin");
   const { token } = await searchParams;
   return (
     <AuthShell

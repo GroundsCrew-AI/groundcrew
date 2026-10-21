@@ -140,6 +140,8 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:8000
       # Server-side calls from the web container to the API go over the compose network.
       API_INTERNAL_URL: http://api:8000
+      # Local development, like the API (Google sign-in and the e2e test user are dev-only).
+      APP_ENV: dev
       # Auth.js runs behind Docker's port mapping, not on Vercel.
       AUTH_TRUST_HOST: "true"
       AUTH_URL: http://localhost:3000

@@ -32,8 +32,8 @@ describe("sign-in messages", () => {
 describe("enabledOAuthProviders", () => {
   it("offers a provider only with both its id and secret", () => {
     expect(enabledOAuthProviders({})).toEqual({ github: false, google: false });
-    expect(enabledOAuthProviders({ AUTH_GOOGLE_ID: "id" }).google).toBe(false);
-    expect(enabledOAuthProviders({ AUTH_GOOGLE_ID: "id", AUTH_GOOGLE_SECRET: "s" }).google).toBe(true);
+    expect(enabledOAuthProviders({ APP_ENV: "dev", AUTH_GOOGLE_ID: "id" }).google).toBe(false);
+    expect(enabledOAuthProviders({ APP_ENV: "dev", AUTH_GOOGLE_ID: "id", AUTH_GOOGLE_SECRET: "s" }).google).toBe(true);
     expect(enabledOAuthProviders({ GITHUB_APP_CLIENT_ID: "id", GITHUB_APP_CLIENT_SECRET: "s" }).github).toBe(true);
   });
 });

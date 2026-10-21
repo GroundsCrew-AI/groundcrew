@@ -15,17 +15,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 
+from app import quotas
 from app.accounts import NotFoundError, member_workspace
 from app.actions import get_emergency_actions
 from app.actions.base import EmergencyActionError, EmergencyActions
 from app.agents.medic.events import PENDING_FOLLOWUP_STATES, IncidentStatus, Severity
 from app.agents.medic.retry import RetryError, retry_fix
+from app.audit import record
 from app.connectors.github import GitHubApp, get_github_app
-from app.db.models import Incident, IncidentFollowUp
+from app.db.models import Incident, IncidentFollowUp, WorkspaceRole
 from app.incidents import followups as fu
 from app.incidents import views
 from app.incidents.store import ResourceNotFoundError, open_incident
-from app.routes.deps import CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
+from app.routes.deps import ClientIp, CurrentUser, SessionDep, SessionFactoryDep, SettingsDep
 from app.routes.incident_schemas import (
     IncidentCreate,
     IncidentCreated,
@@ -37,10 +39,14 @@ router = APIRouter(prefix="/incidents", tags=["incidents"])
 
 
 async def _check_member(
-    session: SessionDep, user: CurrentUser, workspace_id: uuid.UUID, what: str = "Workspace"
+    session: SessionDep,
+    user: CurrentUser,
+    workspace_id: uuid.UUID,
+    what: str = "Workspace",
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
 ) -> None:
     try:
-        await member_workspace(session, user, workspace_id)
+        await member_workspace(session, user, workspace_id, minimum)
     except NotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"{what} not found.") from None
 
@@ -68,14 +74,19 @@ ActionsDep = Annotated[EmergencyActions, Depends(get_actions)]
     responses={404: {"description": "Workspace or a resource not found for this user."}},
 )
 async def create_incident(
-    body: IncidentCreate, user: CurrentUser, session: SessionDep
+    body: IncidentCreate,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
+    settings: SettingsDep,
 ) -> IncidentCreated:
     """Report an incident and start Medic. Returns at once; follow the run's event stream.
 
     One open incident per group of related resources: reporting resources an open incident
     already covers returns that incident (`deduped: true`).
     """
-    await _check_member(session, user, body.workspace_id)
+    await _check_member(session, user, body.workspace_id, minimum=WorkspaceRole.approver)
+    await quotas.check_can_start_run(session, body.workspace_id, settings)
     try:
         opened = await open_incident(
             session,
@@ -91,6 +102,17 @@ async def create_incident(
         )
     except ResourceNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from None
+    if not opened.deduped:
+        record(
+            session,
+            workspace_id=body.workspace_id,
+            actor=user,
+            action="incident.reported",
+            target_type="incident",
+            target_id=opened.incident.id,
+            ip=ip,
+        )
+        await session.commit()
     return IncidentCreated(
         incident_id=opened.incident.id, run_id=opened.run.id, deduped=opened.deduped
     )
@@ -212,7 +234,9 @@ async def retry_incident_fix(
     incident = await session.get(Incident, incident_id)
     if incident is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Incident not found.")
-    await _check_member(session, user, incident.workspace_id, what="Incident")
+    await _check_member(
+        session, user, incident.workspace_id, what="Incident", minimum=WorkspaceRole.approver
+    )
     try:
         await retry_fix(session, incident, fix_id, actions, now=datetime.now(UTC))
     except RetryError as exc:
@@ -241,7 +265,9 @@ async def dismiss_followup(
     incident = await session.get(Incident, incident_id)
     if incident is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Incident not found.")
-    await _check_member(session, user, incident.workspace_id, what="Incident")
+    await _check_member(
+        session, user, incident.workspace_id, what="Incident", minimum=WorkspaceRole.approver
+    )
     try:
         await fu.dismiss(session, incident, followup_id, user, datetime.now(UTC))
     except LookupError as exc:

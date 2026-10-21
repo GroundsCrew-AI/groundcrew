@@ -4,13 +4,14 @@
  * Workspaces as teams: a workspace's name and settings, its members and invites, and the
  * permission checks the UI makes before the API would refuse.
  *
- * The API decides (owner-only actions get a 403 with the reason, which callers show as a
- * toast). These checks only hide or disable what a member cannot do and say why, so nobody
- * has to click to find out. They mirror the API: connections, members, and settings are for
- * owners; emergency approvals need an owner unless the workspace lets members approve them.
+ * The API decides (a 403 with the reason, which callers show as a toast). These checks only
+ * hide or disable what a role cannot do and say why, so nobody has to click to find out. They
+ * mirror the API: viewers read only; approvers also start work and approve; connections,
+ * members, and settings are for owners; emergency approvals need an owner unless the
+ * workspace lets approvers approve them.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 
 import { api, type Approval, type Me, type Schemas, unwrap, type Workspace } from "@/lib/api/client";
@@ -24,10 +25,15 @@ export type Member = Schemas["MemberOut"];
 export type Invite = Schemas["InviteOut"];
 export type NotificationSettings = Schemas["NotificationConfig"];
 export type ChannelTestResult = Schemas["ChannelTestOut"];
+export type AuditEvent = Schemas["AuditEventOut"];
+export type AuditPage = Schemas["AuditPage"];
+export type Usage = Schemas["UsageOut"];
 
 export const workspaceAdminKeys = {
   detail: (ws: string) => ["workspace", ws] as const,
   members: (ws: string) => ["members", ws] as const,
+  audit: (ws: string) => ["audit", ws] as const,
+  usage: (ws: string) => ["usage", ws] as const,
 };
 
 /** Why a member cannot do something. Shown next to the hidden or disabled control. */
@@ -39,23 +45,46 @@ export const OWNER_ONLY = {
   lastOwner: "A workspace needs at least one owner. Make someone else an owner first.",
 } as const;
 
+/** Why a viewer cannot start or decide anything (the API answers 403 with the same idea). */
+export const VIEWER_READ_ONLY = "Viewers can look but not change anything. Ask a workspace owner for the approver role.";
+
+/** Highest first, as the role pickers list them. */
+export const ROLES: readonly WorkspaceRole[] = ["owner", "approver", "viewer"];
+
+export const ROLE_DESCRIPTION: Record<WorkspaceRole, string> = {
+  owner: "Owners manage members, connections, and settings, and approve everything.",
+  approver: "Approvers start deploys and runs and approve deploys and fixes.",
+  viewer: "Viewers see everything in the workspace and change nothing.",
+};
+
 export function roleLabel(role: WorkspaceRole): string {
-  return role === "owner" ? "Owner" : "Member";
+  return role === "owner" ? "Owner" : role === "approver" ? "Approver" : "Viewer";
+}
+
+/** "an owner", "an approver", "a viewer". */
+export function withArticle(role: WorkspaceRole): string {
+  return `${role === "viewer" ? "a" : "an"} ${role}`;
+}
+
+/** True when this role can start runs, deploys, and incidents and decide approvals. */
+export function canAct(role: WorkspaceRole | undefined): boolean {
+  return role === "owner" || role === "approver";
 }
 
 /**
  * Why this person cannot approve an action, or null when they can. Mirrors the API check:
- * an emergency action needs an owner unless the workspace setting lets members approve.
- * Rejecting is always allowed. An unknown role never blocks (the API still decides); unknown
- * settings count as the default, owners only.
+ * viewers never decide; an emergency action needs an owner unless the workspace setting lets
+ * approvers approve it. An unknown role never blocks (the API still decides); unknown settings
+ * count as the default, owners only.
  */
 export function approveBlockedReason(
   policy: Approval["policy"],
   role: WorkspaceRole | undefined,
   emergencyApprovers: WorkspaceSettings["emergency_approvers"] | undefined,
 ): string | null {
-  if (policy !== "emergency" || role !== "member") return null;
-  return (emergencyApprovers ?? "owners") === "members" ? null : OWNER_ONLY.emergency;
+  if (role === "viewer") return VIEWER_READ_ONLY;
+  if (policy !== "emergency" || role !== "approver") return null;
+  return (emergencyApprovers ?? "owners") === "approvers" ? null : OWNER_ONLY.emergency;
 }
 
 // ---------------------------------------------------------------------------- queries
@@ -85,6 +114,74 @@ export function useMembers(workspaceId: string | undefined) {
         }),
       ),
   });
+}
+
+/** What the workspace used of its limits today (model spend, research, builds, runs). */
+export function useUsage(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: workspaceAdminKeys.usage(workspaceId ?? ""),
+    enabled: Boolean(workspaceId),
+    refetchInterval: 60_000,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/workspaces/{workspace_id}/usage", {
+          params: { path: { workspace_id: workspaceId! } },
+        }),
+      ),
+  });
+}
+
+/** The workspace's audit log, newest first, 50 at a time. */
+export function useAuditLog(workspaceId: string | undefined) {
+  return useInfiniteQuery({
+    queryKey: workspaceAdminKeys.audit(workspaceId ?? ""),
+    enabled: Boolean(workspaceId),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page: AuditPage) => page.next_before ?? undefined,
+    queryFn: async ({ pageParam }): Promise<AuditPage> =>
+      unwrap(
+        await api.GET("/workspaces/{workspace_id}/audit", {
+          params: { path: { workspace_id: workspaceId! }, query: pageParam ? { before: pageParam } : {} },
+        }),
+      ),
+  });
+}
+
+const AUDIT_ACTIONS: Record<string, string> = {
+  "approval.approved": "approved",
+  "approval.rejected": "rejected",
+  "member.added": "added a member",
+  "member.removed": "removed a member",
+  "member.left": "left the workspace",
+  "member.role_changed": "changed a role",
+  "invite.created": "invited",
+  "invite.updated": "changed an invite",
+  "invite.canceled": "canceled an invite",
+  "workspace.created": "created the workspace",
+  "workspace.updated": "changed the workspace",
+  "connection.created": "added a connection",
+  "connection.deleted": "removed a connection",
+  "deploy.started": "started a deploy",
+  "incident.reported": "reported an incident",
+  "run.stopped": "stopped a run",
+};
+
+/** One line for an audit event: "approved target_apply (write)", "changed a role: viewer to approver". */
+export function auditSummary(event: Pick<AuditEvent, "action" | "detail">): string {
+  const verb = AUDIT_ACTIONS[event.action] ?? event.action.replace(/[._]/g, " ");
+  const d = event.detail as Record<string, unknown>;
+  const text = (key: string) => (typeof d[key] === "string" ? (d[key] as string) : undefined);
+  if (event.action.startsWith("approval.")) return `${verb} ${text("tool") ?? "an action"} (${text("policy") ?? "?"})`;
+  if (event.action === "member.role_changed") return `${verb}: ${text("from")} to ${text("to")}`;
+  const who = text("email") ?? (text("github_login") ? `@${text("github_login")}` : undefined);
+  if (who) return `${verb} ${who}${text("role") ? ` as ${text("role")}` : ""}`;
+  if (event.action.startsWith("connection.")) {
+    const what = text("name") ?? text("kind");
+    return what ? `${verb}: ${what}` : verb;
+  }
+  if (event.action === "workspace.updated" && Array.isArray(d.changed)) return `${verb}: ${(d.changed as string[]).join(", ")}`;
+  if (event.action === "deploy.started" && text("source")) return `${verb} of ${text("source")}`;
+  return verb;
 }
 
 /**

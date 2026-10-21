@@ -791,6 +791,13 @@ class K8sTarget:
         """A real cluster cannot pull from the local kind registry: without deploy settings,
         only the local kind cluster may be deployed to."""
         if self.deploy is None:
+            if is_local_kind(self.server) and self.settings.app_env not in ("dev", "test"):
+                return PreflightCheck(
+                    name="other",
+                    status="fail",
+                    detail="This cluster has no deploy settings. An owner sets a registry and "
+                    "app domain under Deploy settings on the Connections page.",
+                )
             if is_local_kind(self.server):
                 return PreflightCheck(
                     name="other",

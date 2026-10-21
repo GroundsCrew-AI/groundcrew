@@ -1,9 +1,11 @@
+import json
 import logging
 import re
 import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -20,7 +22,9 @@ from app.accounts import ForbiddenError
 from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
+from app.quotas import QuotaExceededError
 from app.routes import (
+    admin,
     approvals,
     auth,
     connections,
@@ -85,6 +89,88 @@ class RequestIdMiddleware:
             request_id_var.reset(token)
 
 
+# On every API response. The API serves JSON and event streams only, so nothing may run, load,
+# or frame it. HSTS comes from nginx.
+SECURITY_HEADERS = [
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+    (b"content-security-policy", b"default-src 'none'; frame-ancestors 'none'"),
+    (b"cross-origin-resource-policy", b"same-site"),
+]
+
+
+class SecurityHeadersMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                present = {name.lower() for name, _ in message.get("headers", [])}
+                extra = [(n, v) for n, v in SECURITY_HEADERS if n not in present]
+                if b"cache-control" not in present:
+                    extra.append((b"cache-control", b"no-store"))
+                message["headers"] = [*message.get("headers", []), *extra]
+            await send(message)
+
+        await self.app(scope, receive, with_headers)
+
+
+class BodySizeLimitMiddleware:
+    """Refuse request bodies over MAX_REQUEST_BYTES with 413: by Content-Length up front, and
+    while reading for bodies sent without one. nginx has the same limit in front of this."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        limit = get_settings().max_request_bytes
+        length = dict(scope["headers"]).get(b"content-length")
+        if length is not None and (not length.isdigit() or int(length) > limit):
+            await _too_large(send, limit)
+            return
+        seen = 0
+        refused = False
+
+        async def counted() -> Message:
+            # Past the limit: answer 413 now and tell the app the client went away.
+            nonlocal seen, refused
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > limit and not refused:
+                    refused = True
+                    await _too_large(send, limit)
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def guarded(message: Message) -> None:
+            if not refused:
+                await send(message)
+
+        await self.app(scope, counted, guarded)
+
+
+async def _too_large(send: Send, limit: int) -> None:
+    body = json.dumps({"detail": f"The request is larger than {limit // 1024} KB."}).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -95,7 +181,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await get_engine().dispose()
 
 
-app = FastAPI(title="Groundcrew API", version=VERSION, lifespan=lifespan)
+# The interactive docs and the schema are for development; a hosted instance does not serve them
+# (the web app's types come from scripts/export_openapi.py, not from a running server).
+_LOCAL = get_settings().app_env in ("dev", "test")
+app = FastAPI(
+    title="Groundcrew API",
+    version=VERSION,
+    lifespan=lifespan,
+    docs_url="/docs" if _LOCAL else None,
+    redoc_url="/redoc" if _LOCAL else None,
+    openapi_url="/openapi.json" if _LOCAL else None,
+)
 
 # REST calls come through the web app's server-side proxy, so they need no CORS. Only the
 # browser's direct SSE connection (GET /runs/{id}/events) does, and only from WEB_ORIGIN.
@@ -105,6 +201,8 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["Last-Event-ID"],
 )
+app.add_middleware(BodySizeLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
 # Request fields whose raw input must never come back in a 422 (POST /deploys env values,
@@ -116,6 +214,26 @@ _SECRET_INPUT_FIELDS = frozenset({"env", "password", "current_password", "new_pa
 async def forbidden(_request: Request, exc: ForbiddenError) -> JSONResponse:
     """Owner-only actions by a member: 403 with the reason (they can see the workspace)."""
     return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(QuotaExceededError)
+async def quota_exceeded(_request: Request, exc: QuotaExceededError) -> JSONResponse:
+    """A workspace quota: 429 with which one, its limit, and when it resets (if daily)."""
+    headers = {}
+    if exc.resets_at is not None:
+        wait = max(1, int((exc.resets_at - datetime.now(UTC)).total_seconds()))
+        headers["Retry-After"] = str(wait)
+    return JSONResponse(
+        status_code=429,
+        headers=headers,
+        content={
+            "detail": str(exc),
+            "code": "quota_exceeded",
+            "quota": exc.quota,
+            "limit": exc.limit,
+            "resets_at": exc.resets_at.isoformat() if exc.resets_at else None,
+        },
+    )
 
 
 @app.exception_handler(auth.AuthFlowError)
@@ -152,6 +270,7 @@ app.include_router(graph.router)
 app.include_router(deploys.router)
 app.include_router(incidents.router)
 app.include_router(evidence.router)
+app.include_router(admin.router)
 
 
 def _openapi() -> dict[str, Any]:

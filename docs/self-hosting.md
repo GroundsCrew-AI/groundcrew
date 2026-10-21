@@ -110,7 +110,17 @@ callback URLs are `<web origin>/api/auth/callback/google` and `.../github`.
 - Ten wrong passwords in a row lock an account for 15 minutes (`AUTH_LOCKOUT_ATTEMPTS`,
   `AUTH_LOCKOUT_MINUTES`); the sign-in endpoints are also rate limited per client address.
 - Owners invite people by email (they get an email; they join once the address is confirmed) or
-  by GitHub login.
+  by GitHub login, as an **owner** (members, connections, settings, every approval), an
+  **approver** (starts runs, deploys, discovery and incidents; approves deploys and fixes), or a
+  **viewer** (reads everything, changes nothing). New members are viewers unless the owner
+  picks another role. Emergency actions can be kept for owners (Settings, Approvals and limits).
+- Every approval and every change to members, invites, connections and settings is in the
+  workspace's audit log (Settings, Activity; `GET /workspaces/{id}/audit`), with who, when, and
+  the client address.
+- Deleting: an owner deletes a connection (its credential, discovered resources and telemetry
+  go), or the whole workspace after typing its name. Anyone deletes their own account
+  (Settings); workspaces only they are in go with it, and a shared workspace where they are the
+  only owner must get another owner first.
 
 Email needs SMTP: set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`, `ssl`, or `none`),
 `SMTP_USERNAME`, `SMTP_PASSWORD`, and `EMAIL_FROM`. Any provider with SMTP works (SES, Postmark,
@@ -150,11 +160,59 @@ With `APP_ENV=staging` or `production`, the API and worker refuse to start until
 | `INTERNAL_JWT_SECRET` | 32+ characters, shared with the web app |
 | `APPROVAL_TOKEN_KEY` | Signs single-use approved-action tokens |
 | `WEB_ORIGIN` | The public web URL (not localhost): CORS and links in emails |
-| `SMTP_HOST` (and the other `SMTP_*`) | Confirmation and reset emails, unless `PASSWORD_AUTH_ENABLED=false` |
+| `SMTP_HOST` (and the other `SMTP_*`) | Confirmation and reset emails, when `PASSWORD_AUTH_ENABLED=true` |
+
+They also refuse to start with any local development switch set: `LIVE_SCRIPT_SELF_APPROVE`,
+`PIPELINE_FAKE`, `K8S_ALLOW_PRIVATE_SERVERS`, `DEPLOY_FIXTURES_DIR`. Each of those, the dev evidence
+endpoint, deploy fixtures, the e2e test user, and the local kind cluster as a deploy target are
+also refused where they are used (`tests/test_production_lockout.py`).
+
+Sign-in on a hosted instance is GitHub only until email links are set up: email and password and
+Google are off unless `PASSWORD_AUTH_ENABLED=true` or `GOOGLE_AUTH_ENABLED=true` (set the latter for
+the web app too).
 
 The web app needs `AUTH_SECRET`, `INTERNAL_JWT_SECRET`, and `API_INTERNAL_URL`, plus the OAuth
 credentials of the providers you offer. `GET /ready` answers 200 once the database is reachable
 and migrated to the latest revision.
+
+## Limits and abuse protection
+
+Each workspace has quotas (`app/quotas.py`); a reached one answers 429 with
+`{"code": "quota_exceeded", "quota": ..., "limit": ..., "resets_at": ...}` and Settings, Usage
+shows them. Defaults, all settable:
+
+| Setting | Default | What |
+| --- | --- | --- |
+| `LLM_WORKSPACE_DAILY_USD_CAP` | `LLM_DAILY_USD_CAP` | model spend per workspace per UTC day; owners can only lower it |
+| `LLM_DAILY_USD_CAP`, `LLM_TOTAL_USD_CAP` | 2.00, 25 | the whole platform; when reached, agents stop with a message saying so |
+| `QUOTA_TAVILY_PER_WORKSPACE_DAY` | 10 | web research calls |
+| `QUOTA_CONCURRENT_RUNS_PER_WORKSPACE` | 2 | runs a person started still going (the watcher's are not counted) |
+| `QUOTA_BUILDS_PER_WORKSPACE_DAY`, `QUOTA_MAX_BUILD_SECONDS` | 10, 900 | deploy builds and the longest build attempt |
+| `QUOTA_CONNECTIONS_PER_WORKSPACE` | 10 | connections |
+| `RATE_LIMIT_USER_PER_MINUTE`, `RATE_LIMIT_STREAM_TOKENS_PER_MINUTE`, `MAX_OPEN_STREAMS_PER_USER` | 300, 30, 10 | per user, in the API |
+| `MAX_REQUEST_BYTES` | 1048576 | larger request bodies get 413 (API and web proxy) |
+| `SIGNUPS_PER_HOUR`, `SIGNUPS_PER_IP_DAY` | 30, 5 | new accounts |
+
+Operators (on the server, against its database):
+
+```bash
+python -m app.admin_cli signups status|pause|resume     # pausing still lets invited people join
+python -m app.admin_cli quota show <workspace id>
+python -m app.admin_cli quota set <workspace id> builds 25   # one workspace's own limit
+python -m app.admin_cli quota clear <workspace id> builds
+```
+
+People listed in `PLATFORM_ADMINS` (emails or GitHub logins) also see the sign-up switch in
+Settings. nginx limits each client address in front of all this (infra/platform/host).
+
+## Security headers
+
+The web app sends a per-request Content-Security-Policy with a nonce, `frame-ancestors 'none'`,
+X-Frame-Options, Referrer-Policy, Permissions-Policy, and HSTS over HTTPS; its session cookie is
+`__Secure-`, HttpOnly and SameSite=Lax when `AUTH_URL` is https. The `/api/gc` proxy refuses
+state-changing requests from other origins. The API sends nosniff, DENY, no-referrer and a
+deny-all CSP on every response, allows CORS only from `WEB_ORIGIN` for reading live streams, and
+serves no `/docs` or `/openapi.json` outside dev and test.
 
 ## Other settings
 

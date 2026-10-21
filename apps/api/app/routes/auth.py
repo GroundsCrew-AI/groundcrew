@@ -30,6 +30,7 @@ from app.mail import (
     reset_mail,
     verification_mail,
 )
+from app.platform import SignupRefusedError
 from app.routes.deps import SessionDep, SettingsDep, bearer_token
 from app.security.auth import AuthConfigError, AuthError, verify_service_token
 from app.security.passwords import MAX_LENGTH, hash_password_async, password_problem
@@ -140,6 +141,7 @@ class Accepted(BaseModel):
 
 class Options(BaseModel):
     password: bool
+    google: bool
     require_verified_email: bool
     password_min_length: int
 
@@ -165,16 +167,43 @@ def _check_password(password: str, min_length: int, email: str | None = None) ->
 async def options(settings: SettingsDep) -> Options:
     """What the sign-in page offers."""
     return Options(
-        password=settings.password_auth_enabled,
+        password=settings.password_auth,
+        google=settings.google_auth,
         require_verified_email=settings.auth_require_verified_email,
         password_min_length=settings.password_min_length,
     )
 
 
+def _signup_refused(exc: SignupRefusedError) -> AuthFlowError:
+    paused = exc.code == "signups_paused"
+    return AuthFlowError(
+        status.HTTP_403_FORBIDDEN if paused else status.HTTP_429_TOO_MANY_REQUESTS,
+        exc.code,
+        str(exc),
+    )
+
+
 @router.post("/oauth")
-async def oauth(body: OAuthProfile, session: SessionDep) -> AuthUser:
-    """A GitHub or Google sign-in: the user, linked or created."""
-    return AuthUser.of(await accounts.oauth_sign_in(session, body))
+async def oauth(
+    body: OAuthProfile,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    x_client_ip: ClientIp = None,
+) -> AuthUser:
+    """A GitHub or Google sign-in: the user, linked or created. Google only where it is on
+    (GOOGLE_AUTH_ENABLED; off on hosted instances by default)."""
+    if body.provider == "google" and not settings.google_auth:
+        raise AuthFlowError(
+            status.HTTP_403_FORBIDDEN, "disabled", "Google sign-in is turned off on this server."
+        )
+    try:
+        user = await accounts.oauth_sign_in(
+            session, body, settings=settings, ip=_client(request, x_client_ip)
+        )
+    except SignupRefusedError as exc:
+        raise _signup_refused(exc) from None
+    return AuthUser.of(user)
 
 
 @router.post("/sign-in")
@@ -185,7 +214,7 @@ async def sign_in(
     settings: SettingsDep,
     x_client_ip: ClientIp = None,
 ) -> AuthUser:
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _limit(f"sign-in:ip:{_client(request, x_client_ip)}", 30, 600)
     _limit(f"sign-in:email:{body.email}", 10, 900)
     try:
@@ -222,13 +251,21 @@ async def sign_up(
     """Create a password account and send the confirmation link. For an address that already
     has an account, its owner gets an email saying so (or a new link, if they never
     confirmed); the answer here is the same."""
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _check_password(body.password, settings.password_min_length, body.email)
     _limit(f"sign-up:ip:{_client(request, x_client_ip)}", 10, 3600)
     name = (body.name or "").strip() or None
-    user, created = await accounts.password_sign_up(
-        session, body.email, await hash_password_async(body.password), name
-    )
+    try:
+        user, created = await accounts.password_sign_up(
+            session,
+            body.email,
+            await hash_password_async(body.password),
+            name,
+            settings=settings,
+            ip=_client(request, x_client_ip),
+        )
+    except SignupRefusedError as exc:
+        raise _signup_refused(exc) from None
     if created or (user.email_verified_at is None and user.password_hash is not None):
         await _send_verification(session, user, settings, mailer)
     else:
@@ -259,7 +296,7 @@ async def resend_verification(
     mailer: MailerDep,
     x_client_ip: ClientIp = None,
 ) -> Accepted:
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _limit(f"links:ip:{_client(request, x_client_ip)}", 20, 3600)
     _limit(f"verify:email:{body.email}", 5, 3600)
     user = await accounts.user_by_email(session, body.email)
@@ -273,9 +310,11 @@ async def verify_email(
     body: LinkWithPassword,
     request: Request,
     session: SessionDep,
+    settings: SettingsDep,
     x_client_ip: ClientIp = None,
 ) -> AuthUser:
     """Confirm the address from the link; the account's password proves it is theirs."""
+    _require_password_auth(settings.password_auth)
     _limit(f"link:ip:{_client(request, x_client_ip)}", 30, 3600)
     try:
         user = await accounts.verify_email(session, body.token, body.password)
@@ -301,7 +340,7 @@ async def forgot_password(
 ) -> Accepted:
     """Send a reset link if the address has an account (GitHub and Google accounts too: the
     link adds a password)."""
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _limit(f"links:ip:{_client(request, x_client_ip)}", 20, 3600)
     _limit(f"reset:email:{body.email}", 5, 3600)
     user = await accounts.user_by_email(session, body.email)
@@ -328,7 +367,7 @@ async def reset_password(
     x_client_ip: ClientIp = None,
 ) -> AuthUser:
     """Choose a new password from a reset link. Every existing session ends."""
-    _require_password_auth(settings.password_auth_enabled)
+    _require_password_auth(settings.password_auth)
     _check_password(body.password, settings.password_min_length)
     _limit(f"link:ip:{_client(request, x_client_ip)}", 30, 3600)
     try:

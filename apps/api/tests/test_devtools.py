@@ -17,7 +17,8 @@ def _settings(env: str) -> Settings:
     return Settings(_env_file=None, app_env=env)
 
 
-def test_app_env_defaults_to_production() -> None:
+def test_app_env_defaults_to_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("APP_ENV")  # conftest sets test
     assert Settings(_env_file=None).app_env == "production"
 
 

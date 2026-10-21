@@ -80,8 +80,12 @@ class ToolPolicy(enum.StrEnum):
 
 
 class WorkspaceRole(enum.StrEnum):
+    """owner: everything, including members, connections, and settings. approver: approves
+    deploys and fixes and starts work. viewer: reads only."""
+
     owner = "owner"
-    member = "member"
+    approver = "approver"
+    viewer = "viewer"
 
 
 class JobStatus(enum.StrEnum):
@@ -198,7 +202,7 @@ class WorkspaceMember(TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     role: Mapped[WorkspaceRole] = mapped_column(
-        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.member
+        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.viewer
     )
 
 
@@ -221,7 +225,7 @@ class WorkspaceInvite(TimestampMixin, Base):
     github_login: Mapped[str | None] = mapped_column(String(100), index=True)
     email: Mapped[str | None] = mapped_column(String(320), index=True)
     role: Mapped[WorkspaceRole] = mapped_column(
-        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.member
+        _pg_enum(WorkspaceRole, "workspace_role"), default=WorkspaceRole.viewer
     )
     invited_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
@@ -504,6 +508,32 @@ class Approval(TimestampMixin, Base):
     decided_via: Mapped[str | None] = mapped_column(String(100))
 
 
+class AuditEvent(Base):
+    """Who did what to a workspace, and when: approvals, members and invites, connections,
+    settings, deletions. Rows are only ever added. `actor_label` keeps the name after the
+    user is deleted; platform events (signups paused) have no workspace."""
+
+    __tablename__ = "audit_events"
+    __table_args__ = (Index("ix_audit_events_workspace_created", "workspace_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE")
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    actor_label: Mapped[str] = mapped_column(String(320))
+    # Dotted name: approval.approved, member.role_changed, connection.deleted, ...
+    action: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str | None] = mapped_column(String(32))
+    target_id: Mapped[str | None] = mapped_column(String(64))
+    # Short, non-secret facts (role from/to, tool name, connection kind).
+    detail: Mapped[JSON] = mapped_column(default=dict)
+    ip: Mapped[str | None] = mapped_column(String(64))
+
+
 class Event(TimestampMixin, Base):
     """Normalized telemetry timeline entry (deploys, alarms, log spikes, config changes)."""
 
@@ -558,6 +588,35 @@ class LlmWorkspaceUsage(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class PlatformSetting(Base):
+    """A switch for the whole platform, changed by an operator at run time (app.platform):
+    `signups_paused`."""
+
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[JSON] = mapped_column(default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
+class WorkspaceQuotaUsage(Base):
+    """What a workspace used of a daily quota (app.quotas): `kind` is tavily or builds."""
+
+    __tablename__ = "workspace_quota_usage"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class LlmUsage(Base):

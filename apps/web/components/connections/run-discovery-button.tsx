@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { useDiscoverWorkspace } from "@/lib/discovery";
+import { canAct, VIEWER_READ_ONLY } from "@/lib/workspace-admin";
 import { useWorkspace } from "@/lib/workspace";
 
 /** Start discovery for the whole workspace and open the live run. */
@@ -25,7 +26,8 @@ export function RunDiscoveryButton({
     <Button
       size={size}
       variant={variant}
-      disabled={!workspace || discover.isPending}
+      disabled={!workspace || discover.isPending || !canAct(workspace.role)}
+      title={workspace && !canAct(workspace.role) ? VIEWER_READ_ONLY : undefined}
       onClick={() =>
         workspace &&
         discover.mutate(workspace.id, {

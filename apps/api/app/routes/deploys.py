@@ -14,9 +14,18 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 
-from app import queue
+from app import queue, quotas
 from app.accounts import NotFoundError, member_workspace
-from app.db.models import Approval, ApprovalStatus, Connection, Run, RunStatus, RunStep
+from app.audit import record
+from app.db.models import (
+    Approval,
+    ApprovalStatus,
+    Connection,
+    Run,
+    RunStatus,
+    RunStep,
+    WorkspaceRole,
+)
 from app.pipeline.events import DeployPlan, EnvVarView, StageFinished
 from app.pipeline.runner import DEPLOY_JOB, deploy_job_row, open_env, seal_env
 from app.pipeline.state import DeployRecord
@@ -35,15 +44,20 @@ from app.routes.deploy_schemas import (
     FixtureSource,
     StageOut,
 )
-from app.routes.deps import CurrentUser, SessionDep, SettingsDep
+from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.steps import record_step
 
 router = APIRouter(prefix="/deploys", tags=["deploys"])
 
 
-async def _check_member(session: SessionDep, user: CurrentUser, workspace_id: uuid.UUID) -> None:
+async def _check_member(
+    session: SessionDep,
+    user: CurrentUser,
+    workspace_id: uuid.UUID,
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
+) -> None:
     try:
-        await member_workspace(session, user, workspace_id)
+        await member_workspace(session, user, workspace_id, minimum)
     except NotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.") from None
 
@@ -57,12 +71,17 @@ async def _connection(
     return conn
 
 
-async def _deploy_run(session: SessionDep, user: CurrentUser, deploy_id: uuid.UUID) -> Run:
+async def _deploy_run(
+    session: SessionDep,
+    user: CurrentUser,
+    deploy_id: uuid.UUID,
+    minimum: WorkspaceRole = WorkspaceRole.viewer,
+) -> Run:
     run = await session.get(Run, deploy_id)
     if run is None or run.agent != "deploy":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Deploy not found.")
     try:
-        await member_workspace(session, user, run.workspace_id)
+        await member_workspace(session, user, run.workspace_id, minimum)
     except NotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Deploy not found.") from None
     return run
@@ -74,13 +93,18 @@ async def _deploy_run(session: SessionDep, user: CurrentUser, deploy_id: uuid.UU
     responses={409: {"description": "Target is AWS observe tier, or the source is not GitHub."}},
 )
 async def create_deploy(
-    body: DeployCreate, user: CurrentUser, session: SessionDep, settings: SettingsDep
+    body: DeployCreate,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
 ) -> DeployCreated:
     """Start a deploy run. Returns at once; follow the run's event stream for progress.
 
     Nothing touches infrastructure before a workspace member approves the rendered plan.
     """
-    await _check_member(session, user, body.workspace_id)
+    await _check_member(session, user, body.workspace_id, WorkspaceRole.approver)
+    await quotas.check_can_start_run(session, body.workspace_id, settings)
     if isinstance(body.repo, FixtureSource):
         if settings.app_env != "dev":
             raise HTTPException(status.HTTP_409_CONFLICT, "Fixtures are for local dev only.")
@@ -143,6 +167,16 @@ async def create_deploy(
     ]
     await queue.enqueue(
         session, DEPLOY_JOB, {"run_id": str(run_id), "env": seal_env(env)}, max_attempts=1
+    )
+    record(
+        session,
+        workspace_id=body.workspace_id,
+        actor=user,
+        action="deploy.started",
+        target_type="run",
+        target_id=run_id,
+        detail={"source": label},
+        ip=ip,
     )
     await session.commit()
     return DeployCreated(deploy_id=run_id, run_id=run_id)
@@ -319,7 +353,7 @@ async def update_env(
     """Set missing env values, or continue without them. The pending plan approval is
     replaced: only preflight runs again and the plan is re-rendered with the same built image
     (no rebuild). Values are handled like POST /deploys: encrypted in the job, never echoed."""
-    run = await _deploy_run(session, user, deploy_id)
+    run = await _deploy_run(session, user, deploy_id, WorkspaceRole.approver)
     run = await session.get_one(Run, run.id, with_for_update=True, populate_existing=True)
     state: dict[str, Any] = dict(run.state or {})
     approval = await session.get(Approval, body.approval_id)

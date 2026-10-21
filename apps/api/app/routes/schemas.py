@@ -83,6 +83,10 @@ class WorkspaceOut(BaseModel):
 class MeOut(BaseModel):
     user: UserOut
     workspaces: list[WorkspaceOut]
+    # Email and password accounts are offered on this server (Settings shows the password form).
+    password_auth: bool = False
+    # This person is a platform operator (PLATFORM_ADMINS): Settings shows the platform switches.
+    platform_admin: bool = False
 
 
 class RunCreate(BaseModel):
