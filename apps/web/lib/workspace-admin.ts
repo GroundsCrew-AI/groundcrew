@@ -27,11 +27,13 @@ export type NotificationSettings = Schemas["NotificationConfig"];
 export type ChannelTestResult = Schemas["ChannelTestOut"];
 export type AuditEvent = Schemas["AuditEventOut"];
 export type AuditPage = Schemas["AuditPage"];
+export type Usage = Schemas["UsageOut"];
 
 export const workspaceAdminKeys = {
   detail: (ws: string) => ["workspace", ws] as const,
   members: (ws: string) => ["members", ws] as const,
   audit: (ws: string) => ["audit", ws] as const,
+  usage: (ws: string) => ["usage", ws] as const,
 };
 
 /** Why a member cannot do something. Shown next to the hidden or disabled control. */
@@ -108,6 +110,21 @@ export function useMembers(workspaceId: string | undefined) {
     queryFn: async () =>
       unwrap(
         await api.GET("/workspaces/{workspace_id}/members", {
+          params: { path: { workspace_id: workspaceId! } },
+        }),
+      ),
+  });
+}
+
+/** What the workspace used of its limits today (model spend, research, builds, runs). */
+export function useUsage(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: workspaceAdminKeys.usage(workspaceId ?? ""),
+    enabled: Boolean(workspaceId),
+    refetchInterval: 60_000,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/workspaces/{workspace_id}/usage", {
           params: { path: { workspace_id: workspaceId! } },
         }),
       ),

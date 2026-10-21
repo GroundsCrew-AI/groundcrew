@@ -27,7 +27,7 @@ from typing import Any, Final
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import notifications, queue
+from app import notifications, queue, quotas
 from app.actions.base import EmergencyActionError, EmergencyActions
 from app.agents.medic import diagnose as dx
 from app.agents.medic import evidence as ev
@@ -436,7 +436,7 @@ class MedicRunner:
         ]
         state.stack = stack_terms(stack_lines)
         results, queries, skipped = await self._research(
-            items, all_items, affected, state, reused is not None
+            items, all_items, affected, state, reused is not None, incident.workspace_id
         )
         state.research, state.research_queries = results, queries
         _save(incident, state)
@@ -542,7 +542,7 @@ class MedicRunner:
             state.stack = stack_terms(
                 [*stack_lines, root_cause.summary, root_cause.root_cause, asked]
             )
-            follow_up, query, skipped = await self._search(asked, state)
+            follow_up, query, skipped = await self._search(asked, state, incident.workspace_id)
             if query:
                 state.research = [*state.research, *follow_up]
                 state.research_queries = [*state.research_queries, query]
@@ -720,6 +720,7 @@ class MedicRunner:
         affected: set[uuid.UUID],
         state: MedicState,
         reused: bool,
+        workspace_id: uuid.UUID,
     ) -> tuple[list[ResearchResult], list[str], str | None]:
         if reused:
             return [], [], "Skipped: a similar past incident was reused."
@@ -735,18 +736,25 @@ class MedicRunner:
             query = next((q for i in scored if (q := search_query(i.line))), "")
         if not query:
             return [], [], "Skipped: no error line to search for."
-        results, used, skipped = await self._search(query, state)
+        results, used, skipped = await self._search(query, state, workspace_id)
         return results, [used] if used else [], skipped
 
     async def _search(
-        self, query: str, state: MedicState
+        self, query: str, state: MedicState, workspace_id: uuid.UUID
     ) -> tuple[list[ResearchResult], str | None, str | None]:
-        """One Tavily call within TAVILY_MAX_CALLS_PER_INCIDENT: results, the query sent (None
-        when no call was made), and why it was skipped or failed."""
+        """One Tavily call within TAVILY_MAX_CALLS_PER_INCIDENT and the workspace's daily
+        research quota: results, the query sent (None when no call was made), and why it was
+        skipped or failed."""
         if self.deps.tavily is None:
             return [], None, "Skipped: TAVILY_API_KEY is not set."
         if state.tavily_calls >= self.settings.tavily_max_calls_per_incident:
             return [], None, "Skipped: research cap for this incident reached."
+        try:
+            async with self.session_factory() as session:
+                await quotas.take(session, workspace_id, "tavily", self.settings)
+                await session.commit()
+        except quotas.QuotaExceededError as exc:
+            return [], None, f"Skipped: {exc}"
         # The application's stack from its own lines ("postgres asyncpg sqlalchemy"), so a
         # Postgres app's connection error does not bring back SQL Server articles.
         stack = state.stack

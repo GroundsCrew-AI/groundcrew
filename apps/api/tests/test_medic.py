@@ -1105,3 +1105,37 @@ async def test_ranking_keeps_every_source_and_puts_strong_signals_first() -> Non
 )
 def test_a_triggering_change_matches_a_collected_marker(ref: str, marker: str, same: bool) -> None:
     assert dx._same_change(ref, marker) is same
+
+
+async def test_research_stops_at_the_workspace_daily_quota(
+    session_factory: SessionFactory, workspace: Workspace, use_deps: Any
+) -> None:
+    sf = session_factory
+    async with sf() as session:
+        ws = await session.get_one(Workspace, workspace.id)
+        ws.settings = {**(ws.settings or {}), "quotas": {"tavily": 0}}
+        await session.commit()
+    ids = await demo_graph(sf, workspace.id)
+    ev = oom_evidence(ids, _now())
+    recorded = Recorded()
+    h = Harness(
+        sf,
+        ev,
+        FakeLLM(reply(oom_root_cause(ev)), reply(oom_fix()), settings=settings()),
+        actions=FakeEmergencyActions(sf, services={}),
+        gh=github_routes(BAD_SHA, {"worker/ecs-task.json": ("+  container_memory: 24", BAD_TASK)}),
+        research=tavily(recorded=recorded),
+    )
+    use_deps(h)
+    incident_id, run_id = await _open(
+        sf, workspace.id, ids["worker"], "ecs_tasks_stopped", "3 tasks exit 137"
+    )
+    await investigate_incident_job(sf, {"incident_id": str(incident_id), "run_id": str(run_id)})
+    _, state, _ = await _state(sf, incident_id)
+    assert state.research == [] and state.tavily_calls == 0
+    assert recorded.requests == []
+    async with sf() as session:
+        step = await session.scalar(
+            select(RunStep).where(RunStep.run_id == run_id, RunStep.kind == "research_done")
+        )
+    assert step is not None and "limit of 0 web research calls" in str(step.data)

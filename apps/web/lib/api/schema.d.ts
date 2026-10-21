@@ -1185,6 +1185,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspace_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace Usage */
+        get: operations["workspace_usage_workspaces__workspace_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3461,6 +3478,19 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** QuotaOut */
+        QuotaOut: {
+            /** Daily */
+            daily: boolean;
+            /** Label */
+            label: string;
+            /** Limit */
+            limit: number;
+            /** Name */
+            name: string;
+            /** Used */
+            used: number;
+        };
         /** Ready */
         Ready: {
             /** Database */
@@ -4161,6 +4191,32 @@ export interface components {
              * @default null
              */
             ref: string | null;
+        };
+        /**
+         * UsageOut
+         * @description What this workspace used of its limits, for Settings.
+         */
+        UsageOut: {
+            /** Daily Usd Cap */
+            daily_usd_cap: number;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Max Build Seconds */
+            max_build_seconds: number;
+            /** Platform Paused */
+            platform_paused: boolean;
+            /** Quotas */
+            quotas: components["schemas"]["QuotaOut"][];
+            /**
+             * Resets At
+             * Format: date-time
+             */
+            resets_at: string;
+            /** Usd Today */
+            usd_today: number;
         };
         /** UserOut */
         UserOut: {
@@ -6592,6 +6648,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    workspace_usage_workspaces__workspace_id__usage_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageOut"];
                 };
             };
             /** @description Validation Error */

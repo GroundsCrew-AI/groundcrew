@@ -237,13 +237,15 @@ class RunBudget:
         if total >= Decimal(str(s.llm_total_usd_cap)):
             raise BudgetExceededError(
                 "total_usd_cap",
-                f"${total} spent in total (LLM_TOTAL_USD_CAP={s.llm_total_usd_cap})",
+                f"Groundcrew reached its total model spend limit (${total} of "
+                f"${s.llm_total_usd_cap}). Agents are paused until the operator raises it.",
             )
         today = await self.usage.today()
         if today.usd >= Decimal(str(s.llm_daily_usd_cap)):
             raise BudgetExceededError(
                 "daily_usd_cap",
-                f"${today.usd} spent today (LLM_DAILY_USD_CAP={s.llm_daily_usd_cap})",
+                f"Groundcrew reached today's model spend limit for all workspaces (${today.usd} "
+                f"of ${s.llm_daily_usd_cap}). It resets at 00:00 UTC.",
             )
         cap = self.workspace_daily_usd_cap
         if cap is not None:
@@ -251,13 +253,14 @@ class RunBudget:
             if workspace is not None and workspace.usd >= cap:
                 raise BudgetExceededError(
                     "workspace_daily_usd_cap",
-                    f"${workspace.usd} spent today in this workspace (daily cap ${cap}; "
-                    "an owner can change it in workspace settings)",
+                    f"${workspace.usd} spent today in this workspace, which has a daily limit "
+                    f"of ${cap}. It resets at 00:00 UTC.",
                 )
         if s.daily_token_budget is not None and today.tokens >= s.daily_token_budget:
             raise BudgetExceededError(
                 "daily_token_cap",
-                f"{today.tokens} tokens used today (DAILY_TOKEN_BUDGET={s.daily_token_budget})",
+                f"Groundcrew reached today's model token limit ({today.tokens} of "
+                f"{s.daily_token_budget}). It resets at 00:00 UTC.",
             )
         return today
 
@@ -309,16 +312,17 @@ class RunBudget:
 async def workspace_daily_cap(
     session: AsyncSession, workspace_id: uuid.UUID, settings: Settings | None = None
 ) -> Decimal:
-    """The workspace's daily USD cap: its own setting, else the platform default."""
+    """The workspace's daily USD cap: the platform's per-workspace limit
+    (LLM_WORKSPACE_DAILY_USD_CAP, else LLM_DAILY_USD_CAP), or the owner's lower setting. An owner
+    can lower it, never raise it."""
     from app.workspace_settings import get_config
 
     settings = settings or get_settings()
     workspace = await session.get(Workspace, workspace_id)
     own = get_config(workspace).daily_usd_cap if workspace is not None else None
     default = settings.llm_workspace_daily_usd_cap
-    value = (
-        own if own is not None else default if default is not None else settings.llm_daily_usd_cap
-    )
+    platform = default if default is not None else settings.llm_daily_usd_cap
+    value = min(own, platform) if own is not None else platform
     return Decimal(str(value))
 
 

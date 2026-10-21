@@ -35,6 +35,7 @@ from typing import Any, Protocol
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import quotas
 from app.agents.builder import Builder, BuilderError
 from app.agents.deployer import (
     DeployDraft,
@@ -598,6 +599,13 @@ class _Job:
 
     async def build(self, root: Path, spec: AppSpec, app: str, commit: str | None) -> Any:
         started = await self.stage_start("build", "builder")
+        try:
+            await quotas.take(self.session, self.run.workspace_id, "builds", self.deps.settings)
+            await self.session.commit()
+        except quotas.QuotaExceededError as exc:
+            await self.session.rollback()
+            await self.stage_end("build", "builder", started, "failed", str(exc)[:200])
+            await self.finish(RunStatus.failed, StopReason.budget, error=str(exc))
         tag = (commit or self.run.id.hex)[:12]
         builder = Builder(self.deps.llm, self.deps.sandbox, sleep=self.deps.builder_sleep)
         attempts: list[BuildAttempt] = []

@@ -157,7 +157,7 @@ export function WorkspaceSettingsForm({
           checked={draft.capMode === "custom"}
           disabled={locked}
           onChange={() => set({ capMode: "custom" })}
-          title="Set a cap for this workspace"
+          title="Set a lower cap for this workspace"
         />
         {draft.capMode === "custom" && (
           <div className="flex items-center gap-2 pt-1 pl-1 text-[13px]">

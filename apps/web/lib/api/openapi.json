@@ -6034,6 +6034,39 @@
         "title": "PullRequestView",
         "type": "object"
       },
+      "QuotaOut": {
+        "properties": {
+          "daily": {
+            "title": "Daily",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "used",
+          "limit",
+          "daily"
+        ],
+        "title": "QuotaOut",
+        "type": "object"
+      },
       "Ready": {
         "properties": {
           "database": {
@@ -8137,6 +8170,55 @@
           "kind"
         ],
         "title": "TriggeringChange",
+        "type": "object"
+      },
+      "UsageOut": {
+        "description": "What this workspace used of its limits, for Settings.",
+        "properties": {
+          "daily_usd_cap": {
+            "title": "Daily Usd Cap",
+            "type": "number"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "max_build_seconds": {
+            "title": "Max Build Seconds",
+            "type": "integer"
+          },
+          "platform_paused": {
+            "title": "Platform Paused",
+            "type": "boolean"
+          },
+          "quotas": {
+            "items": {
+              "$ref": "#/components/schemas/QuotaOut"
+            },
+            "title": "Quotas",
+            "type": "array"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "title": "Resets At",
+            "type": "string"
+          },
+          "usd_today": {
+            "title": "Usd Today",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "resets_at",
+          "usd_today",
+          "daily_usd_cap",
+          "platform_paused",
+          "max_build_seconds",
+          "quotas"
+        ],
+        "title": "UsageOut",
         "type": "object"
       },
       "UserOut": {
@@ -12920,6 +13002,65 @@
           }
         },
         "summary": "Summary",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/usage": {
+      "get": {
+        "operationId": "workspace_usage_workspaces__workspace_id__usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Workspace Usage",
         "tags": [
           "workspaces"
         ]

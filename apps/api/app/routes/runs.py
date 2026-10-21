@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import queue
+from app import queue, quotas
 from app.accounts import NotFoundError, member_workspace, require_member
 from app.agents.medic.events import MEDIC_EVENT_NAMES
 from app.agents.registry import AGENTS
@@ -106,7 +106,9 @@ async def run_approvals(session: AsyncSession, run: Run) -> list[ApprovalOut]:
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
-async def create_run(body: RunCreate, user: CurrentUser, session: SessionDep) -> RunCreated:
+async def create_run(
+    body: RunCreate, user: CurrentUser, session: SessionDep, settings: SettingsDep
+) -> RunCreated:
     if body.agent not in AGENTS:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -116,6 +118,7 @@ async def create_run(body: RunCreate, user: CurrentUser, session: SessionDep) ->
         await member_workspace(session, user, body.workspace_id, WorkspaceRole.approver)
     except NotFoundError:
         raise _not_found("Workspace") from None
+    await quotas.check_can_start_run(session, body.workspace_id, settings)
 
     run = Run(workspace_id=body.workspace_id, agent=body.agent, goal=body.goal)
     session.add(run)

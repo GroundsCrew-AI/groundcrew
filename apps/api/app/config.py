@@ -253,6 +253,18 @@ class Settings(BaseSettings):
     # its settings). Unset: LLM_DAILY_USD_CAP, so one workspace cannot use another's budget.
     llm_workspace_daily_usd_cap: float | None = None
 
+    # Per-workspace quotas (app.quotas). Daily counts reset at 00:00 UTC. A platform operator
+    # can set other limits for one workspace (workspaces.settings["quotas"], `gc-admin`);
+    # workspace owners cannot raise them.
+    quota_tavily_per_workspace_day: int = 10
+    # Runs a person starts (runs, deploys, discovery, reported incidents) that are queued or
+    # running at once; the incident watcher's investigations are not held back.
+    quota_concurrent_runs_per_workspace: int = 2
+    # Deploy builds started per day (each up to 5 attempts), and the most one attempt may take.
+    quota_builds_per_workspace_day: int = 10
+    quota_max_build_seconds: int = 900
+    quota_connections_per_workspace: int = 10
+
     # Token and call limits. Unset daily token budget or per-incident Ultra limit = no limit.
     daily_token_budget: int | None = None
     max_ultra_calls_per_incident: int | None = None
@@ -330,6 +342,11 @@ class Settings(BaseSettings):
     # FAILED_JOB_RETENTION_DAYS (kept longer for debugging).
     job_retention_days: int = 7
     failed_job_retention_days: int = 30
+
+    @property
+    def build_timeout_seconds(self) -> float:
+        """How long one sandbox build may run: the sandbox limit, or less by quota."""
+        return min(self.sandbox_build_timeout_seconds, float(self.quota_max_build_seconds))
 
     @property
     def password_auth(self) -> bool:

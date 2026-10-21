@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 
+from app import quotas
 from app.accounts import NotFoundError, member_workspace
 from app.actions import get_emergency_actions
 from app.actions.base import EmergencyActionError, EmergencyActions
@@ -73,7 +74,11 @@ ActionsDep = Annotated[EmergencyActions, Depends(get_actions)]
     responses={404: {"description": "Workspace or a resource not found for this user."}},
 )
 async def create_incident(
-    body: IncidentCreate, user: CurrentUser, session: SessionDep, ip: ClientIp
+    body: IncidentCreate,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
+    settings: SettingsDep,
 ) -> IncidentCreated:
     """Report an incident and start Medic. Returns at once; follow the run's event stream.
 
@@ -81,6 +86,7 @@ async def create_incident(
     already covers returns that incident (`deduped: true`).
     """
     await _check_member(session, user, body.workspace_id, minimum=WorkspaceRole.approver)
+    await quotas.check_can_start_run(session, body.workspace_id, settings)
     try:
         opened = await open_incident(
             session,
