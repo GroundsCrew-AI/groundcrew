@@ -12,6 +12,7 @@ import { type AwsStart, type AwsTier, useAwsComplete, useAwsStart } from "@/lib/
 import { useWorkspace } from "@/lib/workspace";
 
 import { CopyField } from "./copy-field";
+import { SetupStep, SetupSteps, Ui } from "./setup-steps";
 import { RunDiscoveryButton } from "./run-discovery-button";
 
 const CREATES = [
@@ -28,36 +29,24 @@ export const DEPLOY_CREATES = [
   "The same explicit deny on reading secret values. Nothing else in the account can be changed.",
 ];
 
-function Step({ n, children }: { n: number; children: ReactNode }) {
-  return (
-    <li className="grid grid-cols-[22px_1fr] gap-3 text-[13px] leading-relaxed">
-      <span className="flex size-[22px] items-center justify-center rounded-full border font-mono text-[11px] text-muted-foreground">
-        {n}
-      </span>
-      <div className="min-w-0 space-y-2">{children}</div>
-    </li>
-  );
-}
-
 /** Create the stack by uploading the template, which works in any AWS account. */
 function UploadSteps({ info }: { info: AwsStart }) {
   return (
-    <ol className="space-y-4">
-      <Step n={1}>
-        <p>Download the template. It is the same file as in Groundcrew&apos;s repository.</p>
+    <SetupSteps>
+      <SetupStep n={1} title="Download the template">
+        <p>It is the same file as in Groundcrew&apos;s repository, and the only thing that defines what the role can do.</p>
         <Button asChild size="sm" variant="outline">
           <a href={info.template_download_url} download="aws-connect.yaml">
             <Download aria-hidden="true" />
             aws-connect.yaml
           </a>
         </Button>
-      </Step>
-      <Step n={2}>
+      </SetupStep>
+      <SetupStep n={2} title="Create a stack in CloudFormation">
         <p>
-          Open CloudFormation in the account you want to connect, in{" "}
-          <span className="font-mono">{info.region}</span>. Choose{" "}
-          <span className="font-medium">Choose an existing template</span>, then{" "}
-          <span className="font-medium">Upload a template file</span>, pick aws-connect.yaml, and click Next.
+          In the account you want to connect, region <span className="font-mono text-foreground">{info.region}</span>:
+          choose <Ui>Choose an existing template</Ui>, then <Ui>Upload a template file</Ui>, pick aws-connect.yaml, and
+          click <Ui>Next</Ui>.
         </p>
         <Button asChild size="sm" variant="outline">
           <a href={info.upload_console_url} target="_blank" rel="noreferrer">
@@ -65,28 +54,29 @@ function UploadSteps({ info }: { info: AwsStart }) {
             <ExternalLink aria-hidden="true" />
           </a>
         </Button>
-      </Step>
-      <Step n={3}>
-        <p>
-          Name the stack <span className="font-mono">{info.stack_name}</span> and set these parameters. Leave the
-          others as they are.
-        </p>
-        <div className="grid gap-2">
+      </SetupStep>
+      <SetupStep n={3} title="Name the stack and set these parameters">
+        <p>Copy each value as it is. Leave every other parameter at its default.</p>
+        <div className="space-y-3">
           <CopyField label="Stack name" value={info.stack_name} />
           {info.parameters.map((p) => (
             <CopyField key={p.key} label={p.key} value={p.value} />
           ))}
         </div>
-      </Step>
-      <Step n={4}>
+      </SetupStep>
+      <SetupStep n={4} title="Submit and wait for CREATE_COMPLETE">
         <p>
-          Click Next twice, tick <span className="italic">I acknowledge that AWS CloudFormation might create IAM
-          resources with custom names</span>, and Submit. Wait about a minute for{" "}
-          <span className="font-mono">CREATE_COMPLETE</span>, then copy <span className="font-mono">RoleArn</span>{" "}
-          from the <span className="font-medium">Outputs</span> tab and paste it below.
+          Click <Ui>Next</Ui> twice, tick the box that says CloudFormation might create IAM resources with custom names,
+          and click <Ui>Submit</Ui>. It takes about a minute.
         </p>
-      </Step>
-    </ol>
+      </SetupStep>
+      <SetupStep n={5} title="Paste the RoleArn below">
+        <p>
+          Copy <span className="font-mono text-foreground">RoleArn</span> from the stack&apos;s <Ui>Outputs</Ui> tab and
+          click <Ui>Verify</Ui>.
+        </p>
+      </SetupStep>
+    </SetupSteps>
   );
 }
 

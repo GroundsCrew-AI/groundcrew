@@ -17,7 +17,7 @@ import app.routes.connections as connections_routes
 from app import deletion
 from app.config import Settings, get_settings
 from app.connectors import github_claims
-from app.connectors.aws import AwsError, CallerIdentity
+from app.connectors.aws import AWS_OPERATE_OPERATIONS, AwsError, CallerIdentity
 from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Job, Resource, Run, Workspace
 from app.db.session import SessionFactory, get_session_factory
@@ -26,6 +26,7 @@ from app.discovery.types import ConnectorError
 from app.main import app
 from app.security.crypto import decrypt, generate_key
 from tests.auth_helpers import TEST_JWT_SECRET, auth_headers, github_user
+from tests.aws_fixture import fixture_session
 from tests.discovery_helpers import FAKE_VERCEL_TOKEN, github_app, load, mock_transport
 from tests.fakes import FakeLLM, reply
 from tests.test_discovery_engine import SUMMARY, Inventory
@@ -54,6 +55,7 @@ class FakeSessions:
         # Roles that cannot be assumed (a stack without Tier=deploy has no deploy role).
         self.missing: set[str] = set()
         self.forgotten: list[str] = []
+        self.denied: set[str] = set()  # services the operate role may not touch
 
     def principal_arn(self) -> str:
         return PRINCIPAL
@@ -71,6 +73,15 @@ class FakeSessions:
 
     def forget(self, role_arn: str, _external_id: str) -> None:
         self.forgotten.append(role_arn)
+
+    def assume(self, role_arn: str, external_id: str, **_: Any) -> Any:
+        """The operate role's session for Verify's coverage check: refuses what `denied` lists."""
+        denied = {"Error": {"Code": "AccessDeniedException", "Message": "not authorized"}}
+        responses = {
+            "ecs:DescribeServices": denied if "ecs" in self.denied else {"services": []},
+            "lambda:ListVersionsByFunction": denied if "lambda" in self.denied else {},
+        }
+        return fixture_session(responses, allowed=AWS_OPERATE_OPERATIONS)
 
 
 @pytest.fixture(autouse=True)
@@ -901,3 +912,111 @@ async def test_aws_operate_switch(
         f"/connections/{cid}/aws/operate", json={"enabled": False}, headers=alice.headers
     )
     assert off.json()["capabilities"] == ["observe"] and OPERATE_ROLE in sessions.forgotten
+
+
+async def _operate_resources(session_factory: SessionFactory, alice: Member, cid: str) -> None:
+    """What discovery found: the app's service and function, and Groundcrew's own host and
+    cluster, which must never be suggested."""
+    acct, region = "881050425883", "us-east-2"
+    ecs = f"arn:aws:ecs:{region}:{acct}"
+    role = f"arn:aws:iam::{acct}:role"
+
+    def res(type_: str, external_id: str, name: str, config: dict[str, Any] | None = None) -> Any:
+        return Resource(
+            workspace_id=alice.workspace_id,
+            connection_id=uuid.UUID(cid),
+            provider="aws",
+            type=type_,
+            external_id=external_id,
+            name=name,
+            region=region,
+            account=acct,
+            config=config or {},
+        )
+
+    async with session_factory() as session:
+        session.add_all(
+            [
+                res(
+                    "ecs:service",
+                    f"{ecs}:service/checkout/checkout-api",
+                    "checkout-api",
+                    {
+                        "cluster_arn": f"{ecs}:cluster/checkout",
+                        "execution_role_arn": f"{role}/checkout-api-task-execution",
+                    },
+                ),
+                res(
+                    "ecs:service",
+                    f"{ecs}:service/groundcrew-deploys/gc-shop",
+                    "gc-shop",
+                    {"cluster_arn": f"{ecs}:cluster/groundcrew-deploys"},
+                ),
+                res(
+                    "lambda:function",
+                    f"arn:aws:lambda:{region}:{acct}:function:checkout-url",
+                    "checkout-url",
+                ),
+                res(
+                    "secretsmanager:secret",
+                    f"arn:aws:secretsmanager:{region}:{acct}:secret:checkout/db-EVGFOY",
+                    "checkout/db",
+                ),
+                res(
+                    "ec2:instance",
+                    f"arn:aws:ec2:{region}:{acct}:instance/i-0123",
+                    "groundcrew-platform",
+                ),
+            ]
+        )
+        await session.commit()
+
+
+async def test_operate_values_come_from_discovery_without_groundcrews_own(
+    client: httpx.AsyncClient,
+    alice: Member,
+    sessions: FakeSessions,
+    session_factory: SessionFactory,
+) -> None:
+    cid = (await _start(client, alice, "observe"))["connection_id"]
+    await _operate_resources(session_factory, alice, cid)
+    r = await client.get(f"/connections/{cid}/aws/operate-values", headers=alice.headers)
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "services": ["arn:aws:ecs:us-east-2:881050425883:service/checkout/*"],
+        "pass_roles": ["arn:aws:iam::881050425883:role/checkout-api-task-execution"],
+        "functions": ["arn:aws:lambda:us-east-2:881050425883:function:checkout-url"],
+        "secrets": ["arn:aws:secretsmanager:us-east-2:881050425883:secret:checkout/db-*"],
+        "instances": [],
+        "discovered": False,
+    }
+
+
+async def test_verify_refuses_an_operate_role_that_reaches_nothing_operate_resources(
+    client: httpx.AsyncClient,
+    alice: Member,
+    sessions: FakeSessions,
+    session_factory: SessionFactory,
+) -> None:
+    start = await _start(client, alice, "observe")
+    cid = start["connection_id"]
+    await client.post(
+        "/connections/aws/complete",
+        json={"connection_id": cid, "role_arn": ROLE},
+        headers=alice.headers,
+    )
+    await _operate_resources(session_factory, alice, cid)
+    sessions.denied = {"ecs", "lambda"}  # the stack still lists the placeholders
+    refused = await client.post(
+        f"/connections/{cid}/aws/operate", json={"enabled": True}, headers=alice.headers
+    )
+    assert refused.status_code == 422
+    assert (
+        "may not act on any service Groundcrew found (checkout/checkout-api, checkout-url)"
+        in (refused.json()["detail"])
+    )
+    sessions.denied = {"lambda"}  # some reachable is enough
+    on = await client.post(
+        f"/connections/{cid}/aws/operate", json={"enabled": True}, headers=alice.headers
+    )
+    assert on.status_code == 200, on.text

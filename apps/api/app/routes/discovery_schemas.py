@@ -224,6 +224,19 @@ class AwsOperateIn(BaseModel):
     enabled: bool
 
 
+class AwsOperateValuesOut(BaseModel):
+    """What to put in the groundcrew-read-only stack's Operate* parameters, from the
+    resources Groundcrew discovered in this account. An empty list: leave that parameter at its
+    default (it matches nothing). Groundcrew's own resources are never suggested."""
+
+    services: list[str]
+    pass_roles: list[str]
+    functions: list[str]
+    secrets: list[str]
+    instances: list[str]
+    discovered: bool = Field(description="False until a discovery of this account has run.")
+
+
 class K8sOperateIn(BaseModel):
     """Turn approved emergency fixes (rollout undo, restart) on or off for a cluster."""
 

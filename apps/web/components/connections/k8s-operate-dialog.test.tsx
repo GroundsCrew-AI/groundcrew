@@ -19,7 +19,7 @@ describe("K8sOperateDialog", () => {
   it("says which rights to grant and verifies them", async () => {
     const conn = connection({ kind: "k8s", capabilities: ["observe"] });
     render(<K8sOperateDialog connection={conn} open onOpenChange={vi.fn()} />);
-    expect(screen.getByText("kubectl apply -f infra/k8s-operate-rbac.yaml")).toBeInTheDocument();
+    expect(screen.getByText(`kubectl apply -f ${window.location.origin}/k8s-operate-rbac.yaml`)).toBeInTheDocument();
     expect(screen.getByText(/kubectl rollout undo/)).toBeInTheDocument();
     expect(screen.getByText(/only after a person approves each fix/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Verify" }));

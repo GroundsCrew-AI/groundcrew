@@ -22,9 +22,11 @@ from app import deletion, quotas
 from app.accounts import NotFoundError, member_workspace, require_owner
 from app.audit import record
 from app.config import Settings, get_settings
-from app.connectors import github_claims
+from app.connectors import aws_operate, github_claims
 from app.connectors import kubernetes as kube
 from app.connectors.aws import (
+    AWS_OPERATE_OPERATIONS,
+    OPERATE_SESSION_NAME,
     AwsError,
     connection_regions,
     get_sessions,
@@ -42,6 +44,7 @@ from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.discovery_schemas import (
     AwsCompleteIn,
     AwsOperateIn,
+    AwsOperateValuesOut,
     AwsRegionsIn,
     AwsStartIn,
     AwsStartOut,
@@ -408,6 +411,19 @@ async def aws_set_tier(
     return await _out(session, conn)
 
 
+def _operate_coverage(
+    account: str, external_id: str, targets: list[Resource]
+) -> tuple[list[str], list[str]]:
+    """Which discovered services and functions the operate role can reach (read calls only)."""
+    session = get_sessions().assume(
+        operate_role_arn(account),
+        external_id,
+        operations=AWS_OPERATE_OPERATIONS,
+        session_name=OPERATE_SESSION_NAME,
+    )
+    return aws_operate.unreachable(session, targets)
+
+
 def _verify_operate_role(account: str, external_id: str) -> str:
     """The groundcrew-operate role, verified like the read-only one (ExternalId required)."""
     role_arn = operate_role_arn(account)
@@ -459,13 +475,27 @@ async def aws_set_operate(
     if conn.kind != "aws" or conn.status != "connected":
         raise _unprocessable("Only a connected AWS account can run emergency fixes.")
     account, external_id = str(conn.config["account_id"]), str(conn.config["external_id"])
+    targets = aws_operate.probe_targets(await _aws_resources(session, conn))
     await session.commit()  # no transaction open during the STS calls
     role = None
     if body.enabled:
         try:
             role = await asyncio.to_thread(_verify_operate_role, account, external_id)
+            reachable, refused = (
+                await asyncio.to_thread(_operate_coverage, account, external_id, targets)
+                if targets
+                else ([], [])
+            )
         except AwsError as exc:
             raise _unprocessable(str(exc)) from None
+        if refused and not reachable:
+            # The stack's lists name nothing Groundcrew found: usually the placeholders.
+            raise _unprocessable(
+                "The emergency-fix role works, but it may not act on any service Groundcrew "
+                f"found ({', '.join(refused[:6])}). Update the groundcrew-read-only stack with "
+                "the values shown in this dialog (OperateServiceArns, OperatePassRoleArns), "
+                "then click Verify again."
+            )
     else:
         get_sessions().forget(operate_role_arn(account), external_id)
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
@@ -473,6 +503,39 @@ async def aws_set_operate(
     await _audit(session, user, conn, "operate_changed", ip)
     await session.commit()
     return await _out(session, conn)
+
+
+async def _aws_resources(session: AsyncSession, conn: Connection) -> list[Resource]:
+    return list(
+        await session.scalars(
+            select(Resource).where(
+                Resource.connection_id == conn.id,
+                Resource.type.in_(aws_operate.TYPES),
+                Resource.stale.is_(False),
+            )
+        )
+    )
+
+
+@router.get("/{connection_id}/aws/operate-values")
+async def aws_operate_values(
+    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> AwsOperateValuesOut:
+    """The Operate* stack parameters for this account, from what discovery found: one
+    wildcard per ECS cluster, the services' roles, Lambda functions, secrets, and instances.
+    Groundcrew's own resources are left out."""
+    conn = await member_connection(session, user, connection_id)
+    if conn.kind != "aws":
+        raise _unprocessable("Only an AWS connection has emergency-fix settings.")
+    values = aws_operate.suggested_values(await _aws_resources(session, conn))
+    return AwsOperateValuesOut(
+        services=values.services,
+        pass_roles=values.pass_roles,
+        functions=values.functions,
+        secrets=values.secrets,
+        instances=values.instances,
+        discovered=bool(conn.last_discovery),
+    )
 
 
 async def _k8s_workload_namespaces(session: AsyncSession, conn: Connection) -> list[str]:

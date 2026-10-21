@@ -192,6 +192,11 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         lambda t: f"/connections/{t.aws}/aws/regions",
         lambda t: {"regions": ["us-east-2"]},
     ),
+    ("GET", "/connections/{connection_id}/aws/operate-values"): (
+        "GET",
+        lambda t: f"/connections/{t.aws}/aws/operate-values",
+        _none,
+    ),
     ("POST", "/connections/{connection_id}/aws/operate"): (
         "POST",
         lambda t: f"/connections/{t.aws}/aws/operate",

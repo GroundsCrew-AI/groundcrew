@@ -640,6 +640,61 @@
         "title": "AwsOperateIn",
         "type": "object"
       },
+      "AwsOperateValuesOut": {
+        "description": "What to put in the groundcrew-read-only stack's Operate* parameters, from the\nresources Groundcrew discovered in this account. An empty list: leave that parameter at its\ndefault (it matches nothing). Groundcrew's own resources are never suggested.",
+        "properties": {
+          "discovered": {
+            "description": "False until a discovery of this account has run.",
+            "title": "Discovered",
+            "type": "boolean"
+          },
+          "functions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Functions",
+            "type": "array"
+          },
+          "instances": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Instances",
+            "type": "array"
+          },
+          "pass_roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pass Roles",
+            "type": "array"
+          },
+          "secrets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Secrets",
+            "type": "array"
+          },
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "services",
+          "pass_roles",
+          "functions",
+          "secrets",
+          "instances",
+          "discovered"
+        ],
+        "title": "AwsOperateValuesOut",
+        "type": "object"
+      },
       "AwsRegionsIn": {
         "description": "The regions to discover, watch, and act in for one AWS account. Empty: the platform\ndefault (DISCOVERY_REGIONS).",
         "properties": {
@@ -10846,6 +10901,66 @@
           }
         },
         "summary": "Aws Set Operate",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/aws/operate-values": {
+      "get": {
+        "description": "The Operate* stack parameters for this account, from what discovery found: one\nwildcard per ECS cluster, the services' roles, Lambda functions, secrets, and instances.\nGroundcrew's own resources are left out.",
+        "operationId": "aws_operate_values_connections__connection_id__aws_operate_values_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AwsOperateValuesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Aws Operate Values",
         "tags": [
           "connections"
         ]

@@ -553,6 +553,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/aws/operate-values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Aws Operate Values
+         * @description The Operate* stack parameters for this account, from what discovery found: one
+         *     wildcard per ECS cluster, the services' roles, Lambda functions, secrets, and instances.
+         *     Groundcrew's own resources are left out.
+         */
+        get: operations["aws_operate_values_connections__connection_id__aws_operate_values_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/aws/regions": {
         parameters: {
             query?: never;
@@ -1630,6 +1652,29 @@ export interface components {
         AwsOperateIn: {
             /** Enabled */
             enabled: boolean;
+        };
+        /**
+         * AwsOperateValuesOut
+         * @description What to put in the groundcrew-read-only stack's Operate* parameters, from the
+         *     resources Groundcrew discovered in this account. An empty list: leave that parameter at its
+         *     default (it matches nothing). Groundcrew's own resources are never suggested.
+         */
+        AwsOperateValuesOut: {
+            /**
+             * Discovered
+             * @description False until a discovery of this account has run.
+             */
+            discovered: boolean;
+            /** Functions */
+            functions: string[];
+            /** Instances */
+            instances: string[];
+            /** Pass Roles */
+            pass_roles: string[];
+            /** Secrets */
+            secrets: string[];
+            /** Services */
+            services: string[];
         };
         /**
          * AwsRegionsIn
@@ -5659,6 +5704,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_operate_values_connections__connection_id__aws_operate_values_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AwsOperateValuesOut"];
                 };
             };
             /** @description Validation Error */

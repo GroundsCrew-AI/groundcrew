@@ -387,6 +387,22 @@ export function useResource(resourceId: string | null) {
 
 /** The CloudFormation template, downloaded through the proxy (it needs the session). */
 /** The connect template's S3 URL (null when the server has none) for updating a stack. */
+export type AwsOperateValues = Schemas["AwsOperateValuesOut"];
+
+/** The Operate* stack parameters for an AWS connection, from what discovery found. */
+export function useAwsOperateValues(connectionId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["aws-operate-values", connectionId],
+    enabled,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/connections/{connection_id}/aws/operate-values", {
+          params: { path: { connection_id: connectionId } },
+        }),
+      ),
+  });
+}
+
 export function useAwsTemplateUrl(enabled = true) {
   return useQuery({
     queryKey: ["aws-template-url"],
