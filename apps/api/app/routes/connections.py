@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import quotas
 from app.accounts import NotFoundError, member_workspace, require_owner
 from app.audit import record
 from app.config import Settings, get_settings
@@ -239,6 +240,7 @@ async def aws_start(
     region = settings.discovery_regions[0]
     created = conn is None
     if conn is None:
+        await quotas.check_can_add_connection(session, body.workspace_id, settings)
         conn = Connection(
             workspace_id=body.workspace_id,
             kind="aws",
@@ -741,7 +743,11 @@ async def github_installations(
 
 @router.post("/github")
 async def github_link(
-    body: GitHubLinkIn, user: CurrentUser, session: SessionDep, ip: ClientIp
+    body: GitHubLinkIn,
+    user: CurrentUser,
+    session: SessionDep,
+    ip: ClientIp,
+    settings: SettingsDep,
 ) -> ConnectionOut:
     """Link repositories of one installation to the workspace (replaces that connection's
     repo list). Only repositories the installation can see are accepted."""
@@ -771,6 +777,7 @@ async def github_link(
         )
     )
     if conn is None:
+        await quotas.check_can_add_connection(session, body.workspace_id, settings)
         conn = Connection(workspace_id=body.workspace_id, kind="github", name=f"GitHub {owner}")
         session.add(conn)
     conn.config = {"installation_id": body.installation_id, "account": owner, "repos": wanted}
@@ -793,6 +800,7 @@ async def vercel_connect(
 ) -> ConnectionOut:
     """Check the token (team and projects are readable), then store it encrypted."""
     await _check_owner(session, user, body.workspace_id)
+    await quotas.check_can_add_connection(session, body.workspace_id, settings)
     token = body.token.strip()
     team_id = (body.team_id or "").strip() or None
     await session.commit()
@@ -850,10 +858,12 @@ async def azure_connect(
     user: CurrentUser,
     session: SessionDep,
     ip: ClientIp,
+    settings: SettingsDep,
 ) -> ConnectionOut:
     """Preview: stores the service principal (secret encrypted). Live discovery is not built
     yet (TODO(azure-live)); the connection shows as Preview."""
     await _check_owner(session, user, body.workspace_id)
+    await quotas.check_can_add_connection(session, body.workspace_id, settings)
     conn = Connection(
         workspace_id=body.workspace_id,
         kind="azure",
@@ -879,11 +889,13 @@ async def k8s_connect(
     user: CurrentUser,
     session: SessionDep,
     ip: ClientIp,
+    settings: SettingsDep,
 ) -> ConnectionOut:
     """Verifies the kubeconfig by listing namespaces with it, then stores it encrypted and
     keeps the cluster name, server, and namespace count as config. Nothing is stored when the
     cluster cannot be read."""
     await _check_owner(session, user, body.workspace_id)
+    await quotas.check_can_add_connection(session, body.workspace_id, settings)
     try:
         kube.check_kubeconfig(body.kubeconfig)
         summary = kubeconfig_summary(body.kubeconfig)
@@ -917,9 +929,13 @@ async def k8s_connect(
 
 @router.post("/{connection_id}/discover", status_code=status.HTTP_202_ACCEPTED)
 async def discover_connection(
-    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    connection_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
 ) -> RunCreated:
     conn = await member_connection(session, user, connection_id, minimum=WorkspaceRole.approver)
+    await quotas.check_can_start_run(session, conn.workspace_id, settings)
     if conn.status != "connected":
         raise HTTPException(status.HTTP_409_CONFLICT, "Finish connecting before running discovery.")
     run = await start_discovery(session, conn.workspace_id, connection=conn)

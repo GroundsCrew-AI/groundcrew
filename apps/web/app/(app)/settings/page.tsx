@@ -5,6 +5,7 @@ import { type ReactNode, useState } from "react";
 
 import { AccountSection } from "@/components/settings/account-section";
 import { AuditSection } from "@/components/settings/audit-section";
+import { UsageSection } from "@/components/settings/usage-section";
 import { LeaveWorkspace } from "@/components/settings/leave-workspace";
 import { MembersSection } from "@/components/settings/members-section";
 import { NotificationsSection } from "@/components/settings/notifications-section";
@@ -119,6 +120,14 @@ export default function SettingsPage() {
             canEdit={owner}
             platformCap={platformCap}
           />
+        </SettingsSection>
+
+        <SettingsSection
+          id="settings-usage"
+          title="Usage"
+          description="What this workspace used of its limits. When one is reached, Groundcrew says which and when it resets."
+        >
+          <UsageSection workspaceId={data.id} />
         </SettingsSection>
 
         <SettingsSection

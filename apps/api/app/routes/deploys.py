@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 
-from app import queue
+from app import queue, quotas
 from app.accounts import NotFoundError, member_workspace
 from app.audit import record
 from app.db.models import (
@@ -104,6 +104,7 @@ async def create_deploy(
     Nothing touches infrastructure before a workspace member approves the rendered plan.
     """
     await _check_member(session, user, body.workspace_id, WorkspaceRole.approver)
+    await quotas.check_can_start_run(session, body.workspace_id, settings)
     if isinstance(body.repo, FixtureSource):
         if settings.app_env != "dev":
             raise HTTPException(status.HTTP_409_CONFLICT, "Fixtures are for local dev only.")

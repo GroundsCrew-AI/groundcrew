@@ -590,6 +590,19 @@ class LlmWorkspaceUsage(Base):
     )
 
 
+class WorkspaceQuotaUsage(Base):
+    """What a workspace used of a daily quota (app.quotas): `kind` is tavily or builds."""
+
+    __tablename__ = "workspace_quota_usage"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
 class LlmUsage(Base):
     """Token Factory spend per UTC day, across all runs. Backs the daily and total USD caps."""
 

@@ -7,10 +7,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 
+from app import quotas
 from app.accounts import NotFoundError, member_workspace
 from app.db.models import Edge, Resource, Run, RunStatus, Workspace, WorkspaceRole
 from app.discovery.engine import AGENT, start_discovery
-from app.routes.deps import CurrentUser, SessionDep
+from app.routes.deps import CurrentUser, SessionDep, SettingsDep
 from app.routes.discovery_schemas import (
     DeployOut,
     EdgeOut,
@@ -40,11 +41,15 @@ async def _check_member(
 
 @router.post("/workspaces/{workspace_id}/discover", status_code=status.HTTP_202_ACCEPTED)
 async def discover_workspace(
-    workspace_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    workspace_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
 ) -> RunCreated:
     """Discover every connection, rebuild the graph, and write the system summary. Runs as a
     normal run: open /runs/{id} to watch it live."""
     await _check_member(session, user, workspace_id, WorkspaceRole.approver)
+    await quotas.check_can_start_run(session, workspace_id, settings)
     active = await session.scalar(
         select(Run.id).where(
             Run.workspace_id == workspace_id,

@@ -3,12 +3,15 @@
 import base64
 import binascii
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select
 
+from app import quotas
 from app.accounts import (
     NotFoundError,
     SignInError,
@@ -252,4 +255,67 @@ async def summary(
         total_usd_cap=None,
         pending_permanent_fixes=int(pending_fixes or 0),
         open_incidents=int(open_incidents or 0),
+    )
+
+
+class QuotaOut(BaseModel):
+    # tavily, builds, concurrent_runs, connections
+    name: str
+    label: str
+    used: int
+    limit: int
+    # Counted per UTC day (resets at `resets_at`); otherwise a live count.
+    daily: bool
+
+
+class UsageOut(BaseModel):
+    """What this workspace used of its limits, for Settings."""
+
+    day: date
+    resets_at: datetime
+    usd_today: float
+    daily_usd_cap: float
+    # Groundcrew's own daily or total model spend limit is reached for every workspace.
+    platform_paused: bool
+    max_build_seconds: int
+    quotas: list[QuotaOut]
+
+
+_QUOTA_LABELS = {
+    "tavily": "Web research calls today",
+    "builds": "Deploy builds today",
+    "concurrent_runs": "Runs going at once",
+    "connections": "Connections",
+}
+
+
+@router.get("/workspaces/{workspace_id}/usage")
+async def workspace_usage(
+    workspace_id: uuid.UUID, user: CurrentUser, session: SessionDep, settings: SettingsDep
+) -> UsageOut:
+    try:
+        workspace, _ = await member_workspace(session, user, workspace_id)
+    except NotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.") from None
+    today_all, total_all = await usage_totals(session)
+    spent = await workspace_usage_today(session, workspace_id)
+    used = await quotas.usage(session, workspace, settings)
+    return UsageOut(
+        day=quotas.today(),
+        resets_at=quotas.next_reset(),
+        usd_today=float(spent.usd),
+        daily_usd_cap=float(await workspace_daily_cap(session, workspace_id, settings)),
+        platform_paused=today_all.usd >= Decimal(str(settings.llm_daily_usd_cap))
+        or total_all >= Decimal(str(settings.llm_total_usd_cap)),
+        max_build_seconds=int(settings.build_timeout_seconds),
+        quotas=[
+            QuotaOut(
+                name=name,
+                label=_QUOTA_LABELS[name],
+                used=q.used,
+                limit=q.limit,
+                daily=name in ("tavily", "builds"),
+            )
+            for name, q in used.items()
+        ],
     )

@@ -4,6 +4,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -20,6 +21,7 @@ from app.accounts import ForbiddenError
 from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
+from app.quotas import QuotaExceededError
 from app.routes import (
     approvals,
     auth,
@@ -116,6 +118,26 @@ _SECRET_INPUT_FIELDS = frozenset({"env", "password", "current_password", "new_pa
 async def forbidden(_request: Request, exc: ForbiddenError) -> JSONResponse:
     """Owner-only actions by a member: 403 with the reason (they can see the workspace)."""
     return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(QuotaExceededError)
+async def quota_exceeded(_request: Request, exc: QuotaExceededError) -> JSONResponse:
+    """A workspace quota: 429 with which one, its limit, and when it resets (if daily)."""
+    headers = {}
+    if exc.resets_at is not None:
+        wait = max(1, int((exc.resets_at - datetime.now(UTC)).total_seconds()))
+        headers["Retry-After"] = str(wait)
+    return JSONResponse(
+        status_code=429,
+        headers=headers,
+        content={
+            "detail": str(exc),
+            "code": "quota_exceeded",
+            "quota": exc.quota,
+            "limit": exc.limit,
+            "resets_at": exc.resets_at.isoformat() if exc.resets_at else None,
+        },
+    )
 
 
 @app.exception_handler(auth.AuthFlowError)
