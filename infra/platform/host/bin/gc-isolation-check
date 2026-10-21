@@ -22,6 +22,15 @@ info=$(as_build docker info --format '{{.DefaultRuntime}} {{range .SecurityOptio
 case "$info" in runsc*name=rootless*) echo "ok   build daemon is rootless, default runtime runsc" ;;
   *) echo "FAIL build daemon: $info"; fail=1 ;; esac
 
+# The worker builds through this daemon; it must reach the socket as its own user.
+if docker inspect groundcrew-worker-1 >/dev/null 2>&1; then
+  if out=$(docker exec groundcrew-worker-1 docker version --format '{{.Server.Version}}' 2>&1); then
+    echo "ok   the worker reaches the build daemon ($out)"
+  else
+    echo "FAIL the worker cannot use the build daemon: $out"; fail=1
+  fi
+fi
+
 targets=("169.254.169.254:80" "$private:22" "127.0.0.1:22" "172.17.0.1:22")
 [ -n "$public" ] && targets+=("$public:443")
 stand_in=""

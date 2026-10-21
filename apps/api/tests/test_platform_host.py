@@ -69,6 +69,11 @@ def test_the_worker_builds_only_through_the_rootless_daemon() -> None:
     assert worker["environment"]["DOCKER_HOST"] == "unix:///run/gcbuild/docker.sock"
     assert "/run/user/1500/docker.sock:/run/gcbuild/docker.sock" in worker["volumes"]
     assert worker["group_add"] == ["1500"]
+    # The worker reaches the socket through that group. Rootless dockerd gives its socket the
+    # group named here, inside its user namespace, where root is the host's gcbuild (1500);
+    # its default, "docker", lands on a sub-gid the worker is not in (EACCES on connect).
+    daemon = json.loads((HOST / "files" / "rootless-daemon.json").read_text())
+    assert daemon["group"] == "root"
 
 
 def test_the_build_daemon_is_rootless_gvisor_with_its_own_limits() -> None:

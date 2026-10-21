@@ -44,6 +44,9 @@ if [ ! -f "$HOME_/.config/systemd/user/docker.service" ]; then
 fi
 rm -f "$HOME_/.config/systemd/user/docker.service.d/runsc.conf"
 install -d -o gcbuild -g gcbuild "$HOME_/.config/docker"
+# daemon.json sets "group": "root": in the daemon's user namespace that is the host's gcbuild
+# group, which the worker container has (group_add), so the worker can use the socket. The
+# default, "docker", maps to a sub-gid nobody else is in.
 install -m 0644 -o gcbuild -g gcbuild "$HERE/files/rootless-daemon.json" "$HOME_/.config/docker/daemon.json"
 as_build systemctl --user daemon-reload
 as_build systemctl --user enable docker >/dev/null 2>&1

@@ -1,5 +1,6 @@
 {
   "data-root": "/var/lib/gcbuild/docker",
+  "group": "root",
   "runtimes": {
     "runsc": { "path": "/usr/bin/runsc", "runtimeArgs": ["--ignore-cgroups"] }
   },
