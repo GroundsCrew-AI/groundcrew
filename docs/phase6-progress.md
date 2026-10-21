@@ -8,8 +8,8 @@ Brief: `docs/prompts/phase6.md`. Plan: `docs/phase6-plan.md`. Re-read both after
 |---|---|---|
 | P6.1 Plan | done 2026-10-21 | draft PR #56 (`phase6-plan`) |
 | P6.2 Code hardening | done 2026-10-21 | draft PR #57 (`phase6-hardening`, stacked on #56) |
-| P6.3 Email sign-in, production GitHub App, AWS connect by upload | done 2026-10-22, waiting for review | draft PR (`phase6-email-github`, stacked on #57) |
-| P6.4 Terraform | not started | |
+| P6.3 Email sign-in, production GitHub App, AWS connect by upload | done 2026-10-22 | draft PR #58 (`phase6-email-github`, stacked on #57) |
+| P6.4 Terraform | applied 2026-10-22, waiting for review | draft PR (`phase6-terraform`, stacked on #58) |
 | P6.5 Host setup | not started (starts with the build isolation spike, plan section 6.5) | |
 | P6.6 Release pipeline | not started | |
 | P6.7 First production deploy | not started | |
@@ -146,12 +146,41 @@ Open issues for you:
 - Pick the email provider (Resend recommended; Gmail cannot sign mail as groundkrew.com).
 - Create the production GitHub App with the settings in `docs/self-hosting.md` when the server exists.
 
+## P6.4 Terraform (2026-10-22)
+
+Done:
+- `infra/platform/` (see its README). Read-only checks before the plan: account 881050425883 through
+  the `groundcrew-demo` profile, no existing `groundcrew-platform` role or instance profile, no state at
+  the key, no Elastic IPs, t3.large in every zone.
+- Plan reviewed (10 to add, 0 change, 0 destroy), applied after the OK in chat on 2026-10-22:
+
+| | |
+| --- | --- |
+| Instance | `i-0c134cf1e7025c3a8`, t3.large, us-east-2a, Ubuntu 24.04 (`ami-02ad619be5bc165df`) |
+| Elastic IP | **3.19.1.100** (`eipalloc-033ed459504e18ff3`) |
+| Security group | `sg-0ac60553eac39b18b`: 80, 443 from anywhere; 22 from 119.73.108.213/32 |
+| Role | `arn:aws:iam::881050425883:role/groundcrew-platform` (instance profile of the same name) |
+| State | `s3://groundcrew-checkout-tfstate-881050425883/groundcrew/platform.tfstate` |
+
+- `infra/aws-connect.yaml` defaults `GroundcrewPrincipalArn` to the role; `docs/self-hosting.md` says how
+  existing stacks move over. `tests/test_platform_terraform.py` pins the security settings.
+
+Checked on the host after first boot (SSH with ~/.ssh/groundkrew): Ubuntu 24.04.5, ufw active
+(80, 443 anywhere; 22 from 119.73.108.213 only), sshd key-only with no root login and
+`AllowUsers ubuntu`, fail2ban's sshd jail on, unattended-upgrades on with 04:00 reboots, 4 GiB swap,
+77 GB root, only sshd listening publicly; IMDSv1 refused (401), IMDSv2 gives the
+`groundcrew-platform` role. From outside only 22 answers.
+
+DNS records to add at the registrar (TTL 300): `groundkrew.com A 3.19.1.100`,
+`www.groundkrew.com A 3.19.1.100`, `api.groundkrew.com A 3.19.1.100`, and recommended
+`groundkrew.com CAA 0 issue "letsencrypt.org"`.
+
 ## Cost
 
 | Item | Monthly |
 |---|---|
 | Planned run rate (t3.large unlimited, 80 GiB gp3, Elastic IP) | about $71, up to about $81 with many builds |
-| Spent so far in Phase 6 | $0 |
+| Spent so far in Phase 6 | the platform host runs from 2026-10-22: about $2.35 a day (instance, volume, IPv4) |
 
 ## How to resume
 
