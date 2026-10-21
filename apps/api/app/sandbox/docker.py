@@ -28,6 +28,8 @@ from app.sandbox.base import (
     SmokeCheck,
     SmokeEnv,
     SmokeResult,
+    daemon_unreachable,
+    unavailable_text,
 )
 from app.sandbox.logs import Scrubber, error_lines, failing_step, tail
 from app.sandbox.runner import CommandRunner, run_docker
@@ -99,6 +101,16 @@ class DockerSandbox:
             timeout=self.settings.build_timeout_seconds,
         )
         log = result.output
+        if not result.ok and daemon_unreachable(log):
+            problem = unavailable_text(log)
+            return BuildResult(
+                ok=False,
+                log_tail=tail(log, LOG_TAIL_CHARS),
+                image_ref=None,
+                duration_ms=_ms(start),
+                error_lines=[problem],
+                unavailable=True,
+            )
         if result.timed_out:
             limit = self.settings.build_timeout_seconds
             log += f"\n[groundcrew] build timed out after {limit:.0f}s"

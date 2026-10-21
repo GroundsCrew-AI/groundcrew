@@ -111,7 +111,7 @@ class BuildOutcome:
     attempts: list[BuildAttempt] = field(default_factory=list)
     # A build passed after Builder changed the Dockerfile because of a failure.
     automatic_fix: bool = False
-    stop_reason: Literal["no_progress", "max_attempts"] | None = None
+    stop_reason: Literal["no_progress", "max_attempts", "unavailable"] | None = None
     error: str | None = None
     port: int = 8000
 
@@ -342,6 +342,16 @@ class Builder:
                     port=app_port(spec, current),
                 )
 
+            if built.unavailable:
+                return self._stopped(
+                    attempts,
+                    current,
+                    "unavailable",
+                    spec,
+                    built.error_lines[0]
+                    if built.error_lines
+                    else "Groundcrew's build service is not available.",
+                )
             signatures.append(signature(built))
             earlier.append(
                 f"attempt {number} ({fix_kinds[-1] or source}): failed at "
@@ -405,7 +415,7 @@ class Builder:
     def _stopped(
         attempts: list[BuildAttempt],
         dockerfile: str,
-        reason: Literal["no_progress", "max_attempts"],
+        reason: Literal["no_progress", "max_attempts", "unavailable"],
         spec: AppSpec,
         error: str,
     ) -> BuildOutcome:

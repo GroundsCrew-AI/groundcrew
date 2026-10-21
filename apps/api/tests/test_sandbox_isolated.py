@@ -98,7 +98,9 @@ async def test_a_sandbox_that_cannot_start_is_a_failed_build(tmp_path: Path) -> 
         }
     )
     result = await _sandbox(fake).build(tmp_path, tmp_path / "Dockerfile", "app:4", run_id=RUN)
-    assert not result.ok and "build sandbox did not start" in result.log_tail
+    assert not result.ok and result.unavailable
+    assert "build sandbox did not start" in result.log_tail
+    assert result.error_lines[0].startswith("Groundcrew's build service is not available")
 
 
 def _smoke_docker(codes: list[str]) -> FakeDocker:

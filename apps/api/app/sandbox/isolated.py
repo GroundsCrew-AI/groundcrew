@@ -29,7 +29,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from app.config import Settings
-from app.sandbox.base import LABEL, LOG_TAIL_CHARS, RUN_LABEL, BuildResult, SmokeCheck
+from app.sandbox.base import (
+    LABEL,
+    LOG_TAIL_CHARS,
+    RUN_LABEL,
+    BuildResult,
+    SmokeCheck,
+    unavailable_text,
+)
 from app.sandbox.docker import PLATFORM, DockerSandbox, Getter, _check_run_id, _ms
 from app.sandbox.logs import Scrubber, error_lines, failing_step, tail
 from app.sandbox.runner import CommandRunner, run_docker
@@ -117,12 +124,15 @@ class IsolatedSandbox(DockerSandbox):
         start = time.monotonic()
         problem = await self._ensure_builder(run_id)
         if problem is not None:
+            # The build daemon or this run's BuildKit container: nothing about the Dockerfile.
+            problem = unavailable_text(problem)
             return BuildResult(
                 ok=False,
                 log_tail=problem,
                 image_ref=None,
                 duration_ms=_ms(start),
                 error_lines=[problem],
+                unavailable=True,
             )
         limit = self.settings.build_timeout_seconds
         result = await self._docker(

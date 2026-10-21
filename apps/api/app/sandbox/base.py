@@ -2,6 +2,7 @@
 build backend (dind locally, a separate build host or Nebius later) changes configuration,
 not code (docs/phase4-infra.md, Sandbox)."""
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -31,6 +32,28 @@ class BuildResult:
     failing_step: str | None = None
     error_lines: list[str] = field(default_factory=list)
     timed_out: bool = False
+    # The build service itself failed (its daemon did not answer or refused the connection),
+    # not the Dockerfile: no Dockerfile fix can help, so Builder stops at once.
+    unavailable: bool = False
+
+
+# What the Docker CLI prints when it cannot use the daemon at all.
+_DAEMON_UNREACHABLE = re.compile(
+    r"Cannot connect to the Docker daemon|permission denied while trying to connect to the "
+    r"docker (?:API|daemon)|error during connect|Is the docker daemon running",
+    re.IGNORECASE,
+)
+
+
+def daemon_unreachable(output: str) -> bool:
+    return bool(_DAEMON_UNREACHABLE.search(output))
+
+
+def unavailable_text(detail: str) -> str:
+    return (
+        "Groundcrew's build service is not available right now, so nothing was built. This is "
+        f"on Groundcrew's side, not in your repository; try again later. ({detail.strip()[-300:]})"
+    )
 
 
 @dataclass(frozen=True)

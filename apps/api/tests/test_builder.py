@@ -14,7 +14,16 @@ from app.config import Settings
 from app.llm.budget import MemoryUsageStore, RunBudget
 from app.llm.client import LLMError, LLMResult
 from app.pipeline.events import BuildAttempt
-from app.sandbox.base import BuildResult, PushResult, PushTarget, SmokeCheck, SmokeEnv, SmokeResult
+from app.sandbox.base import (
+    BuildResult,
+    PushResult,
+    PushTarget,
+    SmokeCheck,
+    SmokeEnv,
+    SmokeResult,
+    daemon_unreachable,
+    unavailable_text,
+)
 from app.sandbox.logs import error_lines, failing_step
 from tests.fakes import FakeLLM, reply
 
@@ -396,3 +405,30 @@ def test_model_dockerfiles_are_cleaned() -> None:
         'FROM python:3.12-slim\nCMD ["gunicorn"]\n'
     )
     assert clean_dockerfile("FROM a\nRUN echo '\\n'\n") == "FROM a\nRUN echo '\\n'\n"
+
+
+async def test_a_build_service_outage_stops_at_once_without_a_fix(tmp_path: Path) -> None:
+    """No Dockerfile fix can help when the build daemon refuses the connection."""
+    settings = _settings()
+    root, spec = _app(tmp_path)
+    llm = FakeLLM(write(), settings=settings)
+    down = unavailable_text(
+        "permission denied while trying to connect to the docker API at unix:///run/x.sock"
+    )
+    sandbox = ScriptedSandbox(
+        BuildResult(False, down, None, 5, error_lines=[down], unavailable=True)
+    )
+    outcome, attempts, _, _ = await _run(
+        Builder(llm, sandbox, sleep=no_sleep), root, spec, settings
+    )
+    assert not outcome.ok and outcome.stop_reason == "unavailable" and len(attempts) == 1
+    assert len(llm.calls) == 1  # the first Dockerfile only, no fix_build
+    assert outcome.error == down
+
+
+def test_daemon_connection_errors_are_recognized() -> None:
+    assert daemon_unreachable(
+        "permission denied while trying to connect to the docker API at unix:///run/x.sock"
+    )
+    assert daemon_unreachable("Cannot connect to the Docker daemon at unix:///var/run/docker.sock.")
+    assert not daemon_unreachable("ERROR: failed to solve: process did not complete: exit code 1")
