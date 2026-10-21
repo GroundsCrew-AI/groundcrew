@@ -159,14 +159,17 @@ class UserIdentity(TimestampMixin, Base):
 class AuthTokenPurpose(enum.StrEnum):
     verify_email = "verify_email"
     reset_password = "reset_password"  # noqa: S105 - a purpose name, not a password
+    # An email sign-in link; for an address with no account yet, `user_id` is empty.
+    sign_in = "sign_in"
 
 
 class AuthToken(TimestampMixin, Base):
     """A single-use link token. Only its SHA-256 is stored; the link holds the token."""
 
     __tablename__ = "auth_tokens"
+    __table_args__ = (Index("ix_auth_tokens_email_purpose", "email", "purpose"),)
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     purpose: Mapped[str] = mapped_column(String(20))

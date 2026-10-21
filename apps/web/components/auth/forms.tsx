@@ -6,9 +6,11 @@ import { type ReactNode, useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
+  emailLinkAction,
   forgotPasswordAction,
   resendVerificationAction,
   resetPasswordAction,
+  signInWithEmailLink,
   signInWithPassword,
   signUpAction,
   verifyEmailAction,
@@ -294,6 +296,38 @@ export function ResetPasswordForm({ token, minLength }: { token: string; minLeng
         </FormMessage>
       )}
       <Submit pending="Saving...">Set new password</Submit>
+    </form>
+  );
+}
+
+/** "Email me a sign-in link": works for new and existing accounts alike. */
+export function EmailLinkForm({ defaultEmail, label = "Email" }: { defaultEmail?: string; label?: string }) {
+  const [state, action] = useActionState<FormState, FormData>(emailLinkAction, { email: defaultEmail });
+  if (state.done) {
+    return (
+      <CheckEmail email={state.email}>
+        We sent a sign-in link. It works once and expires in 15 minutes. Open it on this device or any other.
+      </CheckEmail>
+    );
+  }
+  return (
+    <form action={action} className="space-y-4">
+      <Field id="link-email" name="email" label={label} type="email" autoComplete="email" required defaultValue={state.email} />
+      {state.error && <FormMessage>{state.error}</FormMessage>}
+      <Submit pending="Sending...">Email me a sign-in link</Submit>
+    </form>
+  );
+}
+
+/** The page an emailed link opens: one button signs in, so a mail scanner opening the link
+ * does not use it up. */
+export function EmailLinkSignIn({ token }: { token: string }) {
+  const [state, action] = useActionState<FormState, FormData>(signInWithEmailLink, {});
+  return (
+    <form action={action} className="space-y-4">
+      <input type="hidden" name="token" value={token} />
+      {state.error && <FormMessage>{state.error}</FormMessage>}
+      <Submit pending="Signing in...">Sign in to Groundcrew</Submit>
     </form>
   );
 }
