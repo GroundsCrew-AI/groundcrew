@@ -252,7 +252,8 @@ Later the same day:
 - Release `14423f78caf4` (Groundcrew favicon, SVG icon, Apple touch icon) deployed; `13196e0a74bc` kept
   for rollback.
 
-UI pass (2026-10-22, on `phase6-deploy`, not deployed yet):
+UI pass (2026-10-22, on `phase6-deploy`): release `57f18be6afa5` live, `14423f78caf4` kept for rollback.
+All public pages and docs return 200 on https://groundkrew.com, no console errors, no horizontal scroll at 375 px.
 - Landing page rebuilt: hero with an illustrated incident and approval, works-with strip, four
   feature sections with drawn mockups, safety grid, steps, agents, FAQ, closing call to action.
   Sticky public header with a phone menu; footer with Product, Docs, Trust links.
