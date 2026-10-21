@@ -1667,6 +1667,8 @@ export interface components {
             console_url: string | null;
             /** External Id */
             external_id: string;
+            /** Parameters */
+            parameters: components["schemas"]["StackParameter"][];
             /** Principal Arn */
             principal_arn: string;
             /** Region */
@@ -1675,6 +1677,8 @@ export interface components {
             role_arn_command: string;
             /** Stack Name */
             stack_name: string;
+            /** Template Download Url */
+            template_download_url: string;
             /** Template Path */
             template_path: string;
             /**
@@ -1682,6 +1686,8 @@ export interface components {
              * @enum {string}
              */
             tier: "observe" | "deploy";
+            /** Upload Console Url */
+            upload_console_url: string;
         };
         /** AwsTemplateUrlOut */
         AwsTemplateUrlOut: {
@@ -4256,6 +4262,13 @@ export interface components {
         SignupsIn: {
             /** Paused */
             paused: boolean;
+        };
+        /** StackParameter */
+        StackParameter: {
+            /** Key */
+            key: string;
+            /** Value */
+            value: string;
         };
         /** StageFinished */
         StageFinished: {

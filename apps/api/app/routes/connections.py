@@ -61,6 +61,7 @@ from app.routes.discovery_schemas import (
     K8sDeploySettingsIn,
     K8sOperateIn,
     KubernetesConnectIn,
+    StackParameter,
     VercelConnectIn,
 )
 from app.routes.schemas import RunCreated
@@ -279,6 +280,16 @@ async def aws_start(
         stack_name=STACK_NAME,
         console_url=_console_url(settings, external_id, principal, body.tier),
         template_path="/connections/aws/template",
+        template_download_url=settings.web_origin.rstrip("/") + "/aws-connect.yaml",
+        upload_console_url=(
+            f"https://{region}.console.aws.amazon.com/cloudformation/home?region={region}"
+            "#/stacks/create"
+        ),
+        parameters=[
+            StackParameter(key="GroundcrewPrincipalArn", value=principal),
+            StackParameter(key="ExternalId", value=external_id),
+            StackParameter(key="Tier", value=body.tier),
+        ],
         cli_command=(
             f"aws cloudformation create-stack --region {region} --stack-name {STACK_NAME} "
             f"--template-body file://aws-connect.yaml --capabilities CAPABILITY_NAMED_IAM "

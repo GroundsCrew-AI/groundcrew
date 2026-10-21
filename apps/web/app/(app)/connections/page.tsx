@@ -2,10 +2,10 @@
 
 import { Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { AwsConnectDialog, openPendingTab } from "@/components/connections/aws-connect-dialog";
+import { AwsConnectDialog } from "@/components/connections/aws-connect-dialog";
 import { ConnectionRow, OWNER_ONLY_REASON } from "@/components/connections/connection-row";
 import { GitHubConnectDialog } from "@/components/connections/github-connect-dialog";
 import { RunDiscoveryButton } from "@/components/connections/run-discovery-button";
@@ -53,7 +53,6 @@ export default function ConnectionsPage() {
     if (connectParam === "github") setOpen("github");
   }, [connectParam]);
   const [awsTier, setAwsTier] = useState<AwsTier>("observe");
-  const awsTab = useRef<Window | null>(null);
   const error = workspaceError ?? connections.error;
   const items = connections.data ?? [];
   // Connections are workspace infrastructure: members see them and can refresh discovery, but
@@ -72,8 +71,6 @@ export default function ConnectionsPage() {
   }
 
   function openDialog(kind: ConnectionKind) {
-    // AWS opens CloudFormation in a new tab; the tab must open in the click itself.
-    if (kind === "aws") awsTab.current = openPendingTab();
     setOpen(kind);
   }
 
@@ -194,7 +191,7 @@ export default function ConnectionsPage() {
           </ul>
         </section>
       </PageBody>
-      <AwsConnectDialog {...dialog("aws")} tab={awsTab} tier={awsTier} />
+      <AwsConnectDialog {...dialog("aws")} tier={awsTier} />
       <GitHubConnectDialog {...dialog("github")} />
       <VercelConnectDialog {...dialog("vercel")} />
       <AzureConnectDialog {...dialog("azure")} />

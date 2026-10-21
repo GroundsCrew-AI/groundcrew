@@ -149,6 +149,18 @@ async def test_aws_start_gives_external_id_and_cli_without_template_url(
     assert body["external_id"].startswith("gc-") and body["console_url"] is None
     assert f"ParameterValue={body['external_id']}" in body["cli_command"]
     assert "--region us-east-2" in body["cli_command"]
+    assert "--template-body file://aws-connect.yaml" in body["cli_command"]
+    # Template upload works for any account: the file from the web app, and these values.
+    assert body["template_download_url"] == "http://localhost:3000/aws-connect.yaml"
+    assert body["upload_console_url"] == (
+        "https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2"
+        "#/stacks/create"
+    )
+    assert body["parameters"] == [
+        {"key": "GroundcrewPrincipalArn", "value": PRINCIPAL},
+        {"key": "ExternalId", "value": body["external_id"]},
+        {"key": "Tier", "value": "observe"},
+    ]
     # Starting again reuses the pending connection and its ExternalId.
     again = (
         await client.post(
