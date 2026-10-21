@@ -6,7 +6,8 @@
 - Live counts: runs a person started that are still queued or running, and connections.
 
 Limits come from settings (QUOTA_*), or from `workspaces.settings["quotas"]` for one workspace,
-which only a platform operator sets (`gc-admin`); workspace owners cannot raise them.
+which only a platform operator sets (`python -m app.admin_cli quota`); workspace owners cannot
+raise them.
 Model spend has its own caps (app.llm.budget).
 """
 

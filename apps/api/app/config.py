@@ -254,8 +254,8 @@ class Settings(BaseSettings):
     llm_workspace_daily_usd_cap: float | None = None
 
     # Per-workspace quotas (app.quotas). Daily counts reset at 00:00 UTC. A platform operator
-    # can set other limits for one workspace (workspaces.settings["quotas"], `gc-admin`);
-    # workspace owners cannot raise them.
+    # can set other limits for one workspace (workspaces.settings["quotas"], with
+    # `python -m app.admin_cli quota`); workspace owners cannot raise them.
     quota_tavily_per_workspace_day: int = 10
     # Runs a person starts (runs, deploys, discovery, reported incidents) that are queued or
     # running at once; the incident watcher's investigations are not held back.

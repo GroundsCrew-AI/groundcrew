@@ -393,12 +393,12 @@ is the worse failure, and the worker parses untrusted repositories.
 | `LLM_DAILY_USD_CAP` (global) | $5 | env |
 | `LLM_TOTAL_USD_CAP` (global) | your credit balance minus a margin | env |
 | `QUOTA_TAVILY_PER_WORKSPACE_DAY` | 10 | |
-| `QUOTA_CONCURRENT_RUNS_PER_WORKSPACE` | 2 | queued runs wait, they are not refused |
+| `QUOTA_CONCURRENT_RUNS_PER_WORKSPACE` | 2 | runs a person starts; the next is refused with a 429 saying so (built in P6.2; the watcher's investigations are not counted) |
 | `QUOTA_BUILDS_PER_WORKSPACE_DAY` | 10 | |
 | `QUOTA_MAX_BUILD_SECONDS` | 900 | |
 | `QUOTA_CONNECTIONS_PER_WORKSPACE` | 10 | |
 | `SIGNUPS_PER_HOUR` (global), `SIGNUPS_PER_IP_DAY` | 30, 5 | |
-| Signup switch | open | `platform_settings` row; `gc-admin signups pause|resume` on the server, and a toggle in Settings for users listed in `PLATFORM_ADMINS` (emails) |
+| Signup switch | open | `platform_settings` row; `python -m app.admin_cli signups pause|resume` on the server, and a toggle in Settings for users listed in `PLATFORM_ADMINS` (emails or GitHub logins) |
 | Per-user API limit | 120 requests a minute, 10 stream tokens a minute | in-process limiter (one API host) |
 
 Each limit returns a clear message naming the limit and when it resets (`429` with `Retry-After` for rate
