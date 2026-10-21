@@ -46,6 +46,30 @@ and give that role the same one-statement policy. Groundcrew then uses the defau
 (environment, container, or instance role), still without profiles or `~/.aws`. Set
 `GROUNDCREW_PLATFORM_PRINCIPAL_ARN` to that role's ARN.
 
+**groundkrew.com** runs this way: the instance role `groundcrew-platform`
+(`infra/platform/iam.tf`) replaces the IAM user, and
+`GROUNDCREW_PLATFORM_PRINCIPAL_ARN=arn:aws:iam::881050425883:role/groundcrew-platform`. That ARN is
+also the default of `GroundcrewPrincipalArn` in `infra/aws-connect.yaml`.
+
+**Moving existing connections to the role.** A connect stack trusts exactly one principal, so each
+existing `groundcrew-read-only` stack is updated once: CloudFormation, the stack, Update, Use current
+template (or upload the new `aws-connect.yaml`), set `GroundcrewPrincipalArn` to the role ARN above,
+keep every other parameter, Submit. Then Verify the connection in Groundcrew (Connections, the
+account, Verify) so it is checked through the new identity. With the CLI:
+
+```bash
+aws cloudformation update-stack --region <region> --stack-name groundcrew-read-only \
+  --use-previous-template --capabilities CAPABILITY_NAMED_IAM \
+  --parameters ParameterKey=GroundcrewPrincipalArn,ParameterValue=arn:aws:iam::881050425883:role/groundcrew-platform \
+    ParameterKey=ExternalId,UsePreviousValue=true ParameterKey=Tier,UsePreviousValue=true \
+    ParameterKey=EnableOperate,UsePreviousValue=true ParameterKey=OperateServiceArns,UsePreviousValue=true \
+    ParameterKey=OperateSecretArns,UsePreviousValue=true ParameterKey=OperatePassRoleArns,UsePreviousValue=true \
+    ParameterKey=OperateFunctionArns,UsePreviousValue=true ParameterKey=OperateInstanceArns,UsePreviousValue=true \
+    ParameterKey=RoleName,UsePreviousValue=true ParameterKey=CreateResourceExplorerIndex,UsePreviousValue=true
+```
+
+When no stack trusts the user any more, delete its access keys and the `groundcrew-platform` user.
+
 ## AWS: the one-click template
 
 The **Connect AWS** button opens a CloudFormation Quick-create link with the template, the stack name,
