@@ -88,18 +88,108 @@ AWS CLI command instead.
 ## GitHub App
 
 Groundcrew reads repositories through its GitHub App with short-lived installation tokens. Set
-`GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (keep the `.pem` in `secrets/`, which is git-ignored).
-`docker-compose.yml` mounts `./secrets` read-only into the API and the worker, so a relative path such as
-`secrets/groundcrew-app.pem` works on the host and in the containers. Sign-in uses the same app's OAuth
-client; see "Sign-in setup" in the README.
+`GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (keep the `.pem` in `secrets/` locally, or
+`/etc/groundcrew/github-app.pem` on the platform host). Sign-in uses the same app's OAuth client.
+
+**Which installations a workspace may use.** The app is installed on many accounts, so a
+workspace sees and links only installations an owner proved access to: Connections, GitHub,
+**Find my installations** sends them through GitHub authorization (the app's OAuth client);
+GitHub's answer to `GET /user/installations` with that one-time token lists exactly the
+installations they can reach, and the token is dropped (`app/connectors/github_claims.py`).
+Installations already used by the workspace's GitHub connections count too.
+
+**Webhooks** (`POST /github/webhook`) must be signed with `GITHUB_WEBHOOK_SECRET`; an uninstall
+stops the connections that used it, suspend and unsuspend stop and restart them, and removed
+repositories leave the connections.
+
+### The production GitHub App (create it once, separate from the development app)
+
+GitHub, your organization, Settings, Developer settings, GitHub Apps, New GitHub App:
+
+| Setting | Value |
+| --- | --- |
+| GitHub App name | `Groundcrew` (it becomes the install URL, `github.com/apps/<name>`) |
+| Homepage URL | `https://groundkrew.com` |
+| Callback URLs | `https://groundkrew.com/api/auth/callback/github` (sign-in), then add `https://groundkrew.com/connections/github/callback` (Find my installations) |
+| Expire user authorization tokens | on |
+| Request user authorization (OAuth) during installation | **off** (the Setup URL below does it, with Groundcrew's own checked state) |
+| Enable Device Flow | off |
+| Setup URL | `https://groundkrew.com/connections/github/setup`, **Redirect on update** on |
+| Webhook | Active, URL `https://api.groundkrew.com/github/webhook`, a random secret (`openssl rand -hex 32`), SSL verification on |
+| Repository permissions | Contents: **Read and write** (reads files; fix PRs create a `groundcrew/fix-*` branch and commit to it). Pull requests: **Read and write** (opens fix PRs, reads their state). Actions: **Read** (workflow runs: deploys and follow-ups). Metadata: Read (required) |
+| Account permissions | Email addresses: **Read** (sign-in links accounts by verified email) |
+| Subscribe to events | none needed: `installation` and `installation_repositories` are always sent |
+| Where can this GitHub App be installed? | **Any account** |
+
+Not granted: Workflows (a fix PR that changes `.github/workflows/` would be refused by GitHub;
+grant Workflows: Read and write only if you want those), Administration, Secrets, and every
+other permission.
+
+After creating it: generate a private key, and copy the App ID, Client ID, and a new client
+secret. On the server:
+
+```bash
+gc-secrets set GITHUB_APP_ID
+gc-secrets set GITHUB_APP_CLIENT_ID
+gc-secrets set GITHUB_APP_CLIENT_SECRET
+gc-secrets set GITHUB_WEBHOOK_SECRET          # the webhook secret above
+gc-secrets set-file github-app.pem < key.pem  # GITHUB_APP_PRIVATE_KEY_PATH=/etc/groundcrew/github-app.pem
+```
+
+The callback URLs are on `groundkrew.com`, not `api.groundkrew.com`: GitHub sign-in is
+handled by the web app (Auth.js), whose session cookie lives on that origin, and the
+installation callback is a page there. Only the webhook goes to the API.
+
+## Email (sign-in links, invites, notifications)
+
+Groundcrew sends email over SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`,
+`SMTP_PASSWORD`, `EMAIL_FROM`). A hosted instance refuses to start without `SMTP_HOST` while
+email sign-in is on.
+
+**Resend (recommended).** Add the domain `groundkrew.com` in Resend, Domains. Resend shows the
+exact DNS records to add at your registrar; they are of this shape (copy the values from Resend,
+not from here):
+
+| Type | Name | Value |
+| --- | --- | --- |
+| MX | `send.groundkrew.com` | `feedback-smtp.<region>.amazonses.com`, priority 10 (bounce handling) |
+| TXT | `send.groundkrew.com` | `v=spf1 include:amazonses.com ~all` (SPF for the bounce domain) |
+| TXT | `resend._domainkey.groundkrew.com` | `p=MIGfMA0...` (DKIM public key from Resend) |
+| TXT | `_dmarc.groundkrew.com` | `v=DMARC1; p=none; rua=mailto:dmarc@groundkrew.com` |
+
+Start DMARC at `p=none` and read the reports for two weeks, then move to `p=quarantine`. If
+`groundkrew.com` has no other mail sender, its own SPF can be `v=spf1 -all` (no server sends as
+the bare domain: Resend's envelope uses `send.groundkrew.com`). Then:
+
+```
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=465
+SMTP_SECURITY=ssl
+SMTP_USERNAME=resend
+SMTP_PASSWORD=<a Resend API key with sending access only>
+EMAIL_FROM=Groundcrew <no-reply@groundkrew.com>
+```
+
+**Gmail** works for small volumes (about 500 a day) with an app password
+(`smtp.gmail.com`, 587, `starttls`), but mail then comes from your Gmail address: SPF, DKIM, and
+DMARC for `groundkrew.com` cannot apply, and recipients see the Gmail address. Prefer Resend for
+a public service.
 
 ## Accounts and sign-in
 
-Anyone can create an account: with an email address and a password, or with Google or GitHub. The
-web app shows a button for each provider whose OAuth credentials are set (`AUTH_GOOGLE_ID` /
-`AUTH_GOOGLE_SECRET`, `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` or the GitHub App's client). The
-callback URLs are `<web origin>/api/auth/callback/google` and `.../github`.
+On a hosted instance people sign in with **GitHub** or an **emailed sign-in link**; the first
+sign-in creates the account and a workspace of its own. Email and password, and Google, exist
+for local development and can be turned on with `PASSWORD_AUTH_ENABLED=true` /
+`GOOGLE_AUTH_ENABLED=true`. Callback URLs: `<web origin>/api/auth/callback/github` (and
+`.../google`).
 
+- A sign-in link works once and expires after `EMAIL_LINK_MINUTES` (15). It opens a page with a
+  Sign in button, so mail scanners that open links do not use it up. Asking for a link answers
+  the same whether or not the address has an account; a newer link retires the older ones.
+- The same verified email is the same user: a GitHub sign-in with a verified address and an
+  email link to that address reach one account. An account whose address was never proven is
+  taken over by whoever proves it (GitHub's verified email, or the link), and its password is
+  removed.
 - Password accounts confirm their address from an emailed link before they can sign in; the link
   asks for the password too, so a link someone else's sign-up sent you does nothing. Forgotten
   passwords are reset from an emailed link, which also lets Google and GitHub accounts add one.

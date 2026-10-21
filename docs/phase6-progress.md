@@ -7,8 +7,8 @@ Brief: `docs/prompts/phase6.md`. Plan: `docs/phase6-plan.md`. Re-read both after
 | Milestone | State | PR |
 |---|---|---|
 | P6.1 Plan | done 2026-10-21 | draft PR #56 (`phase6-plan`) |
-| P6.2 Code hardening | done 2026-10-21, waiting for review | draft PR (`phase6-hardening`, stacked on #56) |
-| P6.3 Email sign-in, production GitHub App, AWS connect by upload | not started | |
+| P6.2 Code hardening | done 2026-10-21 | draft PR #57 (`phase6-hardening`, stacked on #56) |
+| P6.3 Email sign-in, production GitHub App, AWS connect by upload | done 2026-10-22, waiting for review | draft PR (`phase6-email-github`, stacked on #57) |
 | P6.4 Terraform | not started | |
 | P6.5 Host setup | not started (starts with the build isolation spike, plan section 6.5) | |
 | P6.6 Release pipeline | not started | |
@@ -106,6 +106,45 @@ Open issues for you:
 - The Kubernetes guide creates a 24-hour ServiceAccount token, so users paste a new kubeconfig daily; a
   long-lived token Secret would avoid that. Your call.
 - The landing and policy pages say the server runs in us-east-2 (true once P6.7 is done).
+
+## P6.3 Email sign-in, GitHub App, AWS connect by upload (2026-10-22)
+
+Done (branch `phase6-email-github`):
+- **Email sign-in links.** `POST /auth/email-link` (same answer for every address; while sign-ups are
+  paused only existing or invited addresses get a link), `POST /auth/email-link/verify` (single use,
+  15 minutes, a newer link retires older ones; creates the account and workspace on first use after the
+  sign-up checks; takes over an unproven password account). The link opens `/signin/email`, where a
+  button signs in, so mail scanners cannot use it up. Production refuses to start without `SMTP_HOST`
+  while it is on. Checked live on the dev stack in headless Chromium: link sent, signed in, account and
+  workspace made, second use refused, no console errors.
+- **GitHub, multi-tenant.** Found and fixed: the installation picker listed every installation of the
+  app (other customers' repository names) and linking accepted any of them. Now a workspace uses only
+  installations an owner proved access to through GitHub OAuth (`GET /user/installations` with a
+  one-time token that is not kept; state bound to user and workspace for 10 minutes), plus those its
+  connections already use. Existing connections keep working.
+- **GitHub webhooks.** `POST /github/webhook`, HMAC-SHA256 checked, 503 without a secret; uninstall,
+  suspend/unsuspend, and removed repositories keep connections and claims in step.
+- **Production GitHub App settings** listed in `docs/self-hosting.md` (callback URLs, Setup URL,
+  webhook, the exact permissions).
+- **AWS connect by template upload.** The Connect AWS dialog: download `aws-connect.yaml` from the site,
+  open CloudFormation, Upload a template file, stack name and parameters with copy buttons, paste the
+  RoleArn, Verify (unchanged). The CLI command stays as an alternative. Enable deploys / emergency fixes
+  already fall back to Upload a template file when no S3 URL is set.
+- **Email DNS** (SPF, DKIM, DMARC) for Resend documented in `docs/self-hosting.md`.
+
+Tests: API 1122 passed, 6 skipped; web 252 passed; Playwright e2e 5 passed on a production build. The
+tenant isolation suite covers the new routes (the webhook is listed as unscoped and tested on its own).
+
+Decisions made while building (tell me if any should change):
+- GitHub callback URLs are on `groundkrew.com`, not `api.groundkrew.com` as the brief said: sign-in is
+  handled by the web app (Auth.js), whose session cookie lives there. The webhook is on the API.
+- "Request user authorization (OAuth) during installation" stays off; the Setup URL starts the same
+  checked authorization instead.
+- No Workflows permission: a fix PR that edits `.github/workflows/` would be refused by GitHub.
+
+Open issues for you:
+- Pick the email provider (Resend recommended; Gmail cannot sign mail as groundkrew.com).
+- Create the production GitHub App with the settings in `docs/self-hosting.md` when the server exists.
 
 ## Cost
 

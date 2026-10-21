@@ -250,7 +250,8 @@ rules bypass ufw for published ports.
 `SECRETS_KEY` (Fernet), `INTERNAL_JWT_SECRET`, `AUTH_SECRET`, `APPROVAL_TOKEN_KEY`, `POSTGRES_PASSWORD`, and
 `DATABASE_URL` built from it. Values you provide are added with `gc-secrets set NAME` (reads from stdin, never
 argv, never echoed): `TOKEN_FACTORY_API_KEY`, `TAVILY_API_KEY`, `SMTP_*`, `GITHUB_APP_*`,
-`GITHUB_WEBHOOK_SECRET`, `AUTH_GITHUB_*`. `gc-secrets check` lists which are set (names only).
+`GITHUB_WEBHOOK_SECRET`, `AUTH_GITHUB_*`. `gc-secrets set-file github-app.pem < key.pem` installs the
+GitHub App key with the right owner and mode. `gc-secrets check` lists which are set (names only).
 
 Rotation (each step in `docs/operations.md`, P6.9):
 
