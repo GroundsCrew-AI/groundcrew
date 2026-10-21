@@ -10,6 +10,8 @@ import re
 import secrets
 import tempfile
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -60,6 +62,10 @@ def _check_run_id(run_id: str) -> None:
 
 def _ms(start: float) -> int:
     return round((time.monotonic() - start) * 1000)
+
+
+# Fetches one path of the smoke container's app and says how it answered.
+Getter = Callable[[str], Awaitable["SmokeCheck"]]
 
 
 class DockerSandbox:
@@ -135,8 +141,7 @@ class DockerSandbox:
             "--label",
             f"{RUN_LABEL}={run_id}",
             *SMOKE_LIMITS,
-            "--publish",
-            str(port),
+            *self._smoke_run_args(port),
         ]
         for var in env:
             args += ["--env", var.name]
@@ -154,16 +159,34 @@ class DockerSandbox:
                     _ms(start),
                     detail=f"container did not start: {scrub(started.stderr)[-500:]}",
                 )
-            host_port = await self._host_port(name, port)
-            if host_port is None:
-                return SmokeResult(False, [], _ms(start), detail=f"port {port} was not published")
-            base = f"http://{self.settings.sandbox_smoke_host}:{host_port}"
-            checks, detail = await self._probe(name, base, health_path)
+            async with self._reach(name, port, run_id) as reached:
+                if isinstance(reached, str):
+                    return SmokeResult(False, [], _ms(start), detail=reached)
+                checks, detail = await self._probe(name, reached, health_path)
             ok = bool(checks) and checks[0].ok
             logs = None if ok else await self._logs(name, scrub)
             return SmokeResult(ok, checks, _ms(start), logs_tail=logs, detail=detail)
         finally:
             await self._docker(["rm", "--force", "--volumes", name], timeout=60)
+
+    def _smoke_run_args(self, port: int) -> list[str]:
+        """Published on the daemon's host, where the worker reaches it (SANDBOX_SMOKE_HOST)."""
+        return ["--publish", str(port)]
+
+    @asynccontextmanager
+    async def _reach(self, name: str, port: int, run_id: str) -> AsyncIterator[Getter | str]:
+        """How the probe reaches the app: a getter, or why it cannot (a message)."""
+        host_port = await self._host_port(name, port)
+        if host_port is None:
+            yield f"port {port} was not published"
+            return
+        base = f"http://{self.settings.sandbox_smoke_host}:{host_port}"
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, follow_redirects=False) as client:
+
+            async def get(path: str) -> SmokeCheck:
+                return await _get(client, base, path)
+
+            yield get
 
     async def _host_port(self, name: str, port: int) -> int | None:
         result = await self._docker(["port", name, f"{port}/tcp"], timeout=30)
@@ -181,7 +204,7 @@ class DockerSandbox:
         return running == "true", code
 
     async def _probe(
-        self, name: str, base: str, health_path: str | None
+        self, name: str, get: Getter, health_path: str | None
     ) -> tuple[list[SmokeCheck], str]:
         """Poll the health path (or / without one) until it answers 2xx/3xx, the container
         exits, or the smoke timeout passes. With a health path, / is then probed once and
@@ -189,24 +212,23 @@ class DockerSandbox:
         first = health_path or "/"
         deadline = time.monotonic() + self.settings.sandbox_smoke_timeout_seconds
         last = "no answer yet"
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, follow_redirects=False) as client:
-            while True:
-                check = await _get(client, base, first)
-                if check.ok:
-                    break
-                last = check.detail
-                running, code = await self._running(name)
-                if not running:
-                    return [check], f"container exited with code {code} before {first} answered"
-                if time.monotonic() >= deadline:
-                    return [check], (
-                        f"{first} did not answer 2xx/3xx within "
-                        f"{self.settings.sandbox_smoke_timeout_seconds:.0f}s ({last})"
-                    )
-                await asyncio.sleep(_POLL_SECONDS)
-            checks = [check]
-            if first != "/":
-                checks.append(await _get(client, base, "/"))
+        while True:
+            check = await get(first)
+            if check.ok:
+                break
+            last = check.detail
+            running, code = await self._running(name)
+            if not running:
+                return [check], f"container exited with code {code} before {first} answered"
+            if time.monotonic() >= deadline:
+                return [check], (
+                    f"{first} did not answer 2xx/3xx within "
+                    f"{self.settings.sandbox_smoke_timeout_seconds:.0f}s ({last})"
+                )
+            await asyncio.sleep(_POLL_SECONDS)
+        checks = [check]
+        if first != "/":
+            checks.append(await get("/"))
         return checks, f"{first} answered {check.status_code}"
 
     async def _logs(self, name: str, scrub: Scrubber) -> str:

@@ -188,7 +188,11 @@ class Settings(BaseSettings):
     # Build sandbox (app/sandbox). `docker` talks to the daemon in DOCKER_HOST (the dind service
     # in local dev); `nebius` is TODO(nebius-sandbox). A smoke-test container publishes its port
     # on the daemon's host, which the worker reaches as SANDBOX_SMOKE_HOST (dind in Compose).
-    sandbox_provider: Literal["docker", "nebius"] = "docker"
+    # `isolated`: the platform host's rootless, gVisor build daemon (app/sandbox/isolated.py).
+    sandbox_provider: Literal["docker", "isolated", "nebius"] = "docker"
+    # Images the isolated sandbox runs per build: BuildKit (rootless image) and the smoke probe.
+    sandbox_buildkit_image: str = "moby/buildkit:v0.25.1-rootless"
+    sandbox_probe_image: str = "curlimages/curl:8.17.0"
     sandbox_smoke_host: str = "localhost"
     sandbox_build_timeout_seconds: float = 900.0
     sandbox_smoke_timeout_seconds: float = 60.0
