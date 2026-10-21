@@ -1,0 +1,9 @@
+[Unit]
+Description=Sweep old build sandboxes every 30 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+
+[Install]
+WantedBy=timers.target

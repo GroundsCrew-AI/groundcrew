@@ -1,0 +1,11 @@
+{
+  "data-root": "/var/lib/gcbuild/docker",
+  "runtimes": {
+    "runsc": { "path": "/usr/bin/runsc", "runtimeArgs": ["--ignore-cgroups"] }
+  },
+  "default-runtime": "runsc",
+  "dns": ["1.1.1.1", "8.8.8.8"],
+  "log-driver": "local",
+  "log-opts": { "max-size": "10m", "max-file": "3" },
+  "features": { "buildkit": true }
+}

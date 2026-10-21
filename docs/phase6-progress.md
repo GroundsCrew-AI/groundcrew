@@ -9,8 +9,8 @@ Brief: `docs/prompts/phase6.md`. Plan: `docs/phase6-plan.md`. Re-read both after
 | P6.1 Plan | done 2026-10-21 | draft PR #56 (`phase6-plan`) |
 | P6.2 Code hardening | done 2026-10-21 | draft PR #57 (`phase6-hardening`, stacked on #56) |
 | P6.3 Email sign-in, production GitHub App, AWS connect by upload | done 2026-10-22 | draft PR #58 (`phase6-email-github`, stacked on #57) |
-| P6.4 Terraform | applied 2026-10-22, waiting for review | draft PR (`phase6-terraform`, stacked on #58) |
-| P6.5 Host setup | not started (starts with the build isolation spike, plan section 6.5) | |
+| P6.4 Terraform | applied 2026-10-22 | draft PR #60 (`phase6-terraform`, stacked on #58) |
+| P6.5 Host setup | done 2026-10-22, waiting for review | draft PR (`phase6-host`, stacked on #60) |
 | P6.6 Release pipeline | not started | |
 | P6.7 First production deploy | not started | |
 | P6.8 End-to-end on production | not started | |
@@ -174,6 +174,34 @@ Checked on the host after first boot (SSH with ~/.ssh/groundkrew): Ubuntu 24.04.
 DNS records to add at the registrar (TTL 300): `groundkrew.com A 3.19.1.100`,
 `www.groundkrew.com A 3.19.1.100`, `api.groundkrew.com A 3.19.1.100`, and recommended
 `groundkrew.com CAA 0 issue "letsencrypt.org"`.
+
+## P6.5 Host setup (2026-10-22)
+
+Done:
+- **Spike on the host** (results in plan section 6.3a): gVisor under the rootless daemon works with
+  `--ignore-cgroups`; per-container limits are replaced by limits on the build user's slice (memory bomb
+  and fork bomb held, host unaffected); BuildKit builds inside gVisor, unprivileged; the owner-match
+  firewall blocks the metadata service and every internal address while the internet works.
+- **`infra/platform/host/`**: `install.sh` with steps 10 to 50, `push.sh`, the production `compose.yml`,
+  nginx configs, the `gc-*` commands. Ran on the host twice (the second run changed nothing). Checked:
+  30 GB XFS build filesystem, slice limits, gcbuild uid/gid 1500, firewall chains, nginx dropping bare-IP
+  requests and serving only ACME challenges until the certificate, fail2ban (sshd, nginx-limit-req),
+  timers (certbot, build sweeper), journald retention, only 22 and 80 listening publicly.
+- **`gc-isolation-check` on the host: all pass** (metadata service, host private and public addresses,
+  loopback, Docker bridge, a stand-in internal service: unreachable from a build; internet reachable;
+  gVisor kernel; a non-API container on the main daemon cannot reach the metadata service). The run
+  against the real Postgres and API comes in P6.7.
+- **Code**: `SANDBOX_PROVIDER=isolated` (`app/sandbox/isolated.py`), the worker heartbeat for its health
+  check. Tests: `tests/test_sandbox_isolated.py`, `tests/test_platform_host.py`.
+- Tests: API 1157 passed, 6 skipped (a token test that expired during the now longer suite was made
+  to build its tokens when it runs).
+- Hardening beyond the plan: `api.groundkrew.com` serves only the run stream, the GitHub webhook,
+  `/health` and `/ready`; all other API calls go through the web app's proxy inside the host.
+
+Open issues:
+- The Compose services start in P6.6/P6.7, once the release pipeline publishes the images.
+- `gc-certs issue` accepts the Let's Encrypt Subscriber Agreement only with `--agree-tos`, which needs
+  your OK in P6.7.
 
 ## Cost
 

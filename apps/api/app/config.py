@@ -326,6 +326,8 @@ class Settings(BaseSettings):
     job_lock_timeout_seconds: int = 600
     # On SIGTERM, how long the current job may keep running before it is put back in the queue
     worker_shutdown_grace_seconds: float = 20.0
+    # Touched every minute while the worker runs (the container's health check reads it).
+    worker_heartbeat_file: Path | None = None
     sse_poll_interval_ms: int = 500
 
     # Auth. The web app signs a short-lived HS256 JWT with this secret for every API call

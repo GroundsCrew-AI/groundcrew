@@ -18,6 +18,7 @@ import signal
 import socket
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from app import queue
@@ -229,8 +230,19 @@ async def maintenance_pass(session_factory: SessionFactory) -> None:
         )
 
 
+def touch_heartbeat(path: Path | None) -> None:
+    """Liveness for the container health check: this loop runs beside jobs, so a long build
+    does not make the worker look dead."""
+    if path is None:
+        return
+    with contextlib.suppress(OSError):
+        path.touch()
+
+
 async def maintain(session_factory: SessionFactory, stop: asyncio.Event) -> None:
+    heartbeat = get_settings().worker_heartbeat_file
     while not stop.is_set():
+        touch_heartbeat(heartbeat)
         try:
             await maintenance_pass(session_factory)
         except Exception:

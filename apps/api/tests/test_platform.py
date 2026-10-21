@@ -100,3 +100,13 @@ async def test_maintenance_rearms_the_watcher(
             select(func.count(Job.id)).where(Job.kind == WATCH_JOB, Job.status == JobStatus.queued)
         )
     assert count == 1
+
+
+def test_the_worker_heartbeat_file(tmp_path: Any) -> None:
+    from app.worker import touch_heartbeat
+
+    beat = tmp_path / "beat"
+    touch_heartbeat(None)
+    touch_heartbeat(beat)
+    assert beat.exists()
+    touch_heartbeat(tmp_path / "missing-dir" / "beat")  # never raises

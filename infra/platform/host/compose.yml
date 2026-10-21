@@ -1,0 +1,216 @@
+# Groundcrew on the platform host (docs/phase6-plan.md section 5.2). Installed as
+# /opt/groundcrew/compose.yml; images come from the release file (/opt/groundcrew/release.env,
+# written by gc-update, P6.6), pinned by digest. Secrets come from /etc/groundcrew/*.env
+# (root only, read by Compose at `up`); nothing secret is in this file or in the images.
+#
+# Only nginx on the host is public. Postgres has no port at all; the API and the web app publish
+# to 127.0.0.1 only (Docker's published ports bypass ufw, so nothing here binds 0.0.0.0).
+
+name: groundcrew
+
+x-service: &service
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  logging:
+    driver: journald
+    options:
+      tag: "{{.Name}}"
+
+x-app: &app
+  <<: *service
+  image: ${GC_API_IMAGE:?set by gc-update from the release file}
+  user: "10001:10001"
+  env_file:
+    - /etc/groundcrew/app.env
+  environment:
+    APP_ENV: production
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  volumes:
+    - /etc/groundcrew/github-app.pem:/run/secrets/github-app.pem:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+
+networks:
+  # Postgres and the app services only; no way out.
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  # The way out for the API, worker, and web app (customer clouds, GitHub, model APIs). The host
+  # firewall lets only the API and worker addresses below reach the instance metadata service.
+  egress:
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24
+
+volumes:
+  pgdata:
+  worker-scratch:
+
+services:
+  postgres:
+    <<: *service
+    image: ${GC_POSTGRES_IMAGE:-pgvector/pgvector:pg16}
+    user: "999:999"
+    cap_drop: ["ALL"]
+    env_file:
+      - /etc/groundcrew/postgres.env
+    environment:
+      POSTGRES_USER: groundcrew
+      POSTGRES_DB: groundcrew
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - max_connections=60
+      - -c
+      - password_encryption=scram-sha-256
+    tmpfs:
+      - /var/run/postgresql:size=16m,uid=999,gid=999
+      - /tmp:size=64m
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    mem_limit: 1536m
+    cpus: 1.5
+    pids_limit: 300
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U groundcrew -d groundcrew -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    <<: *service
+    image: ${GC_API_IMAGE:?set by gc-update from the release file}
+    user: "10001:10001"
+    restart: "no"
+    env_file:
+      - /etc/groundcrew/app.env
+    environment:
+      APP_ENV: production
+    command: ["alembic", "upgrade", "head"]
+    tmpfs:
+      - /tmp:size=64m
+    networks: [backend]
+    mem_limit: 512m
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "2"
+      - --proxy-headers
+      # Forwarded headers only from nginx on the host, which reaches the container through
+      # the egress network's gateway.
+      - --forwarded-allow-ips
+      - 172.30.1.1
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      backend: {}
+      egress:
+        ipv4_address: 172.30.1.10
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 200
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=4).status == 200 else 1)"
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    environment:
+      APP_ENV: production
+      # Builds go to the host's rootless gVisor build daemon (app/sandbox/isolated.py).
+      SANDBOX_PROVIDER: isolated
+      DOCKER_HOST: unix:///run/gcbuild/docker.sock
+      BUILDX_CONFIG: /tmp/buildx
+      REPO_WORKDIR: /scratch
+      WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+    group_add:
+      # gcbuild: may use the build daemon's socket, and nothing else of that user.
+      - "1500"
+    volumes:
+      - /etc/groundcrew/github-app.pem:/run/secrets/github-app.pem:ro
+      - /run/user/1500/docker.sock:/run/gcbuild/docker.sock
+      - worker-scratch:/scratch
+    networks:
+      backend: {}
+      egress:
+        ipv4_address: 172.30.1.11
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 400
+    # Let the worker finish its current step on `down`; its job is requeued after that.
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time,sys; sys.exit(0 if time.time() - os.path.getmtime('/tmp/worker-heartbeat') < 120 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 4
+      start_period: 60s
+
+  web:
+    <<: *service
+    image: ${GC_WEB_IMAGE:?set by gc-update from the release file}
+    user: "10001:10001"
+    env_file:
+      - /etc/groundcrew/web.env
+    environment:
+      APP_ENV: production
+      NODE_ENV: production
+      API_INTERNAL_URL: http://api:8000
+      AUTH_TRUST_HOST: "true"
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /app/.next/cache:size=256m,uid=10001,gid=10001
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      backend: {}
+      egress:
+        ipv4_address: 172.30.1.12
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      api:
+        condition: service_healthy

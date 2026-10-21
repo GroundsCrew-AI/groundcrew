@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Host firewall rules beside ufw (docs/phase6-plan.md section 5.4):
+# - GC-BUILD-EGRESS: everything the build daemon's user (gcbuild) sends: DNS to the local
+#   resolver (the daemon's own image pulls) and the internet are allowed; the metadata service,
+#   loopback, private and shared ranges, and this host's own addresses are refused.
+# - DOCKER-USER: only the API and worker containers may reach the instance metadata service
+#   (the platform role); every other container is refused.
+# `gc-firewall apply` is idempotent (gc-firewall.service runs it after Docker starts);
+# `gc-firewall show` prints the rules.
+set -euo pipefail
+
+BUILD_UID=1500
+METADATA_ALLOWED=(172.30.1.10 172.30.1.11)   # api, worker (compose.yml)
+
+apply() {
+  local private public
+  private=$(hostname -I | awk '{print $1}')
+  public=$(curl -fsS -m 3 -H "X-aws-ec2-metadata-token: $(curl -fsS -m 3 -X PUT \
+    http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" \
+    http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)
+
+  iptables -N GC-BUILD-EGRESS 2>/dev/null || iptables -F GC-BUILD-EGRESS
+  iptables -C OUTPUT -m owner --uid-owner "$BUILD_UID" -j GC-BUILD-EGRESS 2>/dev/null \
+    || iptables -I OUTPUT 1 -m owner --uid-owner "$BUILD_UID" -j GC-BUILD-EGRESS
+  iptables -A GC-BUILD-EGRESS -d 127.0.0.53/32 -p udp --dport 53 -j RETURN
+  iptables -A GC-BUILD-EGRESS -d 127.0.0.53/32 -p tcp --dport 53 -j RETURN
+  local net
+  for net in 127.0.0.0/8 169.254.0.0/16 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 \
+             100.64.0.0/10 0.0.0.0/8 224.0.0.0/4 240.0.0.0/4 "$private/32" ${public:+"$public/32"}; do
+    iptables -A GC-BUILD-EGRESS -d "$net" -j REJECT --reject-with icmp-port-unreachable
+  done
+
+  ip6tables -N GC-BUILD-EGRESS 2>/dev/null || ip6tables -F GC-BUILD-EGRESS
+  ip6tables -C OUTPUT -m owner --uid-owner "$BUILD_UID" -j GC-BUILD-EGRESS 2>/dev/null \
+    || ip6tables -I OUTPUT 1 -m owner --uid-owner "$BUILD_UID" -j GC-BUILD-EGRESS
+  ip6tables -A GC-BUILD-EGRESS -j REJECT
+
+  # Docker creates DOCKER-USER; before Docker runs there is nothing to protect yet.
+  if iptables -nL DOCKER-USER >/dev/null 2>&1; then
+    iptables -N GC-METADATA 2>/dev/null || iptables -F GC-METADATA
+    iptables -C DOCKER-USER -d 169.254.169.254/32 -j GC-METADATA 2>/dev/null \
+      || iptables -I DOCKER-USER 1 -d 169.254.169.254/32 -j GC-METADATA
+    local ip
+    for ip in "${METADATA_ALLOWED[@]}"; do
+      iptables -A GC-METADATA -s "$ip/32" -j RETURN
+    done
+    iptables -A GC-METADATA -j REJECT --reject-with icmp-port-unreachable
+  fi
+  echo "gc-firewall: rules applied (private $private${public:+, public $public})"
+}
+
+show() {
+  iptables -S GC-BUILD-EGRESS
+  iptables -S GC-METADATA 2>/dev/null || echo "(no DOCKER-USER yet)"
+  ip6tables -S GC-BUILD-EGRESS
+}
+
+case "${1:-}" in
+  apply) apply ;;
+  show) show ;;
+  *) echo "usage: gc-firewall apply|show" >&2; exit 2 ;;
+esac

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Live check of build isolation (docs/phase6-plan.md 6.4). From a container in the build daemon
+# (rootless, gVisor), every internal target must be unreachable and the internet reachable;
+# containers of the main daemon other than the API and worker must not reach the metadata
+# service. Exits non-zero if anything is wrong.
+#
+# Targets: the metadata service, this host's private and public addresses, loopback, the
+# Docker bridge, Postgres and the API (their container addresses when Compose runs them, else a
+# stand-in service on the main daemon's network), and the internet (must work).
+set -euo pipefail
+as_build() {
+  sudo -u gcbuild env XDG_RUNTIME_DIR=/run/user/1500 HOME=/var/lib/gcbuild-home \
+    DOCKER_HOST=unix:///run/user/1500/docker.sock "$@"
+}
+fail=0
+docker pull -q python:3.12-alpine >/dev/null; docker pull -q alpine:3.22 >/dev/null
+as_build docker pull -q alpine:3.22 >/dev/null
+private=$(hostname -I | awk '{print $1}')
+public=$(curl -fsS -m 3 ifconfig.me 2>/dev/null || true)
+
+info=$(as_build docker info --format '{{.DefaultRuntime}} {{range .SecurityOptions}}{{.}} {{end}}')
+case "$info" in runsc*name=rootless*) echo "ok   build daemon is rootless, default runtime runsc" ;;
+  *) echo "FAIL build daemon: $info"; fail=1 ;; esac
+
+targets=("169.254.169.254:80" "$private:22" "127.0.0.1:22" "172.17.0.1:22")
+[ -n "$public" ] && targets+=("$public:443")
+stand_in=""
+for svc in postgres:5432 api:8000; do
+  ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "groundcrew-${svc%%:*}-1" 2>/dev/null | awk '{print $1}' || true)
+  [ -n "$ip" ] && targets+=("$ip:${svc##*:}")
+done
+if ! docker inspect groundcrew-api-1 >/dev/null 2>&1; then
+  stand_in=gc-isolation-standin
+  docker rm -f "$stand_in" >/dev/null 2>&1 || true
+  docker run -d --rm --name "$stand_in" --label groundcrew.check=1 python:3.12-alpine python -m http.server 8000 >/dev/null
+  sleep 2
+  ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$stand_in" | awk '{print $1}')
+  targets+=("$ip:8000")
+fi
+
+out=$(as_build docker run --rm alpine:3.22 sh -c "
+  for t in ${targets[*]}; do
+    if timeout 4 nc -z -w 3 \${t%:*} \${t#*:} 2>/dev/null; then echo \"OPEN \$t\"; else echo \"blocked \$t\"; fi
+  done
+  wget -q -T 8 -O /dev/null https://pypi.org/simple/ && echo 'OPEN internet' || echo 'blocked internet'
+  grep -q gVisor /proc/version 2>/dev/null || dmesg 2>/dev/null | grep -q gVisor && echo 'kernel gvisor' || echo 'kernel host'")
+while read -r state target; do
+  case "$state $target" in
+    "OPEN internet"|"kernel gvisor") echo "ok   build: $state $target" ;;
+    "blocked internet"|"kernel host") echo "FAIL build: $state $target"; fail=1 ;;
+    blocked*) echo "ok   build cannot reach $target" ;;
+    OPEN*) echo "FAIL build reaches $target"; fail=1 ;;
+  esac
+done <<<"$out"
+
+meta=$(docker run --rm alpine:3.22 sh -c 'timeout 4 nc -z -w 3 169.254.169.254 80 && echo OPEN || echo blocked')
+[ "$meta" = blocked ] && echo "ok   other containers cannot reach the metadata service" \
+  || { echo "FAIL a container on the main daemon reaches the metadata service"; fail=1; }
+
+[ -n "$stand_in" ] && docker rm -f "$stand_in" >/dev/null 2>&1
+exit $fail
