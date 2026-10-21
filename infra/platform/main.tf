@@ -126,3 +126,9 @@ resource "aws_eip" "platform" {
     Name = "groundcrew-platform"
   }
 }
+
+# The single SSH rule became one per admin address; the existing rule is the first address's.
+moved {
+  from = aws_vpc_security_group_ingress_rule.ssh
+  to   = aws_vpc_security_group_ingress_rule.ssh["119.73.108.213/32"]
+}
