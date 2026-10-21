@@ -123,3 +123,26 @@ def test_scripts_parse(script: str) -> None:
 def test_certificates_need_the_operators_consent() -> None:
     certs = (HOST / "bin" / "gc-certs").read_text()
     assert "agreed=no" in certs and "pass --agree-tos" in certs
+
+
+def _tmpfs_options(svc: dict[str, Any], mount: str) -> dict[str, str] | None:
+    for entry in svc.get("tmpfs", []):
+        path, _, opts = str(entry).partition(":")
+        if path == mount:
+            return dict(o.split("=", 1) for o in opts.split(",") if "=" in o)
+    return None
+
+
+@pytest.mark.parametrize("name", ["api", "worker"])
+def test_temp_files_go_to_a_tmpfs_the_service_user_owns(name: str) -> None:
+    """The root filesystem is read-only: TMPDIR (and HOME, for git and the Docker CLI) must be a
+    tmpfs owned by the uid the service runs as, or clones and kubeconfigs fail with EACCES."""
+    svc = _compose()["services"][name]
+    env = svc["environment"]
+    assert env["TMPDIR"] == env["HOME"] == "/scratch", name
+    opts = _tmpfs_options(svc, "/scratch")
+    assert opts is not None, f"{name}: /scratch is not a tmpfs"
+    uid, _, gid = str(svc["user"]).partition(":")
+    assert (opts.get("uid"), opts.get("gid")) == (uid, gid), name
+    assert opts.get("mode") == "0700" and "size" in opts, name
+    assert not any(str(v).split(":")[-1] == "/scratch" for v in svc.get("volumes", [])), name

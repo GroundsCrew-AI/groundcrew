@@ -28,8 +28,14 @@ x-app: &app
     - /etc/groundcrew/app.env
   environment:
     APP_ENV: production
+    # The root filesystem is read-only: every temporary file (kubeconfigs, Docker client
+    # configs, repository clones) goes to /scratch, owned by the container's user. The app
+    # refuses to start when it is not writable (app/writable.py).
+    TMPDIR: /scratch
+    HOME: /scratch
   tmpfs:
     - /tmp:size=256m,mode=1777
+    - /scratch:size=64m,uid=10001,gid=10001,mode=0700
   volumes:
     - /etc/groundcrew/github-app.pem:/run/secrets/github-app.pem:ro
   depends_on:
@@ -54,7 +60,6 @@ networks:
 
 volumes:
   pgdata:
-  worker-scratch:
 
 services:
   postgres:
@@ -158,20 +163,26 @@ services:
       SANDBOX_PROVIDER: isolated
       DOCKER_HOST: unix:///run/gcbuild/docker.sock
       BUILDX_CONFIG: /tmp/buildx
-      REPO_WORKDIR: /scratch
       WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+      # Repository clones (REPO_MAX_BYTES, 300 MB), Builder's Dockerfiles, build contexts, and
+      # registry login configs: a tmpfs owned by the worker's user (see x-app).
+      TMPDIR: /scratch
+      HOME: /scratch
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      # Counts toward mem_limit: a full 512m still leaves the worker about 768m to run in.
+      - /scratch:size=512m,uid=10001,gid=10001,mode=0700
     group_add:
       # gcbuild: may use the build daemon's socket, and nothing else of that user.
       - "1500"
     volumes:
       - /etc/groundcrew/github-app.pem:/run/secrets/github-app.pem:ro
       - /run/user/1500/docker.sock:/run/gcbuild/docker.sock
-      - worker-scratch:/scratch
     networks:
       backend: {}
       egress:
         ipv4_address: 172.30.1.11
-    mem_limit: 1g
+    mem_limit: 1280m
     cpus: 1.0
     pids_limit: 400
     # Let the worker finish its current step on `down`; its job is requeued after that.

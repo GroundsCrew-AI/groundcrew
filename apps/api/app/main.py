@@ -38,6 +38,7 @@ from app.routes import (
     workspaces,
 )
 from app.routes.schemas import ApprovalStepEvent, RunStatusEvent, StepOut
+from app.writable import check_writable
 
 VERSION = "0.1.0"
 
@@ -177,6 +178,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     setup_logging(settings.log_level)
     settings.require_production_ready()
+    check_writable(settings)
     yield
     if get_settings().database_url is not None:
         await get_engine().dispose()

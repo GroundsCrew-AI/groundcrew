@@ -5,6 +5,9 @@ x-api-env: &api-env
   DATABASE_URL: postgresql+asyncpg://groundcrew:groundcrew@postgres:5432/groundcrew
   # Local development: enables dev-only tools; a hosted instance leaves it unset (production).
   APP_ENV: dev
+  # Temporary files (repository clones, kubeconfigs, Docker client configs) go to /scratch, a
+  # tmpfs owned by the image's user, as in production (infra/platform/host/compose.yml).
+  TMPDIR: /scratch
 
 services:
   postgres:
@@ -37,6 +40,8 @@ services:
       - path: .env
         required: false
     environment: *api-env
+    tmpfs:
+      - /scratch:size=64m,uid=1000,gid=1000,mode=0700
     volumes:
       - ./apps/api/app:/app/app
       # The GitHub App private key (GITHUB_APP_PRIVATE_KEY_PATH=secrets/...), read-only.
@@ -61,6 +66,8 @@ services:
       SANDBOX_SMOKE_HOST: dind
       # `{"fixture": name}` deploy sources (APP_ENV=dev only).
       DEPLOY_FIXTURES_DIR: /app/demo-fixtures
+    tmpfs:
+      - /scratch:size=512m,uid=1000,gid=1000,mode=0700
     volumes:
       - ./apps/api/app:/app/app
       - ./demo/fixtures:/app/demo-fixtures:ro

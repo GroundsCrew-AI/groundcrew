@@ -157,6 +157,8 @@ class GitCloneSource(_ContextManager):
             "GIT_LFS_SKIP_SMUDGE": "1",
             "GIT_CONFIG_NOSYSTEM": "1",
         }
+        if "TMPDIR" in os.environ:  # the writable tmpfs on a read-only root filesystem
+            env["TMPDIR"] = os.environ["TMPDIR"]
         token = self.settings.git_clone_token
         if token is not None:
             parts = urlsplit(self.url)

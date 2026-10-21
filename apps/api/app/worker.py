@@ -25,6 +25,7 @@ from app import queue
 from app.config import get_settings
 from app.db.session import SessionFactory, get_engine, get_session_factory
 from app.log import job_id_var, setup_logging
+from app.writable import check_writable
 
 logger = logging.getLogger("groundcrew.worker")
 
@@ -267,6 +268,7 @@ async def main() -> None:
         shutdown_grace_seconds=settings.worker_shutdown_grace_seconds,
     )
     settings.require_production_ready()
+    check_writable(settings)
     housekeeping = asyncio.create_task(maintain(worker.session_factory, stop))
     try:
         await worker.run(stop)
