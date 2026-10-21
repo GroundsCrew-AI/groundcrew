@@ -323,6 +323,12 @@ def error_text(exc: BaseException) -> str:
     return redact(f"{type(exc).__name__}: {exc}")
 
 
+# The codes AWS uses when a role's policy does not allow a call.
+DENIED_CODES = frozenset(
+    {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation", "UnauthorizedException"}
+)
+
+
 def error_code(exc: BaseException) -> str | None:
     if isinstance(exc, ClientError):
         code = exc.response.get("Error", {}).get("Code")

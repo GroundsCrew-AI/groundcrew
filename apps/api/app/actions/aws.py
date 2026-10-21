@@ -25,6 +25,7 @@ the state first: if it no longer matches the plan, nothing is written (ok=False)
 import asyncio
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -46,7 +47,13 @@ from app.actions.base import (
     EmergencyActionError,
 )
 from app.config import Settings, get_settings
-from app.connectors.aws import arn_region, connection_regions, error_text
+from app.connectors.aws import (
+    DENIED_CODES,
+    arn_region,
+    connection_regions,
+    error_code,
+    error_text,
+)
 from app.connectors.credentials import ConnectionCredentialsProvider, CredentialsError
 from app.db.models import Connection
 from app.db.session import SessionFactory
@@ -125,6 +132,48 @@ def pick_alias(aliases: list[dict[str, Any]], versions: list[str]) -> dict[str, 
     return top[0]
 
 
+# The stack parameter that lists what the operate role may act on, per AWS service.
+OPERATE_PARAMETERS = {
+    "ecs": "OperateServiceArns",
+    "secretsmanager": "OperateSecretArns",
+    "lambda": "OperateFunctionArns",
+    "ec2": "OperateInstanceArns",
+    "iam": "OperatePassRoleArns",
+}
+# How many earlier task definition revisions a rollback looks at for one whose images exist.
+ROLLBACK_CANDIDATES = 5
+_ECR_IMAGE = re.compile(
+    r"^(?P<account>\d{12})\.dkr\.ecr\.(?P<region>[a-z0-9-]+)\.amazonaws\.com/"
+    r"(?P<repo>[^:@]+)(?::(?P<tag>[^@]+))?(?:@(?P<digest>sha256:[0-9a-f]{64}))?$"
+)
+
+
+def denied_text(client: Client, operation: str, resource: str | None) -> str:
+    """What to change when the operate role is refused, instead of AWS's raw AccessDenied."""
+    service = str(client.meta.service_model.service_name)
+    api = client.meta.method_to_api_mapping.get(operation, operation)
+    what = resource or "this resource"
+    parameter = OPERATE_PARAMETERS.get(service)
+    where = (
+        f"Add it to {parameter} on the groundcrew-read-only stack (CloudFormation, Update, "
+        "keep the current template), then run Medic again."
+        if parameter
+        else "Check the groundcrew-operate role on the groundcrew-read-only stack."
+    )
+    return f"Groundcrew's emergency-fix role may not use {service}:{api} on {what}. {where}"
+
+
+def ecr_image(image: str) -> dict[str, str] | None:
+    """registry account, region, repository, and tag or digest of an ECR image reference."""
+    found = _ECR_IMAGE.match(image)
+    if not found:
+        return None
+    parts = {k: v for k, v in found.groupdict().items() if v}
+    if "digest" not in parts:
+        parts.setdefault("tag", "latest")
+    return parts
+
+
 def _revision(arn: str) -> tuple[str, int]:
     """family, revision from a task definition ARN (...:task-definition/family:42)."""
     family, _, rev = arn.rsplit("/", 1)[-1].rpartition(":")
@@ -199,14 +248,26 @@ class AwsEmergencyActions:
             return None
 
     @staticmethod
-    async def _call(client: Client, operation: str, **params: Any) -> Any:
+    async def _call(
+        client: Client, operation: str, *, resource: str | None = None, **params: Any
+    ) -> Any:
         try:
             return await asyncio.to_thread(getattr(client, operation), **params)
-        except (ClientError, BotoCoreError) as exc:
+        except ClientError as exc:
+            if error_code(exc) in DENIED_CODES:
+                raise EmergencyActionError(denied_text(client, operation, resource)) from None
+            raise EmergencyActionError(error_text(exc)) from None
+        except BotoCoreError as exc:
             raise EmergencyActionError(error_text(exc)) from None
 
     async def _service(self, ecs: Client, cluster: str, service: str) -> dict[str, Any]:
-        found = await self._call(ecs, "describe_services", cluster=cluster, services=[service])
+        found = await self._call(
+            ecs,
+            "describe_services",
+            resource=f"service {_short(cluster)}/{service}",
+            cluster=cluster,
+            services=[service],
+        )
         services = found.get("services") or []
         if not services:
             raise EmergencyActionError(f"Service {service} was not found in {_short(cluster)}.")
@@ -245,9 +306,9 @@ class AwsEmergencyActions:
         ]
         if not older:
             raise EmergencyActionError(f"{service} has no earlier task definition revision.")
-        previous = max(older, key=lambda arn: _revision(arn)[1])
-        described = await self._call(ecs, "describe_task_definition", taskDefinition=previous)
-        definition = described.get("taskDefinition") or {}
+        previous, definition = await self._startable_revision(
+            connection_id, ecs, cluster, service, sorted(older, key=lambda a: -_revision(a)[1])
+        )
         roles = [
             str(definition[k]) for k in ("executionRoleArn", "taskRoleArn") if definition.get(k)
         ]
@@ -269,6 +330,102 @@ class AwsEmergencyActions:
             desired=previous,
             summary=f"Point {service} back at {_short(previous)} (now {_short(current)})",
             planned_at=datetime.now(UTC),
+        )
+
+    async def _missing_secrets(
+        self, connection_id: uuid.UUID, definition: dict[str, Any]
+    ) -> list[str]:
+        """The Secrets Manager secrets a task definition reads that no longer exist (a rebuilt
+        environment has new ones): ECS would stop its tasks with ResourceInitializationError.
+        One that cannot be checked counts as present."""
+        arns: list[str] = []
+        for container in definition.get("containerDefinitions") or []:
+            for secret in container.get("secrets") or []:
+                ref = str(secret.get("valueFrom") or "")
+                if ":secretsmanager:" in ref and ":secret:" in ref:
+                    arn = ":".join(ref.split(":")[:7])  # without a JSON key or version suffix
+                    if arn not in arns:
+                        arns.append(arn)
+        missing: list[str] = []
+        reader: Client | None = None
+        for arn in arns:
+            if reader is None:
+                try:
+                    reader = await self._read(connection_id, "secretsmanager", arn)
+                except EmergencyActionError:
+                    return []
+            try:
+                await asyncio.to_thread(reader.describe_secret, SecretId=arn)
+            except ClientError as exc:
+                if error_code(exc) == "ResourceNotFoundException":
+                    missing.append(_short(arn))
+            except BotoCoreError:
+                pass
+        return missing
+
+    async def _missing_images(
+        self, connection_id: uuid.UUID, cluster: str, definition: dict[str, Any]
+    ) -> list[str]:
+        """The ECR images of a task definition that are no longer in their repository. An image
+        that cannot be checked (not ECR, no permission) counts as present: AWS has the last word
+        when the rollback runs."""
+        missing: list[str] = []
+        reader: Client | None = None
+        for container in definition.get("containerDefinitions") or []:
+            image = str(container.get("image") or "")
+            ref = ecr_image(image)
+            if ref is None:
+                continue
+            if reader is None:
+                try:
+                    reader = await self._read(connection_id, "ecr", cluster)
+                except EmergencyActionError:
+                    return []
+            image_id = (
+                {"imageDigest": ref["digest"]} if "digest" in ref else {"imageTag": ref["tag"]}
+            )
+            try:
+                await asyncio.to_thread(
+                    reader.describe_images,
+                    registryId=ref["account"],
+                    repositoryName=ref["repo"],
+                    imageIds=[image_id],
+                )
+            except ClientError as exc:
+                if error_code(exc) in ("ImageNotFoundException", "RepositoryNotFoundException"):
+                    missing.append(image.rsplit("/", 1)[-1])
+            except BotoCoreError:
+                pass
+        return missing
+
+    async def _startable_revision(
+        self,
+        connection_id: uuid.UUID,
+        ecs: Client,
+        cluster: str,
+        service: str,
+        older: list[str],
+    ) -> tuple[str, dict[str, Any]]:
+        """The newest earlier revision whose images and secrets still exist, so the rollback can
+        start. Raises with what is missing when none of the last few can."""
+        gone: list[str] = []
+        for arn in older[:ROLLBACK_CANDIDATES]:
+            described = await self._call(
+                ecs, "describe_task_definition", resource=_short(arn), taskDefinition=arn
+            )
+            definition: dict[str, Any] = described.get("taskDefinition") or {}
+            missing = await self._missing_images(connection_id, cluster, definition)
+            missing += [
+                f"secret {name}" for name in await self._missing_secrets(connection_id, definition)
+            ]
+            if not missing:
+                return arn, definition
+            gone += [m for m in missing if m not in gone]
+        checked = ", ".join(_short(a) for a in older[:ROLLBACK_CANDIDATES])
+        raise EmergencyActionError(
+            f"No earlier revision of {service} can start: what they use "
+            f"({', '.join(gone)}) no longer exists (checked {checked}), as after an environment "
+            "is rebuilt. A rollback cannot help; push the image again, or deploy a fixed revision."
         )
 
     async def plan_secret_rollback_version(

@@ -293,6 +293,16 @@ export function collapseVerifySteps(steps: Step[]): { hidden: Set<number>; round
     run.push(step);
   }
   flush();
+  // Medic records "failed" twice when it gives up: the status change and the incident_failed
+  // step with the same reason. Show the one with the details.
+  const failedReasons = new Set(
+    steps.flatMap((s) => (s.data?.type === "incident_failed" ? [s.data.reason] : [])),
+  );
+  for (const step of steps) {
+    if (step.data?.type === "incident_updated" && step.data.status === "failed" && failedReasons.has(step.data.reason ?? "")) {
+      hidden.add(step.seq);
+    }
+  }
   return { hidden, rounds };
 }
 

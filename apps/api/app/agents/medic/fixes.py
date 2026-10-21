@@ -726,7 +726,13 @@ async def pull_request(
     first = min(signals, key=lambda s: s.at) if signals else None
     sha, marker = commit_change(root_cause, changes, first)
     if sha is None:
-        out.notes.append(f"No fix PR: no commit found for {change.kind} {change.ref or '-'}.")
+        what = (change.ref or "-").rsplit("/", 1)[-1]
+        out.notes.append(
+            f"No fix PR: commit {what} was not found in a linked repository."
+            if change.kind == "commit"
+            else f"No fix PR: the deploy of {what} is not linked to a commit (it was likely "
+            "made by Terraform, the console, or the CLI), so there is no code change to revert."
+        )
         return out
     target = await resolve_repo(graph, marker, github)
     if isinstance(target, str):
