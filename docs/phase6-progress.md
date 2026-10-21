@@ -243,9 +243,16 @@ internet works from builds; builds run on gVisor's kernel. The worker's AWS iden
 `assumed-role/groundcrew-platform` (no keys); the web container cannot reach the metadata service. All
 app containers run as uid 10001, Postgres as 999; Postgres has no published port.
 
+Later the same day:
+- Production GitHub App `groundcrew-app` (GroundsCrew-AI) created by you with the documented settings;
+  its id, client id and secret, webhook secret, and private key set with `gc-secrets`. The server
+  authenticates as the app (checked: permissions actions read, contents write, emails read, metadata
+  read, pull requests write). "Continue with GitHub" is on the sign-in page; unsigned webhook
+  deliveries get 401.
+- Release `14423f78caf4` (Groundcrew favicon, SVG icon, Apple touch icon) deployed; `13196e0a74bc` kept
+  for rollback.
+
 Open issues:
-- The production GitHub App does not exist yet: sign-in is by email link until it does
-  (settings in `docs/self-hosting.md`); `/github/webhook` answers 503 until its secret is set.
 - The automatic rollback path has unit-level logic only; it has not been exercised live (a deploy of a
   commit that fails its health check would show it).
 - Restore the instance's original user data at the next stop (saved in the session scratchpad and in
