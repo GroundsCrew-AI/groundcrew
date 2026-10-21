@@ -277,6 +277,20 @@ Deploy fix (2026-10-22): release `5aa49f3d7482` live, `57f18be6afa5` kept for ro
   GroundsCrew-AI/legacy-flask-app lands there. A deploy from the Deploy page still to be run.
 - The unused `groundcrew_worker-scratch` volume is still on the server (remove later).
 
+Build, Medic, and setup fixes (2026-10-22): release `e111b5269f33` live, `57f18be6afa5` kept.
+- Builds: the rootless daemon's socket had a sub-gid group (300987) the worker is not in; daemon.json
+  sets "group": "root" (gcbuild 1500 on the host). Step 20 restarts the worker after the daemon, since
+  its bind mount pins the old socket. gc-isolation-check now checks the worker reaches the daemon (ok).
+- Builder stops at once when the build service is down. Medic rolls back only to revisions whose ECR
+  images and secrets still exist, names the stack parameter on AccessDenied, shows giving up once.
+- Emergency-fix setup: values from discovery (GET /connections/{id}/aws/operate-values), Verify refuses
+  a role that reaches no discovered service. Connect dialogs restyled as titled steps.
+- Limits raised in ops/production.env (Tavily 50/day, builds 30/day, 4 runs at once, 25 connections,
+  $5 per workspace a day, $30 platform a day, $0.60 a run). LLM_TOTAL_USD_CAP still $25.
+- Checkout environment (outside Groundcrew): rebuilt by Terraform with empty ECR repositories and DB;
+  images for af3758a pushed, migrations run, services back on revision 31. The checkout-demo repository
+  variables ECS_SUBNETS and ECS_TASK_SECURITY_GROUP still name the old VPC.
+
 Open issues:
 - The automatic rollback path has unit-level logic only; it has not been exercised live (a deploy of a
   commit that fails its health check would show it).
