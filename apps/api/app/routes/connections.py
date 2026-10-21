@@ -10,7 +10,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -22,6 +22,7 @@ from app import deletion, quotas
 from app.accounts import NotFoundError, member_workspace, require_owner
 from app.audit import record
 from app.config import Settings, get_settings
+from app.connectors import github_claims
 from app.connectors import kubernetes as kube
 from app.connectors.aws import (
     AwsError,
@@ -31,10 +32,10 @@ from app.connectors.aws import (
     parse_role_arn,
 )
 from app.connectors.deploy_infra import deploy_role_arn, operate_role_arn
-from app.connectors.github import GitHubError, check_repo_name, get_github_app
+from app.connectors.github import GitHubApp, GitHubError, check_repo_name, get_github_app
 from app.connectors.kubernetes import kubeconfig_summary
 from app.connectors.vercel import VercelClient, VercelError
-from app.db.models import Connection, Resource, RunStatus, User, WorkspaceRole
+from app.db.models import Connection, Resource, RunStatus, User, Workspace, WorkspaceRole
 from app.discovery.engine import start_discovery
 from app.discovery.types import ConnectorError
 from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
@@ -49,6 +50,9 @@ from app.routes.discovery_schemas import (
     AzureConnectIn,
     ConnectionDeleted,
     ConnectionOut,
+    GitHubAuthorizeOut,
+    GitHubClaimIn,
+    GitHubClaimOut,
     GitHubInstallationOut,
     GitHubInstallationsOut,
     GitHubLinkIn,
@@ -691,41 +695,60 @@ async def k8s_clear_deploy_settings(
 # ---------------------------------------------------------------------------- GitHub
 
 
-@router.get("/github/installations")
-async def github_installations(
-    user: CurrentUser, session: SessionDep, workspace_id: Annotated[uuid.UUID, Query()]
-) -> GitHubInstallationsOut:
-    """Installations of our GitHub App and their repositories, marking the linked ones."""
-    await _check_member(session, user, workspace_id)
-    app = get_github_app()
-    if not app.configured():
-        return GitHubInstallationsOut(configured=False, install_url=None, installations=[])
-    linked = {
-        str(r)
-        for c in await session.scalars(
+async def _github_installations(
+    session: AsyncSession, workspace_id: uuid.UUID
+) -> tuple[Workspace, dict[int, dict[str, Any]], set[str]]:
+    """The workspace, the installations it may use, and the repositories it linked."""
+    workspace = await session.get_one(Workspace, workspace_id)
+    conns = list(
+        await session.scalars(
             select(Connection).where(
                 Connection.workspace_id == workspace_id, Connection.kind == "github"
             )
         )
-        for r in c.config.get("repos") or []
-    }
-    await session.commit()
+    )
+    linked = {str(r) for c in conns for r in c.config.get("repos") or []}
+    return workspace, github_claims.claimed(workspace, conns), linked
+
+
+async def _install_url(app: GitHubApp) -> str | None:
     try:
-        meta = await app.app_get("/app")
-        installs = await app.installations()
-        repos = await asyncio.gather(*(app.installation_repos(i["id"]) for i in installs))
-    except GitHubError as exc:
+        slug = (await app.app_get("/app")).get("slug")
+    except GitHubError:
+        return None
+    return f"https://github.com/apps/{slug}/installations/new" if slug else None
+
+
+@router.get("/github/installations")
+async def github_installations(
+    user: CurrentUser, session: SessionDep, workspace_id: Annotated[uuid.UUID, Query()]
+) -> GitHubInstallationsOut:
+    """The installations of our GitHub App this workspace may use, and their repositories,
+    marking the linked ones. Other accounts' installations are never listed."""
+    await _check_member(session, user, workspace_id)
+    app = get_github_app()
+    if not app.configured():
+        return GitHubInstallationsOut(configured=False, install_url=None, installations=[])
+    _, allowed, linked = await _github_installations(session, workspace_id)
+    await session.commit()
+    install_url = await _install_url(app)
+    if not allowed:
         return GitHubInstallationsOut(
-            configured=True, install_url=None, installations=[], error=str(exc)
+            configured=True, install_url=install_url, installations=[], needs_authorization=True
         )
-    slug = meta.get("slug")
-    return GitHubInstallationsOut(
-        configured=True,
-        install_url=f"https://github.com/apps/{slug}/installations/new" if slug else None,
-        installations=[
+    ids = sorted(allowed)
+    results = await asyncio.gather(
+        *(app.installation_repos(i) for i in ids), return_exceptions=True
+    )
+    installations, errors = [], []
+    for iid, repos in zip(ids, results, strict=True):
+        if isinstance(repos, BaseException):
+            errors.append(f"{allowed[iid].get('account') or iid}: {repos}")
+            continue
+        installations.append(
             GitHubInstallationOut(
-                id=i["id"],
-                account=i["account"],
+                id=iid,
+                account=str(allowed[iid].get("account") or iid),
                 repos=[
                     GitHubRepoOut(
                         full_name=r["full_name"],
@@ -733,10 +756,75 @@ async def github_installations(
                         default_branch=r["default_branch"],
                         linked=r["full_name"] in linked,
                     )
-                    for r in rs
+                    for r in repos
                 ],
             )
-            for i, rs in zip(installs, repos, strict=True)
+        )
+    return GitHubInstallationsOut(
+        configured=True,
+        install_url=install_url,
+        installations=installations,
+        error="; ".join(errors) or None,
+    )
+
+
+@router.get("/github/authorize")
+async def github_authorize(
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    workspace_id: Annotated[uuid.UUID, Query()],
+) -> GitHubAuthorizeOut:
+    """Where an owner proves which installations of the app they can reach (GitHub OAuth)."""
+    await _check_owner(session, user, workspace_id)
+    app = get_github_app()
+    try:
+        url = github_claims.authorize_url(
+            settings, github_claims.make_state(settings, user.id, workspace_id)
+        )
+    except GitHubError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from None
+    return GitHubAuthorizeOut(
+        authorize_url=url, install_url=await _install_url(app) if app.configured() else None
+    )
+
+
+@router.post("/github/claim")
+async def github_claim(
+    body: GitHubClaimIn,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
+) -> GitHubClaimOut:
+    """Finish the GitHub authorization: the installations of the app this person can reach on
+    GitHub become usable in the workspace it was started for (owners). No GitHub token is
+    kept."""
+    try:
+        workspace_id = github_claims.read_state(settings, body.state, user.id)
+    except GitHubError as exc:
+        raise _unprocessable(str(exc)) from None
+    await _check_owner(session, user, workspace_id)
+    await session.commit()  # no transaction open during the GitHub calls
+    try:
+        found = await github_claims.user_installations(settings, body.code)
+    except GitHubError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from None
+    workspace = await session.get_one(Workspace, workspace_id, with_for_update=True)
+    github_claims.add_claims(workspace, found, user.id)
+    record(
+        session,
+        workspace_id=workspace_id,
+        actor=user,
+        action="github.installations_claimed",
+        detail={"accounts": sorted(str(i["account"]) for i in found)},
+        ip=ip,
+    )
+    await session.commit()
+    return GitHubClaimOut(
+        workspace_id=workspace_id,
+        installations=[
+            GitHubInstallationOut(id=i["id"], account=i["account"], repos=[]) for i in found
         ],
     )
 
@@ -757,18 +845,19 @@ async def github_link(
     except GitHubError as exc:
         raise _unprocessable(str(exc)) from None
     app = get_github_app()
+    _, allowed, _ = await _github_installations(session, body.workspace_id)
     await session.commit()
+    if body.installation_id not in allowed:
+        # Not one this workspace proved access to: say nothing about whether it exists.
+        raise _unprocessable("That GitHub App installation was not found.")
     try:
-        installs = {i["id"]: i for i in await app.installations()}
-        if body.installation_id not in installs:
-            raise _unprocessable("That GitHub App installation was not found.")
         visible = {r["full_name"] for r in await app.installation_repos(body.installation_id)}
     except GitHubError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from None
     missing = [r for r in wanted if r not in visible]
     if missing:
         raise _unprocessable(f"The installation cannot see: {', '.join(missing)}.")
-    owner = installs[body.installation_id]["account"]
+    owner = str(allowed[body.installation_id].get("account") or body.installation_id)
     conn = await session.scalar(
         select(Connection).where(
             Connection.workspace_id == body.workspace_id,

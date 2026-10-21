@@ -1,8 +1,8 @@
 "use client";
 
 import { Lock } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AwsConnectDialog, openPendingTab } from "@/components/connections/aws-connect-dialog";
@@ -47,6 +47,11 @@ export default function ConnectionsPage() {
   const connections = useConnections(workspace?.id);
   const refresh = useRefreshConnection();
   const [open, setOpen] = useState<ConnectionKind | null>(null);
+  // ?connect=github: back from GitHub authorization, open the repository picker once.
+  const connectParam = useSearchParams().get("connect");
+  useEffect(() => {
+    if (connectParam === "github") setOpen("github");
+  }, [connectParam]);
   const [awsTier, setAwsTier] = useState<AwsTier>("observe");
   const awsTab = useRef<Window | null>(null);
   const error = workspaceError ?? connections.error;
