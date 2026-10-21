@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 
-import { REPOSITORY_URL } from "@/components/public/contact";
 import { Article, Code, Inline, Section, SubHeading } from "@/components/public/prose";
 
 export const metadata: Metadata = {
@@ -9,7 +8,8 @@ export const metadata: Metadata = {
     "Give Groundcrew a read-only service account, paste its kubeconfig, and optionally allow deploys and emergency fixes.",
 };
 
-const INFRA = `${REPOSITORY_URL}/blob/main/infra`;
+// Served by this site (apps/web/public), identical to the repository's infra/ files.
+const INFRA = "";
 
 const READ_ONLY = `kubectl apply -f k8s-readonly-rbac.yaml
 kubectl -n groundcrew create token groundcrew-reader --duration=24h`;
