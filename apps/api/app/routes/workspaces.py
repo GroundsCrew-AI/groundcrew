@@ -8,10 +8,10 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, or_, select
 
-from app import quotas
+from app import deletion, quotas
 from app.accounts import (
     NotFoundError,
     SignInError,
@@ -21,6 +21,7 @@ from app.accounts import (
     user_workspaces,
 )
 from app.agents.medic.events import PENDING_FOLLOWUP_STATES
+from app.audit import record
 from app.config import Settings, get_settings
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
@@ -32,11 +33,12 @@ from app.db.models import (
     Run,
     RunStep,
     User,
+    Workspace,
 )
 from app.incidents.store import OPEN_STATUSES
 from app.llm.budget import usage_totals, workspace_daily_cap, workspace_usage_today
 from app.platform import is_platform_admin
-from app.routes.deps import CurrentUser, SessionDep, SettingsDep
+from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.runs import rejected_counts
 from app.routes.schemas import (
     ApprovalOut,
@@ -321,3 +323,87 @@ async def workspace_usage(
             for name, q in used.items()
         ],
     )
+
+
+class WorkspaceRef(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class AccountDeletionOut(BaseModel):
+    """What deleting your account would do."""
+
+    # Workspaces only you are in: deleted with everything in them.
+    deletes: list[WorkspaceRef]
+    # Shared workspaces you leave.
+    leaves: list[WorkspaceRef]
+    # Shared workspaces where you are the only owner: make someone else an owner first.
+    blocked_by: list[WorkspaceRef]
+
+
+class AccountDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Must be exactly "delete my account".
+    confirm: str = Field(max_length=40)
+
+
+def _deletion_out(plan: deletion.AccountPlan) -> AccountDeletionOut:
+    def refs(items: list[Workspace]) -> list[WorkspaceRef]:
+        return [WorkspaceRef(id=w.id, name=w.name) for w in items]
+
+    return AccountDeletionOut(
+        deletes=refs(plan.delete), leaves=refs(plan.leave), blocked_by=refs(plan.blocked)
+    )
+
+
+@router.get("/me/account-deletion")
+async def account_deletion_preview(user: CurrentUser, session: SessionDep) -> AccountDeletionOut:
+    return _deletion_out(await deletion.account_plan(session, user))
+
+
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={409: {"description": "You are the only owner of a shared workspace."}},
+)
+async def delete_my_account(
+    body: AccountDelete, user: CurrentUser, session: SessionDep, ip: ClientIp
+) -> None:
+    """Delete your account: your sign-in identities, memberships, and the workspaces only you
+    are in, with everything in them. Shared workspaces stay; your name stays on what you
+    approved there. Signs you out everywhere."""
+    if body.confirm.strip().lower() != "delete my account":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, 'Type "delete my account" to confirm.'
+        )
+    plan = await deletion.account_plan(session, user)
+    if plan.blocked:
+        names = ", ".join(w.name for w in plan.blocked)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"You are the only owner of {names}. Make someone else an owner there first, or "
+            "delete the workspace.",
+        )
+    for workspace in plan.leave:
+        record(
+            session,
+            workspace_id=workspace.id,
+            actor=user,
+            action="member.left",
+            target_type="user",
+            target_id=user.id,
+            detail={"reason": "account_deleted"},
+            ip=ip,
+        )
+    record(
+        session,
+        workspace_id=None,
+        actor=user,
+        action="account.deleted",
+        target_type="user",
+        target_id=user.id,
+        detail={"workspaces_deleted": len(plan.delete)},
+        ip=ip,
+    )
+    await deletion.delete_account(session, user, plan)
+    await session.commit()

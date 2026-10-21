@@ -108,3 +108,8 @@ export async function signOutAction() {
 export async function signOutAfterPasswordChange() {
   await signOut({ redirectTo: "/signin?reason=password" });
 }
+
+/** After the account is deleted: end the session and leave the app. */
+export async function signOutAfterAccountDeleted() {
+  await signOut({ redirectTo: "/" });
+}

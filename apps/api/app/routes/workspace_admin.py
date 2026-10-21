@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import ColumnElement, func, select
 
+from app import deletion
 from app.accounts import (
     ForbiddenError,
     NotFoundError,
@@ -32,6 +33,7 @@ from app.accounts import (
 from app.audit import record
 from app.db.models import (
     AuditEvent,
+    Connection,
     User,
     Workspace,
     WorkspaceInvite,
@@ -40,6 +42,7 @@ from app.db.models import (
 )
 from app.mail import Mailer, MailError, get_mailer, invite_mail
 from app.notifications import send_test
+from app.routes.connections import cleanup_steps
 from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.schemas import WorkspaceOut
 from app.security.crypto import SecretsKeyError
@@ -633,3 +636,57 @@ async def audit_log(
         ],
         next_before=rows[-1].created_at if more and rows else None,
     )
+
+
+class WorkspaceDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # The workspace's name, typed by the owner, so a slip does not delete it.
+    confirm_name: str = Field(min_length=1, max_length=200)
+
+
+class ConnectionCleanup(BaseModel):
+    connection: str
+    kind: str
+    steps: list[str]
+
+
+class WorkspaceDeleted(BaseModel):
+    id: uuid.UUID
+    # What to remove on the customer's side for each connection that was in it.
+    cleanup: list[ConnectionCleanup]
+
+
+@router.delete("/{workspace_id}")
+async def delete_workspace(
+    workspace_id: uuid.UUID, body: WorkspaceDelete, user: CurrentUser, session: SessionDep
+) -> WorkspaceDeleted:
+    """Delete the workspace and everything Groundcrew stored for it (owners): members, invites,
+    connections and their credentials, the graph, runs, approvals, incidents, usage, and the
+    audit log. Nothing changes in the connected accounts; `cleanup` says what to remove there."""
+    workspace = await _owner(session, user, workspace_id)
+    if body.confirm_name.strip() != workspace.name:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Type the workspace's name to delete it."
+        )
+    connections = list(
+        await session.scalars(select(Connection).where(Connection.workspace_id == workspace_id))
+    )
+    cleanup = [
+        ConnectionCleanup(connection=c.name, kind=c.kind, steps=cleanup_steps(c))
+        for c in connections
+    ]
+    name = workspace.name
+    await deletion.delete_workspace(session, workspace)
+    # Kept outside the workspace (its own audit log goes with it).
+    record(
+        session,
+        workspace_id=None,
+        actor=user,
+        action="workspace.deleted",
+        target_type="workspace",
+        target_id=workspace_id,
+        detail={"name": name, "connections": len(connections)},
+    )
+    await session.commit()
+    log.info("workspace %s deleted by %s", workspace_id, user.id)
+    return WorkspaceDeleted(id=workspace_id, cleanup=cleanup)

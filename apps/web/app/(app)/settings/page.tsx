@@ -3,6 +3,7 @@
 import { Lock, Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { AccessSection } from "@/components/settings/access-section";
 import { AccountSection } from "@/components/settings/account-section";
 import { AuditSection } from "@/components/settings/audit-section";
 import { UsageSection } from "@/components/settings/usage-section";
@@ -13,6 +14,7 @@ import { PlatformSection } from "@/components/settings/platform-section";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { WorkspaceNameForm, WorkspaceSettingsForm } from "@/components/settings/workspace-forms";
 import { CreateWorkspaceDialog } from "@/components/settings/create-workspace-dialog";
+import { DeleteAccount, DeleteWorkspace } from "@/components/settings/delete-controls";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { SettingsIllustration } from "@/components/states/illustrations";
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states/states";
@@ -172,6 +174,14 @@ export default function SettingsPage() {
         </SettingsSection>
 
         <SettingsSection
+          id="settings-access"
+          title="What Groundcrew can access"
+          description="For each connection: what it reads, and what it may change after an approval."
+        >
+          <AccessSection workspaceId={data.id} />
+        </SettingsSection>
+
+        <SettingsSection
           id="settings-activity"
           title="Activity"
           description="Who approved what and when, and every change to members, connections, and settings."
@@ -188,6 +198,16 @@ export default function SettingsPage() {
             <LeaveWorkspace workspaceId={data.id} workspaceName={data.name} userId={me.user.id} onlyOwner={onlyOwner} />
           </SettingsSection>
         )}
+
+        {owner && (
+          <SettingsSection
+            id="settings-delete-workspace"
+            title="Delete workspace"
+            description="Removes the workspace and everything Groundcrew stored for it. Nothing changes in your connected accounts."
+          >
+            <DeleteWorkspace key={data.id} workspaceId={data.id} workspaceName={data.name} />
+          </SettingsSection>
+        )}
       </>
     );
   }
@@ -200,6 +220,13 @@ export default function SettingsPage() {
           <div>
             <GroupTitle>Account</GroupTitle>
             <AccountSection me={me} />
+            <SettingsSection
+              id="settings-delete-account"
+              title="Delete account"
+              description="Your sign-in, your memberships, and the workspaces only you are in."
+            >
+              <DeleteAccount />
+            </SettingsSection>
           </div>
         )}
         {me?.platform_admin && (

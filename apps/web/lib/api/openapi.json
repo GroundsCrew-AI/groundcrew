@@ -12,6 +12,54 @@
         "title": "Accepted",
         "type": "object"
       },
+      "AccountDelete": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "maxLength": 40,
+            "title": "Confirm",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "title": "AccountDelete",
+        "type": "object"
+      },
+      "AccountDeletionOut": {
+        "description": "What deleting your account would do.",
+        "properties": {
+          "blocked_by": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRef"
+            },
+            "title": "Blocked By",
+            "type": "array"
+          },
+          "deletes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRef"
+            },
+            "title": "Deletes",
+            "type": "array"
+          },
+          "leaves": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceRef"
+            },
+            "title": "Leaves",
+            "type": "array"
+          }
+        },
+        "required": [
+          "deletes",
+          "leaves",
+          "blocked_by"
+        ],
+        "title": "AccountDeletionOut",
+        "type": "object"
+      },
       "ActionPlan": {
         "description": "One emergency action, ready to approve. Shown on the approval card as is.",
         "properties": {
@@ -1058,6 +1106,32 @@
         "title": "Claim",
         "type": "object"
       },
+      "ConnectionCleanup": {
+        "properties": {
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "connection",
+          "kind",
+          "steps"
+        ],
+        "title": "ConnectionCleanup",
+        "type": "object"
+      },
       "ConnectionDeleted": {
         "properties": {
           "cleanup": {
@@ -1098,6 +1172,13 @@
       },
       "ConnectionOut": {
         "properties": {
+          "access": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Access",
+            "type": "array"
+          },
           "account": {
             "anyOf": [
               {
@@ -8620,6 +8701,44 @@
         "title": "WorkspaceCreate",
         "type": "object"
       },
+      "WorkspaceDelete": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Confirm Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm_name"
+        ],
+        "title": "WorkspaceDelete",
+        "type": "object"
+      },
+      "WorkspaceDeleted": {
+        "properties": {
+          "cleanup": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionCleanup"
+            },
+            "title": "Cleanup",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "cleanup"
+        ],
+        "title": "WorkspaceDeleted",
+        "type": "object"
+      },
       "WorkspaceDetail": {
         "properties": {
           "created_at": {
@@ -8679,6 +8798,25 @@
           "role"
         ],
         "title": "WorkspaceOut",
+        "type": "object"
+      },
+      "WorkspaceRef": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "WorkspaceRef",
         "type": "object"
       },
       "WorkspaceRole": {
@@ -10165,7 +10303,7 @@
     },
     "/connections/{connection_id}": {
       "delete": {
-        "description": "Remove the connection, its stored secret, and every resource it discovered (with their\nedges). Access on the customer's side is removed by them: see `cleanup`.",
+        "description": "Remove the connection, its stored secret, every resource it discovered (with their\nedges), and the telemetry read for them (app.deletion). Access on the customer's side is\nremoved by them: see `cleanup`.",
         "operationId": "delete_connection_connections__connection_id__delete",
         "parameters": [
           {
@@ -11519,6 +11657,60 @@
       }
     },
     "/me": {
+      "delete": {
+        "description": "Delete your account: your sign-in identities, memberships, and the workspaces only you\nare in, with everything in them. Shared workspaces stay; your name stays on what you\napproved there. Signs you out everywhere.",
+        "operationId": "delete_my_account_me_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDelete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "You are the only owner of a shared workspace."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete My Account",
+        "tags": [
+          "workspaces"
+        ]
+      },
       "get": {
         "operationId": "me_me_get",
         "parameters": [
@@ -11620,6 +11812,55 @@
           }
         },
         "summary": "Update Me",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/me/account-deletion": {
+      "get": {
+        "operationId": "account_deletion_preview_me_account_deletion_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Account Deletion Preview",
         "tags": [
           "workspaces"
         ]
@@ -12148,6 +12389,74 @@
       }
     },
     "/workspaces/{workspace_id}": {
+      "delete": {
+        "description": "Delete the workspace and everything Groundcrew stored for it (owners): members, invites,\nconnections and their credentials, the graph, runs, approvals, incidents, usage, and the\naudit log. Nothing changes in the connected accounts; `cleanup` says what to remove there.",
+        "operationId": "delete_workspace_workspaces__workspace_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceDelete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceDeleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      },
       "get": {
         "operationId": "get_workspace_workspaces__workspace_id__get",
         "parameters": [

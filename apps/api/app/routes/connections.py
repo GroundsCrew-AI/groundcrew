@@ -15,10 +15,10 @@ from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import quotas
+from app import deletion, quotas
 from app.accounts import NotFoundError, member_workspace, require_owner
 from app.audit import record
 from app.config import Settings, get_settings
@@ -943,7 +943,8 @@ async def discover_connection(
     return RunCreated(id=run.id, status=RunStatus.queued)
 
 
-def _cleanup_steps(conn: Connection) -> list[str]:
+def cleanup_steps(conn: Connection) -> list[str]:
+    """What the customer removes on their side to end Groundcrew's access."""
     c = conn.config or {}
     region = c.get("region") or get_settings().discovery_regions[0]
     if conn.kind == "aws":
@@ -980,15 +981,12 @@ async def delete_connection(
     session: SessionDep,
     ip: ClientIp,
 ) -> ConnectionDeleted:
-    """Remove the connection, its stored secret, and every resource it discovered (with their
-    edges). Access on the customer's side is removed by them: see `cleanup`."""
+    """Remove the connection, its stored secret, every resource it discovered (with their
+    edges), and the telemetry read for them (app.deletion). Access on the customer's side is
+    removed by them: see `cleanup`."""
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
-    result = await session.execute(delete(Resource).where(Resource.connection_id == conn.id))
-    removed = int(getattr(result, "rowcount", 0) or 0)
-    steps = _cleanup_steps(conn)
-    if conn.kind == "aws" and conn.config.get("role_arn"):
-        get_sessions().forget(str(conn.config["role_arn"]), str(conn.config.get("external_id")))
-    await session.delete(conn)
+    steps = cleanup_steps(conn)
+    removed = await deletion.delete_connection(session, conn)
     await _audit(session, user, conn, "deleted", ip)
     await session.commit()
     return ConnectionDeleted(id=connection_id, removed_resources=removed, cleanup=steps)
