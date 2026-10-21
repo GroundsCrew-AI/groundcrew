@@ -1,10 +1,10 @@
-variable "admin_cidr" {
-  description = "The only address SSH (22) is open to, as a /32."
-  type        = string
+variable "admin_cidrs" {
+  description = "The only addresses SSH (22) is open to, each a /32."
+  type        = list(string)
 
   validation {
-    condition     = can(cidrhost(var.admin_cidr, 0)) && endswith(var.admin_cidr, "/32")
-    error_message = "admin_cidr must be one address, like 203.0.113.7/32."
+    condition     = length(var.admin_cidrs) > 0 && alltrue([for c in var.admin_cidrs : can(cidrhost(c, 0)) && endswith(c, "/32")])
+    error_message = "admin_cidrs must be single addresses, like [\"203.0.113.7/32\"]."
   }
 }
 

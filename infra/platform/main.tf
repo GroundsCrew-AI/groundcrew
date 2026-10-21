@@ -53,12 +53,13 @@ resource "aws_vpc_security_group_ingress_rule" "https" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
+  for_each          = toset(var.admin_cidrs)
   security_group_id = aws_security_group.platform.id
-  description       = "SSH from the admin address only"
+  description       = "SSH from an admin address"
   ip_protocol       = "tcp"
   from_port         = 22
   to_port           = 22
-  cidr_ipv4         = var.admin_cidr
+  cidr_ipv4         = each.value
 }
 
 resource "aws_vpc_security_group_egress_rule" "all" {
@@ -102,7 +103,7 @@ resource "aws_instance" "platform" {
 
   user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
     ssh_public_key = var.ssh_public_key
-    admin_cidr     = var.admin_cidr
+    admin_cidrs    = var.admin_cidrs
   })
   # cloud-init runs on first boot only; changing it later must not replace the host. A rebuild
   # is an explicit `terraform apply -replace=aws_instance.platform` (docs/operations.md).

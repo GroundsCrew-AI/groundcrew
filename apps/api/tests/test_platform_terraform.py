@@ -55,10 +55,12 @@ def test_only_web_ports_are_public_and_ssh_is_the_admin_address() -> None:
     rules = _blocks(main, "resource", "aws_vpc_security_group_ingress_rule")
     public = {r["from_port"] for r in rules.values() if r.get("cidr_ipv4") == "0.0.0.0/0"}
     assert public == {80, 443}
-    assert rules["ssh"]["from_port"] == 22 and rules["ssh"]["cidr_ipv4"] == "${var.admin_cidr}"
+    ssh = rules["ssh"]
+    assert ssh["from_port"] == 22 and ssh["cidr_ipv4"] == "${each.value}"
+    assert ssh["for_each"] == "${toset(var.admin_cidrs)}"
     assert all(r["from_port"] == r["to_port"] for r in rules.values())
     variables = _load("variables.tf")
-    admin = _blocks(variables, "variable", "admin_cidr")
+    admin = _blocks(variables, "variable", "admin_cidrs")
     assert "/32" in str(admin)
 
 
@@ -107,7 +109,7 @@ def test_first_boot_hardens_ssh_and_the_firewall_matches() -> None:
         "default allow outgoing",
         "allow 80/tcp",
         "allow 443/tcp",
-        "allow from ${admin_cidr} to any port 22 proto tcp",
+        "allow from ${cidr} to any port 22 proto tcp",
         "--force enable",
     ]
     assert "unattended-upgrades" in text and "fail2ban" in text

@@ -3,6 +3,11 @@ output "elastic_ip" {
   value       = aws_eip.platform.public_ip
 }
 
+output "admin_cidrs" {
+  description = "Where SSH is allowed from (host/push.sh applies the same list to ufw)."
+  value       = var.admin_cidrs
+}
+
 output "instance_id" {
   value = aws_instance.platform.id
 }

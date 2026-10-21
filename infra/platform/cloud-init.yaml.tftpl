@@ -56,7 +56,9 @@ runcmd:
   - ufw default allow outgoing
   - ufw allow 80/tcp
   - ufw allow 443/tcp
-  - ufw allow from ${admin_cidr} to any port 22 proto tcp
+%{ for cidr in admin_cidrs ~}
+  - ufw allow from ${cidr} to any port 22 proto tcp
+%{ endfor ~}
   - ufw --force enable
   - systemctl restart ssh
   - systemctl enable --now fail2ban unattended-upgrades

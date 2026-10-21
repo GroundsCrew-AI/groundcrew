@@ -1,7 +1,8 @@
 # Groundcrew on the platform host (docs/phase6-plan.md section 5.2). Installed as
-# /opt/groundcrew/compose.yml; images come from the release file (/opt/groundcrew/release.env,
-# written by gc-update, P6.6), pinned by digest. Secrets come from /etc/groundcrew/*.env
+# /opt/groundcrew/compose.yml by gc-release; images are built on the host and named in
+# /opt/groundcrew/release.env (groundcrew/api:<commit>, groundcrew/web:<commit>). Secrets come from /etc/groundcrew/*.env
 # (root only, read by Compose at `up`); nothing secret is in this file or in the images.
+# /etc/groundcrew/config.env holds the non-secret settings (models, SMTP host, regions).
 #
 # Only nginx on the host is public. Postgres has no port at all; the API and the web app publish
 # to 127.0.0.1 only (Docker's published ports bypass ufw, so nothing here binds 0.0.0.0).
@@ -20,9 +21,10 @@ x-service: &service
 
 x-app: &app
   <<: *service
-  image: ${GC_API_IMAGE:?set by gc-update from the release file}
+  image: ${GC_API_IMAGE:?set by gc-release in release.env}
   user: "10001:10001"
   env_file:
+    - /etc/groundcrew/config.env
     - /etc/groundcrew/app.env
   environment:
     APP_ENV: production
@@ -94,10 +96,11 @@ services:
 
   migrate:
     <<: *service
-    image: ${GC_API_IMAGE:?set by gc-update from the release file}
+    image: ${GC_API_IMAGE:?set by gc-release in release.env}
     user: "10001:10001"
     restart: "no"
     env_file:
+      - /etc/groundcrew/config.env
       - /etc/groundcrew/app.env
     environment:
       APP_ENV: production
@@ -182,7 +185,7 @@ services:
 
   web:
     <<: *service
-    image: ${GC_WEB_IMAGE:?set by gc-update from the release file}
+    image: ${GC_WEB_IMAGE:?set by gc-release in release.env}
     user: "10001:10001"
     env_file:
       - /etc/groundcrew/web.env
