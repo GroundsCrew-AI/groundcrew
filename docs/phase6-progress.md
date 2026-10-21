@@ -252,6 +252,21 @@ Later the same day:
 - Release `14423f78caf4` (Groundcrew favicon, SVG icon, Apple touch icon) deployed; `13196e0a74bc` kept
   for rollback.
 
+UI pass (2026-10-22, on `phase6-deploy`, not deployed yet):
+- Landing page rebuilt: hero with an illustrated incident and approval, works-with strip, four
+  feature sections with drawn mockups, safety grid, steps, agents, FAQ, closing call to action.
+  Sticky public header with a phone menu; footer with Product, Docs, Trust links.
+- Docs: sidebar layout, "On this page", Previous/Next; new pages getting-started, discovery, deploys,
+  incidents, notifications, roles, approvals, limits, data, faq; connect guides expanded with
+  troubleshooting. Kubernetes guide now links the RBAC files in the repository (those links work once
+  the repository is public).
+- App: connection actions wrap on phones (were clipped), two-column overview stats on phones,
+  operator wording removed from the Kubernetes and GitHub connect dialogs.
+- Checked: tsc, eslint, vitest (252), Playwright e2e (5) plus signed-in screenshots at 1440 and 390 px
+  with no horizontal scroll, public pages at 360 px, production web image serves every public page.
+- Unconfirmed in the docs: Slack error names in notifications troubleshooting, and the limits page
+  pointing people to the Security page contact to ask for higher limits.
+
 Open issues:
 - The automatic rollback path has unit-level logic only; it has not been exercised live (a deploy of a
   commit that fails its health check would show it).
