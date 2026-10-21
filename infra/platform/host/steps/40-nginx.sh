@@ -8,6 +8,9 @@ install -m 0644 "$HERE"/nginx/*.conf /opt/groundcrew/nginx/
 site() { sed -e "s/__DOMAIN__/$DOMAIN/g" -e "s/__API_DOMAIN__/$API_DOMAIN/g" "$HERE/nginx/$1"; }
 
 install -m 0644 "$HERE/nginx/groundcrew-common.conf" /etc/nginx/conf.d/groundcrew-common.conf
+# Ubuntu's nginx.conf sets its own TLS protocols and cipher preference at http level; the
+# Groundcrew site sets them (TLS 1.2+), and nginx refuses both.
+sed -i -E 's/^(\s*)(ssl_protocols|ssl_prefer_server_ciphers)\b/\1# groundcrew: set in sites-enabled\/groundcrew.conf # \2/' /etc/nginx/nginx.conf
 rm -f /etc/nginx/sites-enabled/default
 install -m 0644 "$HERE/nginx/default.conf" /etc/nginx/sites-available/00-default.conf
 ln -sf /etc/nginx/sites-available/00-default.conf /etc/nginx/sites-enabled/00-default.conf

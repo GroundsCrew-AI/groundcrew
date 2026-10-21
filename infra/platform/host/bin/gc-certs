@@ -13,6 +13,7 @@ API_DOMAIN=${GC_API_DOMAIN:-api.groundkrew.com}
 SRC=/opt/groundcrew/nginx
 
 site() { sed -e "s/__DOMAIN__/$DOMAIN/g" -e "s/__API_DOMAIN__/$API_DOMAIN/g" "$SRC/$1"; }
+[ "$(id -u)" = 0 ] || { echo "run as root: sudo gc-certs ..." >&2; exit 1; }
 
 issue() {
   local email="" agreed=no
@@ -32,7 +33,15 @@ issue() {
   site groundcrew.conf >/etc/nginx/sites-available/groundcrew.conf
   ln -sf /etc/nginx/sites-available/groundcrew.conf /etc/nginx/sites-enabled/groundcrew.conf
   rm -f /etc/nginx/sites-enabled/groundcrew-bootstrap.conf
-  nginx -t && systemctl reload nginx
+  if ! nginx -t; then
+    # Keep serving what worked: back to the bootstrap site until the config is fixed.
+    rm -f /etc/nginx/sites-enabled/groundcrew.conf
+    ln -sf /etc/nginx/sites-available/groundcrew-bootstrap.conf /etc/nginx/sites-enabled/groundcrew-bootstrap.conf
+    echo "gc-certs: certificate issued, but nginx refused the HTTPS site; still on the bootstrap site" >&2
+    exit 1
+  fi
+  systemctl reload nginx
+  systemctl enable --now gc-certcheck.timer >/dev/null 2>&1
   echo "gc-certs: certificate issued; nginx serves HTTPS for $DOMAIN, www.$DOMAIN, $API_DOMAIN"
 }
 
