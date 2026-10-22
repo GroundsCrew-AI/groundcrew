@@ -13,7 +13,6 @@ then queues a command signed with Groundcrew's command key (app/remote_agents/co
 waits for the agent's result (it long-polls for commands, so this takes seconds).
 """
 
-import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -28,7 +27,7 @@ from app.actions.base import (
     EmergencyActionError,
 )
 from app.config import Settings, get_settings
-from app.db.models import Agent, AgentCommand, Connection
+from app.db.models import Agent, Connection
 from app.db.session import SessionFactory
 from app.policy.actions import ApprovedAction, consume_approved_action
 from app.remote_agents import commands
@@ -191,38 +190,30 @@ class AgentEmergencyActions:
             session.add(command)
             await session.commit()
             command_id = command.id
-        deadline = datetime.now(UTC) + RESULT_TIMEOUT
-        while datetime.now(UTC) < deadline:
-            await asyncio.sleep(POLL_SECONDS)
-            async with self.session_factory() as session:
-                found = await session.get(AgentCommand, command_id)
-                if found is None:
-                    return result(False, "Not run: the command was removed.", error="removed")
-                if found.status in ("succeeded", "failed", "expired"):
-                    ok = found.status == "succeeded"
-                    host = agent.hostname or conn.name
-                    done = (
-                        f"Rolled {service} on {host} back to {plan.desired}."
-                        if plan.action == AGENT_ROLLBACK_SERVICE
-                        else f"Restarted {service} on {host}."
-                    )
-                    return result(
-                        ok,
-                        done if ok else f"The agent could not {_verb(plan)} {service}.",
-                        details={"command_id": str(command_id)},
-                        error=None if ok else (found.result or found.status),
-                    )
-        async with self.session_factory() as session:
-            found = await session.get(AgentCommand, command_id, with_for_update=True)
-            if found is not None and found.status in ("queued", "sent"):
-                found.status, found.finished_at = "expired", datetime.now(UTC)
-                found.result = "No result from the agent in time."
-                await session.commit()
+        found = await commands.wait_for_result(
+            self.session_factory, command_id, RESULT_TIMEOUT, POLL_SECONDS
+        )
+        host = agent.hostname or conn.name
+        if found is None:
+            return result(False, "Not run: the command was removed.", error="removed")
+        if found.status == "expired":
+            return result(
+                False,
+                f"No result from the agent on {host} in time.",
+                details={"command_id": str(command_id)},
+                error="timed out waiting for the agent",
+            )
+        ok = found.status == "succeeded"
+        done = (
+            f"Rolled {service} on {host} back to {plan.desired}."
+            if plan.action == AGENT_ROLLBACK_SERVICE
+            else f"Restarted {service} on {host}."
+        )
         return result(
-            False,
-            f"No result from the agent on {agent.hostname or conn.name} in time.",
+            ok,
+            done if ok else f"The agent could not {_verb(plan)} {service}.",
             details={"command_id": str(command_id)},
-            error="timed out waiting for the agent",
+            error=None if ok else (found.result or found.status),
         )
 
 

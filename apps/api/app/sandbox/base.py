@@ -122,6 +122,13 @@ class Sandbox(Protocol):
 
     async def push(self, image_ref: str, target: PushTarget) -> PushResult: ...
 
+    async def push_to_groundcrew(
+        self, image_ref: str, registry_url: str, repository: str, tag: str
+    ) -> PushResult:
+        """Hand the image to the Groundcrew registry (app/registry.py) from outside the build
+        service, which cannot reach it."""
+        ...
+
     async def image_id(self, image_ref: str) -> str: ...
 
     async def cleanup(self, run_id: str) -> None: ...

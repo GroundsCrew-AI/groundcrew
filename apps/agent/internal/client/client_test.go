@@ -84,3 +84,25 @@ func TestRefusalsCarryTheDetailAndAreClassified(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestAFailedRequestDropsReusedConnections(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			// Hang past the client's timeout, as a dead connection does.
+			time.Sleep(300 * time.Millisecond)
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "agent-1", vectorKey(), "t")
+	c.HTTP.Timeout = 100 * time.Millisecond
+	if err := c.Post(context.Background(), "/x", map[string]any{}, nil); err == nil {
+		t.Fatal("want a timeout")
+	}
+	c.HTTP.Timeout = 2 * time.Second
+	if err := c.Post(context.Background(), "/x", map[string]any{}, nil); err != nil {
+		t.Fatalf("the next request must work on a new connection: %v", err)
+	}
+}

@@ -15,6 +15,7 @@ import { K8sConfigMapsDialog } from "./k8s-configmaps-dialog";
 import { K8sDeploySettingsDialog } from "./k8s-deploy-settings-dialog";
 import { K8sOperateDialog } from "./k8s-operate-dialog";
 import { AgentConnectDialog } from "./agent-connect-dialog";
+import { AgentRegistryDialog } from "./agent-registry-dialog";
 import { AwsTierDialog } from "./aws-tier-dialog";
 import { RemoveConnection } from "./remove-connection";
 
@@ -119,6 +120,7 @@ export function ConnectionRow({
   const [deployOpen, setDeployOpen] = useState(false);
   const [configMapsOpen, setConfigMapsOpen] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
+  const [registryOpen, setRegistryOpen] = useState(false);
   const awsConnected =
     connection.kind === "aws" && connection.status === "connected";
   const k8sConnected =
@@ -298,6 +300,16 @@ export function ConnectionRow({
               : "Enable emergency fixes"}
           </Button>
         )}
+        {connection.kind === "agent" && connection.agent?.enrolled && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setRegistryOpen(true)}
+            {...ownerOnly}
+          >
+            Registry
+          </Button>
+        )}
         {connection.kind === "agent" && (
           <Button
             size="sm"
@@ -314,6 +326,13 @@ export function ConnectionRow({
           describedBy={ownerOnly["aria-describedby"]}
         />
       </div>
+      {connection.kind === "agent" && registryOpen && (
+        <AgentRegistryDialog
+          connection={connection}
+          open
+          onOpenChange={setRegistryOpen}
+        />
+      )}
       {connection.kind === "agent" && tokenOpen && (
         <AgentConnectDialog
           connection={connection}

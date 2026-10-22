@@ -8,6 +8,7 @@ connection deletes its agent, so its key stops working at once.
 """
 
 import asyncio
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -33,6 +34,7 @@ from app.remote_agents.signing import (
     verify,
 )
 from app.routes.deps import SessionDep, SessionFactoryDep, SettingsDep, too_many_requests
+from app.security.crypto import decrypt
 from app.security.ratelimit import limiter
 
 router = APIRouter(prefix="/agent/v1", tags=["agent"])
@@ -93,6 +95,24 @@ class CommandOut(BaseModel):
 
 class PollOut(BaseModel):
     commands: list[CommandOut] = Field(default_factory=list)
+
+
+class RegistryLoginOut(BaseModel):
+    server: str
+    username: str
+    password: str
+
+
+class EnvOut(BaseModel):
+    name: str
+    value: str
+
+
+class CommandSecretsOut(BaseModel):
+    """What a deploy needs and the payload does not carry. Returned once."""
+
+    registry: RegistryLoginOut | None = None
+    env: list[EnvOut] = Field(default_factory=list)
 
 
 class CommandResultIn(BaseModel):
@@ -336,3 +356,20 @@ async def command_result(
         )
     await session.commit()
     return EventsOut(stored=1)
+
+
+@router.post("/commands/{command_id}/secrets")
+async def command_secrets(
+    command_id: uuid.UUID, agent: SignedAgent, session: SessionDep
+) -> CommandSecretsOut:
+    """A deploy's registry login and env values, for the agent running it: once, while the
+    command is handed out, and then wiped."""
+    found = await session.get(AgentCommand, command_id, with_for_update=True)
+    if found is None or found.agent_id != agent.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such command for this agent.")
+    if found.status != "sent" or not found.secret_encrypted:
+        raise HTTPException(status.HTTP_410_GONE, "This command's secrets were fetched already.")
+    raw = json.loads(decrypt(found.secret_encrypted))
+    found.secret_encrypted = None
+    await session.commit()
+    return CommandSecretsOut.model_validate(raw)

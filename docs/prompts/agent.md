@@ -7,3 +7,10 @@ Decisions (2026-10-22): written in Go; the first runtime is a VM running Docker 
 systemd services. Plan first (docs/agent-plan.md), then one draft PR per milestone, stopping for
 review after each. Same rules as Phase 6: no AWS write, server change, or production deploy
 without an explicit OK in the chat; user-facing wording describes Groundcrew as a product.
+
+Update (2026-10-22): finish the agent in one go (A4b deploys through the agent), then a UI
+revamp. Registry for agent deploys: a Groundcrew-hosted registry is the default (nothing to set
+up); a user who does not want images there adds their own (ECR, Docker Hub, GHCR) on the agent
+connection. After the agent: revamp the whole platform's UI (landing page to every page): a
+little more colorful, a clearer Map (React Flow options for clear views and distinctions),
+easy and clear routing, and docs links inside the platform (the ui-ux-pro-max skills).

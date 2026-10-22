@@ -22,7 +22,7 @@ from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
 from app.graph.roles import role_of
 from app.remote_agents import AGENT_VERSION, outdated
 from app.security.redact import redact_json
-from app.targets.k8s_deploy import deploy_settings
+from app.targets.k8s_deploy import K8sDeploySettings, deploy_settings
 
 
 class ConnectionKind(StrEnum):
@@ -69,6 +69,19 @@ class K8sDeploySettingsOut(BaseModel):
     aws_connection_id: uuid.UUID | None = None
 
 
+def _registry_view(conn: Connection) -> dict[str, Any]:
+    own = K8sDeploySettings.from_config(conn.config)
+    if own is None:
+        return {}
+    return {
+        "registry": own.registry,
+        "registry_auth": own.registry_auth,
+        "registry_username": own.username,
+        "registry_token_saved": bool(own.password_encrypted),
+        "registry_aws_connection_id": own.aws_connection_id,
+    }
+
+
 class AgentOut(BaseModel):
     """A Groundcrew agent's state (connection kind `agent`)."""
 
@@ -83,6 +96,15 @@ class AgentOut(BaseModel):
     # A join token is waiting to be used until then (null: none).
     join_expires_at: datetime | None = None
     services: int = 0
+    # Services Groundcrew may deploy to (their `allow` lists deploy).
+    deploy_services: list[str] = Field(default_factory=list)
+    # Where deploys keep their images: "groundcrew" (the Groundcrew registry) or the
+    # connection's own registry (host/path); token never returned.
+    registry: str = "groundcrew"
+    registry_auth: Literal["groundcrew", "token", "ecr"] = "groundcrew"
+    registry_username: str | None = None
+    registry_token_saved: bool = False
+    registry_aws_connection_id: str | None = None
     # The version groundkrew.com serves; update_available when this agent runs an older one.
     latest_version: str = AGENT_VERSION
     update_available: bool = False
@@ -105,6 +127,12 @@ class AgentOut(BaseModel):
             last_seen_at=agent.last_seen_at,
             join_expires_at=pending if pending and pending > now else None,
             services=len(stored.get("services") or []),
+            deploy_services=[
+                str(s.get("name"))
+                for s in stored.get("services") or []
+                if "deploy" in (s.get("allow") or [])
+            ],
+            **_registry_view(conn),
             update_available=agent.public_key is not None and outdated(agent.version),
         )
 
@@ -196,6 +224,17 @@ class ConnectionOut(BaseModel):
             last_discovery=last,
             created_at=conn.created_at,
         )
+
+
+class AgentRegistryIn(BaseModel):
+    """The agent's own registry for deploys (instead of the Groundcrew registry): the same
+    choices as a Kubernetes cluster's (K8sDeploySettingsIn), without the cluster settings."""
+
+    registry: str = Field(min_length=3, max_length=255, examples=["ghcr.io/acme"])
+    registry_auth: Literal["token", "ecr"] = "token"
+    aws_connection_id: uuid.UUID | None = None
+    username: str | None = Field(default=None, max_length=200)
+    token: str | None = Field(default=None, max_length=4000)
 
 
 class AgentConnectIn(BaseModel):

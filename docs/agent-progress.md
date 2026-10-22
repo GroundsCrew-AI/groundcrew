@@ -9,7 +9,7 @@ Brief: `docs/prompts/agent.md`. Plan: `docs/agent-plan.md`.
 | A2 Signals and Medic | live (release `88e2de779068`) | #63 |
 | A3 Approved fixes (restart) | live (release `88e2de779068`) | #63 |
 | A4a Rollback, systemd restarts | live (release `9b12c7a2be14`) | #63 |
-| A4b Deploys through the agent | | |
+| A4b Deploys through the agent | built, tested locally, not deployed | #63 |
 | A5 Packaging | | |
 
 ## A1 Enroll and report (2026-10-22)
@@ -147,3 +147,50 @@ Checked:
 - Live on this machine: a container on nginx, then a "deploy" of an image that exits; the agent
   reported the image change and the previous image, an incident opened, the evidence carried
   the deploy change, and the approved rollback brought nginx back with its volume in 4 s.
+
+## A4b Deploys through the agent; the Groundcrew registry (2026-10-22)
+
+Done:
+- Groundcrew registry (`app/registry.py`): a registry container on the platform's internal
+  network (Compose service `registry`, uid 10002, storage `/var/lib/groundcrew/registry`). The
+  worker uploads tested images itself (`docker save` from the build service, an OCI layout,
+  streamed blob by blob; a multi-platform index is reduced to the saved platform image), so the
+  build service still cannot reach this host. Agents pull through nginx (`/v2/` on the API
+  host, GET and HEAD only) after `GET /internal/registry/auth` checks a 30-minute pull token
+  scoped to the workspace's namespace (`w<workspace id>`), signed with a key derived from
+  APPROVAL_TOKEN_KEY; nothing is stored. REGISTRY_INTERNAL_URL / REGISTRY_PUBLIC_HOST.
+- Own registry instead (`PUT/DELETE /connections/{id}/agent/registry`): host/path with a
+  username and token (encrypted, never returned), or Amazon ECR through an AWS connection that
+  can deploy (fresh login per deploy; the groundcrew-<app> repository is created).
+- `AgentTarget` (`app/targets/agent.py`, target kind `agent`): plan (push, then update or create
+  the container), preflight (agent online, the service's `allow` lists deploy), apply (push,
+  then a signed `deploy` command; the registry login and env values are stored encrypted on the
+  command and fetched once by the agent, `/agent/v1/commands/{id}/secrets`), verify (the agent's
+  next report), logs (agent events), rollback (the image it ran before). POST /deploys takes
+  `target_service`.
+- Agent: `deploy` pulls through the Engine API with the login, recreates the container (settings
+  and volumes kept, env values set on top) or creates it (port published), and puts the
+  previous one back if the new one does not stay running and pass its health check. A new
+  container must run steadily for 3 checks without restarts (found a crash-looping image under
+  a restart policy passing as "running"). `deploy.image` became optional (a restriction when
+  set). Connections now dropped after a failed request, with TCP keep-alives (after the network
+  change of 2026-10-22, which looked like a server hang: nginx saw no agent requests).
+- Web: agent targets and a service picker on the Deploy form; a Registry dialog on agent rows;
+  docs section "Deploys". Agent version 0.4.0.
+- Server: compose `registry`, nginx `/v2/`, gc-release starts `registry`, 50-app.sh makes its
+  storage; ops/production.env REGISTRY_*.
+
+Checked:
+- Go: deploy and rollback on the real Docker engine (create, update keeping ports and setting
+  env, bad image refused and the running one kept, missing image refused at the pull).
+- API: registry tokens and the access check, upload of a real `docker save` to a real registry
+  (GC_DOCKER_TEST=1), AgentTarget plan / preflight / apply with the one-time secrets, the deploy
+  route's service check, own registry settings.
+- Live on this machine: registry + nginx with the production `/v2/` rules + API + the built
+  agent + the real Docker sandbox: anonymous 401 with the Basic challenge, other workspace 401,
+  push 403; a deploy uploaded, pulled through nginx with the token, recreated the container
+  (kept its env, set the new values), verified healthy, served 200; rollback back to the
+  previous image.
+
+Rollout needs: `push-host 50-app` (registry dir, gc-release), `push-host 40-nginx` (`/v2/`),
+then the deploy (migration `d5f2a8c1e9b7`).

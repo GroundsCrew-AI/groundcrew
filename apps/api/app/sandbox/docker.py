@@ -6,6 +6,7 @@ a tmpfs /tmp, never privileged. Env values reach `docker run` through the CLI's 
 """
 
 import asyncio
+import os
 import re
 import secrets
 import tempfile
@@ -283,6 +284,32 @@ class DockerSandbox:
                 raise SandboxError(f"docker push {target.image} failed: {why}")
         digest = _DIGEST.search(pushed.output)
         return PushResult(target.image, digest.group(1) if digest else None, _ms(start))
+
+    async def push_to_groundcrew(
+        self, image_ref: str, registry_url: str, repository: str, tag: str
+    ) -> PushResult:
+        """`docker save` from the build service, uploaded by this process to the registry on the
+        internal network (app/registry.py)."""
+        from app import registry
+
+        start = time.monotonic()
+        try:
+            digest = await asyncio.wait_for(
+                asyncio.to_thread(
+                    registry.push_saved_image,
+                    ["docker", "save", image_ref],
+                    dict(os.environ),
+                    registry_url,
+                    repository,
+                    tag,
+                ),
+                self.settings.sandbox_push_timeout_seconds,
+            )
+        except TimeoutError:
+            raise SandboxError("uploading the image to the Groundcrew registry timed out") from None
+        except registry.RegistryError as exc:
+            raise SandboxError(str(exc)) from None
+        return PushResult(f"{registry_url}/{repository}:{tag}", digest, _ms(start))
 
     async def image_id(self, image_ref: str) -> str:
         """The image's content ID (sha256:...), which the approved plan pins."""

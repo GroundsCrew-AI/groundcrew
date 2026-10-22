@@ -338,7 +338,7 @@ def test_the_agent_version_matches_what_the_downloads_build() -> None:
 
     version = Path(__file__).resolve().parents[2] / "agent" / "VERSION"
     assert version.read_text().strip() == AGENT_VERSION
-    assert outdated("0.1.0") and outdated("0.2.9", "0.3.0") and not outdated("0.3.0")
+    assert outdated("0.1.0") and outdated("0.2.9", "0.3.0") and not outdated(AGENT_VERSION)
     assert not outdated("0.3.0-dev", "0.3.0") and not outdated("dev") and not outdated(None)
     assert not outdated("1.0.0", "0.3.0")
 

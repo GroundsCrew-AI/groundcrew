@@ -329,6 +329,9 @@ class AgentCommand(TimestampMixin, Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[str | None] = mapped_column(Text)
+    # A deploy's secrets (registry login, env values), Fernet-encrypted; the agent fetches them
+    # once with a signed request (/agent/v1/commands/{id}/secrets), then they are wiped.
+    secret_encrypted: Mapped[str | None] = mapped_column(Text)
 
 
 class AgentNonce(Base):

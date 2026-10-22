@@ -317,6 +317,35 @@ export function useAgentToken() {
   });
 }
 
+/** The agent's own registry for deploys (instead of the Groundcrew registry). */
+export function useAgentRegistry() {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async ({ connection, body }: { connection: Connection; body: Schemas["AgentRegistryIn"] }) =>
+      unwrap(
+        await api.PUT("/connections/{connection_id}/agent/registry", {
+          params: { path: { connection_id: connection.id } },
+          body,
+        }),
+      ),
+    onSuccess: (_data, { connection }) => invalidate(connection.workspace_id),
+  });
+}
+
+/** Back to the Groundcrew registry. */
+export function useClearAgentRegistry() {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async (connection: Connection) =>
+      unwrap(
+        await api.DELETE("/connections/{connection_id}/agent/registry", {
+          params: { path: { connection_id: connection.id } },
+        }),
+      ),
+    onSuccess: (_data, connection) => invalidate(connection.workspace_id),
+  });
+}
+
 export function useConnectAzure() {
   const invalidate = useInvalidateWorkspace();
   return useMutation({

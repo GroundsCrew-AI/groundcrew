@@ -277,6 +277,11 @@ class Settings(BaseSettings):
     agent_request_skew_seconds: int = 300
     agent_rate_limit_per_minute: int = 120
     agent_offline_after_seconds: int = 180
+    # The Groundcrew registry for agent deploys (app/registry.py): the registry container on the
+    # internal network, and the public host agents pull from (nginx passes /v2/ there). Unset:
+    # agent deploys need the connection's own registry.
+    registry_internal_url: str | None = None
+    registry_public_host: str | None = None
 
     # Abuse limits in the API (nginx limits each client address in front of it). Per user: API
     # calls a minute, stream tokens a minute, and live streams open at once. Request bodies

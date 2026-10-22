@@ -7,6 +7,8 @@ for cmd in gc-secrets gc-status gc-build-sweep gc-isolation-check gc-release; do
 done
 echo 'export PATH="$PATH:/opt/groundcrew/bin"' >/etc/profile.d/groundcrew.sh
 install -d -m 0700 /var/lib/groundcrew /var/lib/groundcrew/releases
+# The Groundcrew registry's storage (compose service registry runs as 10002).
+install -d -m 0700 -o 10002 -g 10002 /var/lib/groundcrew/registry
 [ -f /opt/groundcrew/release.env ] || : >/opt/groundcrew/release.env
 /opt/groundcrew/bin/gc-secrets init >/dev/null
 [ -f /etc/groundcrew/config.env ] || install -m 0600 /dev/null /etc/groundcrew/config.env

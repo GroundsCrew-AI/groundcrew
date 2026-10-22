@@ -137,6 +137,28 @@ async def create_deploy(
         kind = "aws_ecs"
     elif target.kind == "k8s":
         kind = "k8s"
+    elif target.kind == "agent":
+        from app import registry
+        from app.targets.agent import deployable_services, own_registry
+
+        kind = "agent"
+        allowed = deployable_services(target)
+        if body.target_service not in allowed:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Choose a service on {target.name} that allows deploy"
+                + (
+                    f": {', '.join(allowed)}."
+                    if allowed
+                    else ": none does yet. Add deploy to a "
+                    "service's `allow` list in /etc/groundcrew-agent/agent.yaml."
+                ),
+            )
+        if own_registry(target) is None and not registry.enabled(settings):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Add a registry for {target.name} on the Connections page first.",
+            )
     else:
         raise HTTPException(status.HTTP_409_CONFLICT, f"{target.name} is not a deploy target.")
 
@@ -144,7 +166,7 @@ async def create_deploy(
     request = {
         "source": source,
         "target_connection_id": str(target.id),
-        "target": {"kind": kind, "name": target.name},
+        "target": {"kind": kind, "name": target.name, "service": body.target_service},
         "env": [
             {"name": v.name, "secret": v.secret, "provided": bool(v.value.get_secret_value())}
             for v in body.env

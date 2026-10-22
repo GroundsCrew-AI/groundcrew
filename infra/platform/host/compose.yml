@@ -118,6 +118,36 @@ services:
       postgres:
         condition: service_healthy
 
+  # The Groundcrew registry for agent deploys (app/registry.py). The worker uploads tested images
+  # over the backend network; agents pull through nginx (/v2/ on the API host, GET and HEAD
+  # only, each request checked by the API). Published on 127.0.0.1 for nginx only.
+  registry:
+    <<: *service
+    image: ${GC_REGISTRY_IMAGE:-registry:3.0.0}
+    # Its own uid; the storage is a host directory steps/50-app.sh makes for it (a named volume
+    # would be created root-owned).
+    user: "10002:10002"
+    environment:
+      REGISTRY_HTTP_ADDR: 0.0.0.0:5000
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      OTEL_TRACES_EXPORTER: none
+    volumes:
+      - /var/lib/groundcrew/registry:/var/lib/registry
+    ports:
+      - "127.0.0.1:5000:5000"
+    networks:
+      backend: {}
+      egress:
+        ipv4_address: 172.30.1.13
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 100
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   api:
     <<: *app
     command:

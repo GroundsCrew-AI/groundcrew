@@ -83,6 +83,13 @@ class Sandbox:
         self.events.append(f"push {target.image}")
         return PushResult(target.image, "sha256:" + "d" * 64, 10)
 
+    async def push_to_groundcrew(
+        self, image_ref: str, registry_url: str, repository: str, tag: str
+    ) -> PushResult:
+        image = f"{registry_url}/{repository}:{tag}"
+        self.events.append(f"push {image}")
+        return PushResult(image, "sha256:" + "d" * 64, 10)
+
     async def image_id(self, image_ref: str) -> str:
         return "sha256:" + "e" * 64
 

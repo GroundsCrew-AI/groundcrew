@@ -106,6 +106,11 @@ class ScriptedSandbox:
         self.pushed.append(image_ref)
         raise AssertionError("Builder never pushes")
 
+    async def push_to_groundcrew(
+        self, image_ref: str, registry_url: str, repository: str, tag: str
+    ) -> PushResult:
+        raise AssertionError("Builder never pushes")
+
     async def image_id(self, image_ref: str) -> str:
         return "sha256:" + "c" * 64
 

@@ -82,6 +82,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/v1/commands/{command_id}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Command Secrets
+         * @description A deploy's registry login and env values, for the agent running it: once, while the
+         *     command is handed out, and then wiped.
+         */
+        post: operations["command_secrets_agent_v1_commands__command_id__secrets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agent/v1/enroll": {
         parameters: {
             query?: never;
@@ -667,6 +688,33 @@ export interface paths {
          *     removed by them: see `cleanup`.
          */
         delete: operations["delete_connection_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connection_id}/agent/registry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Agent Set Registry
+         * @description Deploys to this agent keep their images in this registry instead of the Groundcrew
+         *     registry: a username and token (stored encrypted, never returned; the agent gets them only
+         *     while it runs a deploy), or Amazon ECR through an AWS connection with the deploy
+         *     capability (a fresh login per deploy).
+         */
+        put: operations["agent_set_registry_connections__connection_id__agent_registry_put"];
+        post?: never;
+        /**
+         * Agent Clear Registry
+         * @description Back to the Groundcrew registry (the saved token is deleted).
+         */
+        delete: operations["agent_clear_registry_connections__connection_id__agent_registry_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1688,6 +1736,8 @@ export interface components {
         AgentOut: {
             /** Arch */
             arch?: string | null;
+            /** Deploy Services */
+            deploy_services?: string[];
             /** Enrolled */
             enrolled: boolean;
             /** Enrolled At */
@@ -1708,6 +1758,26 @@ export interface components {
             /** Os */
             os?: string | null;
             /**
+             * Registry
+             * @default groundcrew
+             */
+            registry: string;
+            /**
+             * Registry Auth
+             * @default groundcrew
+             * @enum {string}
+             */
+            registry_auth: "groundcrew" | "token" | "ecr";
+            /** Registry Aws Connection Id */
+            registry_aws_connection_id?: string | null;
+            /**
+             * Registry Token Saved
+             * @default false
+             */
+            registry_token_saved: boolean;
+            /** Registry Username */
+            registry_username?: string | null;
+            /**
              * Services
              * @default 0
              */
@@ -1719,6 +1789,30 @@ export interface components {
             update_available: boolean;
             /** Version */
             version?: string | null;
+        };
+        /**
+         * AgentRegistryIn
+         * @description The agent's own registry for deploys (instead of the Groundcrew registry): the same
+         *     choices as a Kubernetes cluster's (K8sDeploySettingsIn), without the cluster settings.
+         */
+        AgentRegistryIn: {
+            /** Aws Connection Id */
+            aws_connection_id?: string | null;
+            /**
+             * Registry
+             * @example ghcr.io/acme
+             */
+            registry: string;
+            /**
+             * Registry Auth
+             * @default token
+             * @enum {string}
+             */
+            registry_auth: "token" | "ecr";
+            /** Token */
+            token?: string | null;
+            /** Username */
+            username?: string | null;
         };
         /** ApprovalOut */
         ApprovalOut: {
@@ -2141,6 +2235,15 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /**
+         * CommandSecretsOut
+         * @description What a deploy needs and the payload does not carry. Returned once.
+         */
+        CommandSecretsOut: {
+            /** Env */
+            env?: components["schemas"]["EnvOut"][];
+            registry?: components["schemas"]["RegistryLoginOut"] | null;
+        };
         /** ConnectionCleanup */
         ConnectionCleanup: {
             /** Connection */
@@ -2263,6 +2366,8 @@ export interface components {
              * Format: uuid
              */
             target_connection_id: string;
+            /** Target Service */
+            target_service?: string | null;
             /**
              * Workspace Id
              * Format: uuid
@@ -2461,7 +2566,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "k8s" | "aws_ecs";
+            target: "k8s" | "aws_ecs" | "agent";
             /**
              * Target Connection Id
              * Format: uuid
@@ -2518,7 +2623,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "k8s" | "aws_ecs";
+            target: "k8s" | "aws_ecs" | "agent";
         };
         /** DeploySourceOut */
         DeploySourceOut: {
@@ -2606,7 +2711,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "k8s" | "aws_ecs";
+            kind: "k8s" | "aws_ecs" | "agent";
             /** Name */
             name: string;
         };
@@ -2700,6 +2805,13 @@ export interface components {
             inventory_seconds: number;
             /** Name */
             name: string;
+        };
+        /** EnvOut */
+        EnvOut: {
+            /** Name */
+            name: string;
+            /** Value */
+            value: string;
         };
         /** EnvVarIn */
         EnvVarIn: {
@@ -3779,7 +3891,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "k8s" | "aws_ecs";
+            target: "k8s" | "aws_ecs" | "agent";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -4196,6 +4308,15 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /** RegistryLoginOut */
+        RegistryLoginOut: {
+            /** Password */
+            password: string;
+            /** Server */
+            server: string;
+            /** Username */
+            username: string;
         };
         /** ResearchDone */
         ResearchDone: {
@@ -5378,6 +5499,37 @@ export interface operations {
             };
         };
     };
+    command_secrets_agent_v1_commands__command_id__secrets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandSecretsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     enroll_agent_v1_enroll_post: {
         parameters: {
             query?: never;
@@ -6363,6 +6515,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_set_registry_connections__connection_id__agent_registry_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRegistryIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_clear_registry_connections__connection_id__agent_registry_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
                 };
             };
             /** @description Validation Error */

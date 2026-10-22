@@ -53,6 +53,7 @@ from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.discovery_schemas import (
     AgentConnectIn,
     AgentJoinOut,
+    AgentRegistryIn,
     AwsCompleteIn,
     AwsOperateIn,
     AwsOperateValuesOut,
@@ -83,6 +84,7 @@ from app.security.crypto import SecretsKeyError, encrypt
 from app.targets.k8s_deploy import CONFIG_KEY as DEPLOY_SETTINGS_KEY
 from app.targets.k8s_deploy import (
     DeploySettingsError,
+    K8sDeploySettings,
     build_settings,
     check_ecr_connection,
     deploy_settings,
@@ -1034,6 +1036,75 @@ async def agent_new_token(
         expires_at=expires,
         api_url=settings.agent_api_url,
     )
+
+
+@router.put("/{connection_id}/agent/registry")
+async def agent_set_registry(
+    connection_id: uuid.UUID,
+    body: AgentRegistryIn,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
+) -> ConnectionOut:
+    """Deploys to this agent keep their images in this registry instead of the Groundcrew
+    registry: a username and token (stored encrypted, never returned; the agent gets them only
+    while it runs a deploy), or Amazon ECR through an AWS connection with the deploy
+    capability (a fresh login per deploy)."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "agent":
+        raise _unprocessable("Only an agent connection has this registry setting.")
+    try:
+        aws_connection_id: str | None = None
+        if body.registry_auth == "ecr":
+            aws = (
+                await session.get(Connection, body.aws_connection_id)
+                if body.aws_connection_id
+                else None
+            )
+            regions = (
+                [str(aws.config["region"])]
+                if aws is not None and aws.config.get("region")
+                else connection_regions(aws.config if aws else None, settings)
+            )
+            aws_connection_id = check_ecr_connection(body.registry, aws, conn.workspace_id, regions)
+        new = build_settings(
+            registry_auth=body.registry_auth,
+            aws_connection_id=aws_connection_id,
+            registry=body.registry,
+            username=body.username,
+            token=body.token,
+            previous=K8sDeploySettings.from_config(conn.config),
+            pull_secret=False,
+            ingress_class="nginx",
+            app_domain=None,
+            tls=False,
+            tls_cluster_issuer=None,
+            public_url_base=None,
+            allow_private=_allow_private(settings),
+            is_private=kube.is_private_host,
+            encrypt=_encrypt,
+        )
+    except DeploySettingsError as exc:
+        raise _unprocessable(str(exc)) from None
+    conn.config = {**conn.config, DEPLOY_SETTINGS_KEY: new.to_config()}
+    await _audit(session, user, conn, "agent_registry_changed", ip)
+    await session.commit()
+    return await _out(session, conn)
+
+
+@router.delete("/{connection_id}/agent/registry")
+async def agent_clear_registry(
+    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep, ip: ClientIp
+) -> ConnectionOut:
+    """Back to the Groundcrew registry (the saved token is deleted)."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "agent":
+        raise _unprocessable("Only an agent connection has this registry setting.")
+    conn.config = {k: v for k, v in conn.config.items() if k != DEPLOY_SETTINGS_KEY}
+    await _audit(session, user, conn, "agent_registry_cleared", ip)
+    await session.commit()
+    return await _out(session, conn)
 
 
 # ---------------------------------------------------------------------------- Vercel

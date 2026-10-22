@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,11 +44,25 @@ type Client struct {
 
 // New returns a client with sensible timeouts.
 func New(baseURL, agentID string, key ed25519.PrivateKey, userAgent string) *Client {
+	// Connections are reused between requests; after a network change (a new address, a
+	// router restart) the reused ones can be dead without any error, so they are kept alive
+	// with TCP keep-alives and dropped after any failed request (see Post).
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 15 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+		IdleConnTimeout:     60 * time.Second,
+		MaxIdleConnsPerHost: 4,
+		ForceAttemptHTTP2:   true,
+	}
 	return &Client{
 		BaseURL:   strings.TrimRight(baseURL, "/"),
 		AgentID:   agentID,
 		Key:       key,
-		HTTP:      &http.Client{Timeout: 30 * time.Second},
+		HTTP:      &http.Client{Timeout: 30 * time.Second, Transport: transport},
 		UserAgent: userAgent,
 		now:       time.Now,
 	}
@@ -124,6 +139,8 @@ func (c *Client) Post(ctx context.Context, path string, in, out any) error {
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		// The connection it used may be dead: the next request dials a new one.
+		c.HTTP.CloseIdleConnections()
 		return err
 	}
 	defer resp.Body.Close()

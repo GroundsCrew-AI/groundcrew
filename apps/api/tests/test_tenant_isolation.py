@@ -303,6 +303,16 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         lambda t: "/connections/agent",
         lambda t: {"workspace_id": str(t.workspace), "name": "intruder"},
     ),
+    ("PUT", "/connections/{connection_id}/agent/registry"): (
+        "PUT",
+        lambda t: f"/connections/{t.k8s}/agent/registry",
+        lambda t: {"registry": "ghcr.io/intruder", "username": "x", "token": "y"},
+    ),
+    ("DELETE", "/connections/{connection_id}/agent/registry"): (
+        "DELETE",
+        lambda t: f"/connections/{t.k8s}/agent/registry",
+        _none,
+    ),
     ("POST", "/connections/{connection_id}/agent/token"): (
         "POST",
         lambda t: f"/connections/{t.k8s}/agent/token",
@@ -340,6 +350,7 @@ NOT_WORKSPACE_SCOPED = {
     ("POST", "/agent/v1/events"): "signed by the agent's key, no user (test_agent_signals.py)",
     ("POST", "/agent/v1/commands/poll"): "signed by the agent's key; its own commands only",
     ("POST", "/agent/v1/commands/{command_id}/result"): "signed; 404 for another agent's command",
+    ("POST", "/agent/v1/commands/{command_id}/secrets"): "signed; 404 for another agent's command",
     ("GET", "/admin/platform"): "platform operators only, 404 for others (test_abuse.py)",
     ("PUT", "/admin/platform/signups"): "platform operators only, 404 for others (test_abuse.py)",
 }

@@ -111,5 +111,5 @@ export function stageLabel(stage: DeployStage): string {
 }
 
 export function targetLabel(kind: TargetKind): string {
-  return kind === "k8s" ? "Kubernetes" : "AWS ECS";
+  return kind === "k8s" ? "Kubernetes" : kind === "agent" ? "Server (agent)" : "AWS ECS";
 }

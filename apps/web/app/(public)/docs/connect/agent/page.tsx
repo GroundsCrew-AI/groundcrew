@@ -14,6 +14,7 @@ const TOC = [
   { id: "services", title: "List your services" },
   { id: "reads", title: "What the agent reads and sends" },
   { id: "fixes", title: "Incidents and fixes" },
+  { id: "deploys", title: "Deploys" },
   { id: "permissions", title: "Permissions" },
   { id: "trouble", title: "Troubleshooting" },
   { id: "change", title: "Upgrade, reinstall, or remove" },
@@ -92,6 +93,7 @@ export default function ConnectAgentPage() {
             [<Inline key="p">compose</Inline>, "Compose: the project and the service."],
             [<Inline key="u">unit</Inline>, "systemd: the unit name."],
             [<Inline key="h">health.url</Inline>, "A health check the agent calls on the server."],
+            [<Inline key="d">deploy.image</Inline>, "Optional: the only image repository deploys may come from."],
             [
               <Inline key="a">allow</Inline>,
               "What the agent may do to this service: restart, rollback, deploy (systemd: restart only). Leave it out to watch only.",
@@ -161,6 +163,51 @@ export default function ConnectAgentPage() {
             was refused. Rollback is for Docker and Compose services. Docker and Compose services need nothing more.
           </p>
         </Callout>
+      </DocSection>
+
+      <DocSection id="deploys" title="Deploys">
+        <p>
+          A service whose <Inline>allow</Inline> list includes <Inline>deploy</Inline> shows up as a target on the{" "}
+          <strong>Deploy</strong> page. Groundcrew builds and tests the app in its isolated build service; after you
+          approve the plan, the image goes to a registry and the agent puts it in place:
+        </p>
+        <Steps>
+          <Step title="Pull">
+            <p>
+              The agent pulls the image with a login Groundcrew gives it for this deploy only. It fetches that login and
+              your env values once, over its signed connection; they are not stored on the server.
+            </p>
+          </Step>
+          <Step title="Replace">
+            <p>
+              It recreates the container from the new image, keeping its name, ports, networks, volumes, and other
+              settings, with your env values set on top. A service with no container yet gets a new one with the
+              app&apos;s port published.
+            </p>
+          </Step>
+          <Step title="Check, or go back">
+            <p>
+              The new container must keep running and pass its health check. Otherwise the agent removes it and starts
+              the previous one again, and the deploy fails with the reason.
+            </p>
+          </Step>
+        </Steps>
+        <p>Where images are kept, on the agent&apos;s <strong>Registry</strong> setting in Connections:</p>
+        <ul>
+          <li>
+            <strong>Groundcrew registry</strong> (the default): nothing to set up. Each workspace&apos;s images are
+            readable only with that workspace&apos;s short-lived pull tokens.
+          </li>
+          <li>
+            <strong>Your own registry</strong>: Docker Hub, GitHub Container Registry, or any registry with a username
+            and token (stored encrypted, never shown again), or Amazon ECR through an AWS connection that can deploy.
+          </li>
+        </ul>
+        <p>
+          To restrict a service to one image repository, set <Inline>deploy.image</Inline> in its configuration; the
+          agent refuses images from anywhere else. Rolling a deploy back returns the container to the image it ran
+          before; env values set by the deploy stay as they are.
+        </p>
       </DocSection>
 
       <DocSection id="permissions" title="Permissions">

@@ -29,12 +29,26 @@ type Target = { connection: Connection; kind: TargetKind; disabled: boolean };
 
 export function deployTargets(connections: Connection[]): Target[] {
   return connections
-    .filter((c) => c.kind === "k8s" || c.kind === "aws")
+    .filter((c) => c.kind === "k8s" || c.kind === "aws" || c.kind === "agent")
     .map((c) => ({
       connection: c,
-      kind: c.kind === "k8s" ? ("k8s" as const) : ("aws_ecs" as const),
-      disabled: c.status !== "connected" || (c.kind === "aws" && c.tier !== "deploy"),
+      kind: c.kind === "k8s" ? ("k8s" as const) : c.kind === "agent" ? ("agent" as const) : ("aws_ecs" as const),
+      disabled:
+        c.status !== "connected" ||
+        (c.kind === "aws" && c.tier !== "deploy") ||
+        (c.kind === "agent" && !c.agent?.deploy_services?.length),
     }));
+}
+
+function targetDetail(t: Target): string {
+  const c = t.connection;
+  if (t.kind === "k8s") return "Kubernetes";
+  if (t.kind === "aws_ecs") return "AWS ECS (Fargate)";
+  const services = c.agent?.deploy_services ?? [];
+  const where = c.agent?.registry === "groundcrew" ? "Groundcrew registry" : c.agent?.registry;
+  return services.length
+    ? `Server with the Groundcrew agent, images in ${where}`
+    : "Server with the Groundcrew agent: no service allows deploy yet";
 }
 
 /** Problems that keep the form from submitting, by field. */
@@ -71,6 +85,7 @@ export function DeployForm({
   const [typedRepo, setTypedRepo] = useState("");
   const [ref, setRef] = useState("main");
   const [targetId, setTargetId] = useState<string>(() => targets.find((t) => !t.disabled)?.connection.id ?? "");
+  const [service, setService] = useState("");
   const [rows, setRows] = useState<EnvRow[]>([]);
   const [nextKey, setNextKey] = useState(1);
   const [allowMissing, setAllowMissing] = useState(false);
@@ -81,6 +96,8 @@ export function DeployForm({
   const chosenRepo = typing ? typedRepo.trim() : repo && repos.includes(repo) ? repo : (repos[0] ?? "");
   const repoInvalid = typing && !REPO_NAME.test(chosenRepo);
   const target = targets.find((t) => t.connection.id === targetId && !t.disabled);
+  const services = target?.kind === "agent" ? (target.connection.agent?.deploy_services ?? []) : [];
+  const chosenService = services.includes(service) ? service : (services[0] ?? "");
   const errors = envErrors(rows);
   // Shown under their fields once a submit was tried.
   const repoError = attempted && repoInvalid;
@@ -109,6 +126,7 @@ export function DeployForm({
       workspace_id: workspaceId,
       repo: { connection_id: source.id, repo: chosenRepo, ref: ref.trim() },
       target_connection_id: target.connection.id,
+      ...(target.kind === "agent" ? { target_service: chosenService } : {}),
       env: rows.map((r) => ({ name: r.name.trim(), value: r.value, secret: r.secret })),
       options: { allow_missing_env: allowMissing },
     });
@@ -191,7 +209,7 @@ export function DeployForm({
         <legend className="mb-2 text-[13px] font-medium">Target</legend>
         {targets.length === 0 ? (
           <p className="text-[12.5px] text-muted-foreground">
-            No cluster or AWS account yet.{" "}
+            No server, cluster, or AWS account yet.{" "}
             <Link href="/connections" className="text-foreground underline underline-offset-4">Add a connection</Link>.
           </p>
         ) : (
@@ -220,7 +238,7 @@ export function DeployForm({
                   <span className="min-w-0 flex-1">
                     <span className="block font-medium">{t.connection.name}</span>
                     <span className="block text-[12px] text-muted-foreground">
-                      {t.kind === "k8s" ? "Kubernetes" : "AWS ECS (Fargate)"}
+                      {targetDetail(t)}
                       {observe && ", observe tier: read only"}
                       {t.connection.status !== "connected" && `, ${t.connection.status}`}
                     </span>
@@ -233,6 +251,21 @@ export function DeployForm({
                 </label>
               );
             })}
+          </div>
+        )}
+        {target?.kind === "agent" && (
+          <div className="mt-3 max-w-sm space-y-1.5">
+            <Label htmlFor={`${id}-service`}>Service on {target.connection.agent?.hostname ?? "the server"}</Label>
+            <Select value={chosenService} onValueChange={setService}>
+              <SelectTrigger id={`${id}-service`} className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {services.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <p className="text-[12px] text-muted-foreground">
+              Services whose <code className="font-mono">allow</code> lists deploy in the agent&apos;s configuration.{" "}
+              <Link href="/docs/connect/agent#deploys" className="text-foreground underline underline-offset-4">How deploys work</Link>
+            </p>
           </div>
         )}
         {attempted && !target && targets.length > 0 && (

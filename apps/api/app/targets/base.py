@@ -67,6 +67,8 @@ class DeploySpec(BaseModel):
     allow_missing_env: bool = False
     repo: str | None = None
     commit: str | None = None
+    # Agent targets: the service on the server this deploy updates (its `allow` lists deploy).
+    target_service: str | None = None
 
 
 class ApplyStep(BaseModel):

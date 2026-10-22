@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,11 @@ const rollbackSettle = 45 * time.Second
 // `ref` ("nginx:1.27") names the image when it still points at `image`, so the
 // container shows its name rather than a bare id.
 func (d *Docker) Rollback(ctx context.Context, s config.Service, image, ref string, healthy func(context.Context) error) error {
+	return d.recreate(ctx, s, image, ref, nil, healthy)
+}
+
+// recreate is Rollback with `env` (NAME -> value) set on top of the container's own.
+func (d *Docker) recreate(ctx context.Context, s config.Service, image, ref string, env map[string]string, healthy func(context.Context) error) error {
 	c, err := d.container(ctx, s)
 	if err != nil {
 		return err
@@ -58,6 +64,9 @@ func (d *Docker) Rollback(ctx context.Context, s config.Service, image, ref stri
 	body, err := recreateBody(raw, current.Config, use)
 	if err != nil {
 		return err
+	}
+	if len(env) > 0 {
+		body["Env"] = withEnv(body["Env"], env)
 	}
 	name := strings.TrimPrefix(c.Name, "/")
 	parked := fmt.Sprintf("%s-gc-previous-%d", name, time.Now().Unix())
@@ -93,10 +102,16 @@ func (d *Docker) Rollback(ctx context.Context, s config.Service, image, ref stri
 	return nil
 }
 
-// settle waits until the container runs and the health check (if any) passes.
+// A new container must run this many checks in a row (2 s apart) without
+// restarting: a crash loop under a restart policy looks "running" between crashes.
+const stableChecks = 3
+
+// settle waits until the container runs steadily and the health check (if
+// any) passes.
 func (d *Docker) settle(ctx context.Context, s config.Service, healthy func(context.Context) error) error {
 	deadline := time.Now().Add(rollbackSettle)
 	var last error
+	steady, restarts := 0, -1
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -104,24 +119,32 @@ func (d *Docker) settle(ctx context.Context, s config.Service, healthy func(cont
 		case <-time.After(2 * time.Second):
 		}
 		st := d.State(ctx, s)
-		if !st.Running() {
+		if !st.Running() || (restarts >= 0 && st.Restarts > restarts) {
+			steady, restarts = 0, st.Restarts
 			last = fmt.Errorf("it is %s", st.State)
-			if st.State == "exited" || st.State == "dead" {
+			if st.Restarts > 0 {
+				last = fmt.Errorf("it keeps restarting (%d restarts)", st.Restarts)
+			}
+			if st.State == "exited" || st.State == "dead" || st.Restarts >= 3 {
 				break
 			}
 			continue
 		}
-		if healthy == nil {
-			return nil
+		restarts = st.Restarts
+		if healthy != nil {
+			if last = healthy(ctx); last != nil {
+				steady = 0
+				continue
+			}
 		}
-		if last = healthy(ctx); last == nil {
+		if steady++; steady >= stableChecks {
 			return nil
 		}
 	}
 	if last == nil {
 		last = errors.New("it did not start in time")
 	}
-	return fmt.Errorf("the rolled-back container is not healthy (%v)", last)
+	return fmt.Errorf("the new container is not healthy (%v)", last)
 }
 
 // recreateBody is the create request for a copy of the inspected container
@@ -338,4 +361,25 @@ func withoutImageDefaults(body, imageCfg map[string]any) {
 		}
 		body[k] = kept
 	}
+}
+
+// withEnv sets `env` over a container's NAME=value list (same names replaced).
+func withEnv(list any, env map[string]string) []any {
+	out := []any{}
+	have, _ := list.([]any)
+	for _, e := range have {
+		name, _, _ := strings.Cut(fmt.Sprint(e), "=")
+		if _, replaced := env[name]; !replaced {
+			out = append(out, e)
+		}
+	}
+	names := make([]string, 0, len(env))
+	for name := range env {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		out = append(out, name+"="+env[name])
+	}
+	return out
 }

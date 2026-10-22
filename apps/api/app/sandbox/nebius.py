@@ -40,6 +40,11 @@ class NebiusSandbox:
     async def push(self, image_ref: str, target: PushTarget) -> PushResult:
         raise SandboxError(_TODO)
 
+    async def push_to_groundcrew(
+        self, image_ref: str, registry_url: str, repository: str, tag: str
+    ) -> PushResult:
+        raise SandboxError(_TODO)
+
     async def image_id(self, image_ref: str) -> str:
         raise SandboxError(_TODO)
 

@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -163,6 +165,10 @@ func (r *Runner) check(c signed) (Command, config.Service, error) {
 			if !s.Allows(cmd.Action) {
 				return cmd, s, fmt.Errorf("%s does not allow %s in this agent's configuration", s.Name, cmd.Action)
 			}
+			if cmd.Action == config.Deploy && s.Deploy != nil && s.Deploy.Image != "" &&
+				!strings.HasPrefix(cmd.Params["image"], s.Deploy.Image+":") {
+				return cmd, s, fmt.Errorf("%s may be deployed from %s only, not %s", s.Name, s.Deploy.Image, cmd.Params["image"])
+			}
 			return cmd, s, nil
 		}
 	}
@@ -183,6 +189,8 @@ func (r *Runner) run(ctx context.Context, cmd Command, s config.Service) (bool, 
 			return false, fmt.Sprintf("restarted, but it is %s now", st.State)
 		}
 		return true, "restarted; it is running"
+	case config.Deploy:
+		return r.deploy(ctx, cmd, s, rt)
 	case config.Rollback:
 		image := cmd.Params["image"]
 		rb, ok := rt.(runtime.Rollbacker)
@@ -219,4 +227,50 @@ func sleep(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	case <-time.After(d):
 	}
+}
+
+type secretsOut struct {
+	Registry *runtime.RegistryLogin `json:"registry"`
+	Env      []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	} `json:"env"`
+}
+
+// deploy fetches the deploy's secrets (registry login, env values; once, from
+// Groundcrew), then pulls the image and puts it in place.
+func (r *Runner) deploy(ctx context.Context, cmd Command, s config.Service, rt runtime.Runtime) (bool, string) {
+	d, ok := rt.(runtime.Deployer)
+	if !ok {
+		return false, "a deploy needs a Docker or Compose service"
+	}
+	var secrets secretsOut
+	if err := r.Client.Post(ctx, "/agent/v1/commands/"+cmd.ID+"/secrets", map[string]any{}, &secrets); err != nil {
+		return false, "cannot fetch the deploy's registry login and env values: " + err.Error()
+	}
+	env := map[string]string{}
+	for _, e := range secrets.Env {
+		env[e.Name] = e.Value
+	}
+	port, _ := strconv.Atoi(cmd.Params["port"])
+	var healthy func(context.Context) error
+	switch {
+	case s.Health != nil:
+		healthy = func(ctx context.Context) error {
+			return runtime.HealthCheck(ctx, s.Health.URL, s.Health.Timeout)
+		}
+	case cmd.Params["health_path"] != "" && port > 0:
+		url := fmt.Sprintf("http://127.0.0.1:%d%s", port, cmd.Params["health_path"])
+		healthy = func(ctx context.Context) error { return runtime.HealthCheck(ctx, url, 5*time.Second) }
+	}
+	created, err := d.Deploy(ctx, s, runtime.DeployRequest{
+		Image: cmd.Params["image"], Port: port, Env: env, Login: secrets.Registry, Healthy: healthy,
+	})
+	if err != nil {
+		return false, err.Error()
+	}
+	if created {
+		return true, fmt.Sprintf("created the container from %s, port %d published; it is running", cmd.Params["image"], port)
+	}
+	return true, "recreated the container from " + cmd.Params["image"] + "; it is running"
 }

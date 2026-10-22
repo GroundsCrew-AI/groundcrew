@@ -80,7 +80,8 @@ type Health struct {
 }
 
 type DeploySource struct {
-	// The image repository deploys may come from (no tag).
+	// Optional: the only image repository deploys may come from (no tag). Unset, any image
+	// Groundcrew sends with an approved deploy is accepted.
 	Image string `yaml:"image"`
 }
 
@@ -217,9 +218,6 @@ func (c *Config) Validate() error {
 			default:
 				add("%s: allow may list restart, rollback, and deploy, not %q", where, a)
 			}
-		}
-		if s.Allows(Deploy) && (s.Deploy == nil || s.Deploy.Image == "") {
-			add("%s: allow deploy needs deploy.image (the repository deploys may come from)", where)
 		}
 		if s.Deploy != nil && strings.ContainsAny(s.Deploy.Image, "@") {
 			add("%s: deploy.image is a repository without a tag or digest", where)

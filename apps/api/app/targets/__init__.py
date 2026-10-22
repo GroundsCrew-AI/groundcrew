@@ -58,4 +58,9 @@ def target_for(settings: Settings, credentials: CredentialsProvider, conn: Conne
         if (conn.config.get("tier") or "observe") != "deploy":
             raise TargetError(f"{conn.name} is connected with Tier=observe, which cannot deploy.")
         return EcsTarget(settings, credentials, conn.id)
+    if conn.kind == "agent":
+        from app.db.session import get_session_factory
+        from app.targets.agent import AgentTarget
+
+        return AgentTarget(settings, credentials, get_session_factory(), conn)
     raise TargetError(f"{conn.name} ({conn.kind}) is not a deploy target.")

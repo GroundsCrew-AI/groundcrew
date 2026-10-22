@@ -23,7 +23,7 @@ def _compose() -> dict[str, Any]:
 
 def test_every_service_is_locked_down() -> None:
     services = _compose()["services"]
-    assert set(services) == {"postgres", "migrate", "api", "worker", "web"}
+    assert set(services) == {"postgres", "migrate", "api", "worker", "web", "registry"}
     for name, svc in services.items():
         assert svc.get("privileged") is not True, name
         assert svc["cap_drop"] == ["ALL"], name
@@ -98,12 +98,19 @@ def test_nginx_exposes_only_the_apis_public_routes() -> None:
     assert [loc.strip() for loc in locations] == [
         "~ ^/runs/[0-9a-fA-F-]+/events$",
         "= /github/webhook",
+        "/v2/",
+        "= /_registry_auth",
+        "@registry_401",
         "/agent/v1/",
         "= /health",
         "= /ready",
         "/",
     ]
     assert "return 404;" in api.split("location / {")[1]
+    # The registry: pulls only, each one checked by the API; its auth location is internal.
+    v2 = api.split("location /v2/ {")[1].split("location = /_registry_auth")[0]
+    assert "limit_except GET HEAD { deny all; }" in v2 and "auth_request /_registry_auth;" in v2
+    assert "internal;" in api.split("location = /_registry_auth {")[1].split("}")[0]
     # Agent calls are signed and checked by the API; nginx limits each address.
     assert "limit_req zone=gc_agent" in api.split("location /agent/v1/ {")[1].split("}")[0]
     assert "proxy_buffering off;" in api and "proxy_read_timeout 3600s;" in api

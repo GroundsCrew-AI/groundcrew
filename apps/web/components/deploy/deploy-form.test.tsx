@@ -18,6 +18,33 @@ const kind = connection({ id: "k8s", kind: "k8s", name: "kind groundcrew", tier:
 const observe = connection({ id: "aws-observe", name: "AWS observe", tier: "observe" });
 const deployTier = connection({ id: "aws-deploy", name: "AWS 881050425883", tier: "deploy" });
 
+function agentConnection(deployServices: string[]) {
+  const base = connection({ id: "agent", kind: "agent", name: "web-1", tier: null });
+  return {
+    ...base,
+    agent: {
+      enrolled: true,
+      online: true,
+      hostname: "web-1.example",
+      os: "linux",
+      arch: "amd64",
+      version: "0.3.0",
+      enrolled_at: null,
+      last_seen_at: null,
+      join_expires_at: null,
+      services: 3,
+      deploy_services: deployServices,
+      registry: "groundcrew",
+      registry_auth: "groundcrew" as const,
+      registry_username: null,
+      registry_token_saved: false,
+      registry_aws_connection_id: null,
+      latest_version: "0.3.0",
+      update_available: false,
+    },
+  };
+}
+
 function setup(connections = [github, kind, observe, deployTier]) {
   const onSubmit = vi.fn();
   render(<DeployForm workspaceId="ws-1" connections={connections} submitting={false} onSubmit={onSubmit} />);
@@ -98,6 +125,25 @@ describe("DeployForm", () => {
   it("asks for a GitHub connection when there is none", () => {
     setup([kind]);
     expect(screen.getByRole("link", { name: "Connect GitHub" })).toBeInTheDocument();
+  });
+});
+
+describe("DeployForm with an agent", () => {
+  it("deploys to a service the agent allows, chosen on the form", async () => {
+    const onSubmit = setup([github, agentConnection(["api", "worker"])]);
+    expect(screen.getByRole("radio", { name: /web-1/ })).toBeChecked();
+    expect(screen.getByText(/images in Groundcrew registry/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Service on web-1.example")).toHaveTextContent("api");
+    await userEvent.click(screen.getByRole("button", { name: /^deploy$/i }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ target_connection_id: "agent", target_service: "api" }),
+    );
+  });
+
+  it("cannot pick an agent with no service that allows deploy", () => {
+    setup([github, agentConnection([])]);
+    expect(screen.getByRole("radio", { name: /web-1/ })).toBeDisabled();
+    expect(screen.getByText(/no service allows deploy yet/)).toBeInTheDocument();
   });
 });
 

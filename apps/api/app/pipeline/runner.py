@@ -719,6 +719,7 @@ class _Job:
             allow_missing_env=bool(request.get("allow_missing_env")),
             repo=request["source"]["repo"],
             commit=self.state.get("commit"),
+            target_service=(request.get("target") or {}).get("service"),
         )
         plan = await target.plan(deploy)
         if not replan:
@@ -823,6 +824,7 @@ class _Job:
             allow_missing_env=bool(request.get("allow_missing_env")),
             repo=request["source"]["repo"],
             commit=self.state.get("commit"),
+            target_service=(request.get("target") or {}).get("service"),
         )
 
     async def apply_and_verify(self, approval: Approval) -> None:
@@ -996,13 +998,15 @@ class _Job:
         if not deployment.external_id:
             return None
         request = self.request
-        k8s = deployment.target == "k8s"
+        k8s, agent = deployment.target == "k8s", deployment.target == "agent"
         resource = DiscoveredResource(
-            provider="k8s" if k8s else "aws",
-            type="k8s:deployment" if k8s else "ecs:service",
+            provider="agent" if agent else "k8s" if k8s else "aws",
+            type="agent:service" if agent else "k8s:deployment" if k8s else "ecs:service",
             external_id=deployment.external_id,
-            name=slug(deployment.app),
-            region=deployment.location if k8s else self.settings.gc_aws_region,
+            # An agent's service keeps its name from the agent's configuration.
+            name=deployment.location.split("/", 1)[-1] if agent else slug(deployment.app),
+            account=deployment.location.split("/", 1)[0] if agent else None,
+            region=deployment.location if k8s else None if agent else self.settings.gc_aws_region,
             config={
                 "image": deployment.image,
                 "live_url": deployment.live_url,
@@ -1053,7 +1057,7 @@ class _Job:
 
 
 def _where(plan: TargetPlan) -> str:
-    return "Kubernetes" if plan.target == "k8s" else "AWS ECS"
+    return {"k8s": "Kubernetes", "agent": "the server"}.get(plan.target, "AWS ECS")
 
 
 def _secret(value: str) -> Any:

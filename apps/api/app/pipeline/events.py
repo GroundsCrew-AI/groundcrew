@@ -38,7 +38,7 @@ DeployStage = Literal[
 ]
 StageAgent = Literal["scout", "builder", "deployer"]
 StageStatus = Literal["succeeded", "failed", "skipped"]
-TargetKind = Literal["k8s", "aws_ecs"]
+TargetKind = Literal["k8s", "aws_ecs", "agent"]
 
 # Event names a deploy run adds to the run stream (besides step, approval_requested,
 # approval_decided, status, done).

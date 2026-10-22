@@ -34,6 +34,7 @@ from app.routes import (
     github_webhook,
     graph,
     incidents,
+    internal,
     runs,
     workspace_admin,
     workspaces,
@@ -278,6 +279,7 @@ app.include_router(evidence.router)
 app.include_router(admin.router)
 app.include_router(github_webhook.router)
 app.include_router(remote_agents.router)
+app.include_router(internal.router)
 
 
 def _openapi() -> dict[str, Any]:

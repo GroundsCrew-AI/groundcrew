@@ -78,7 +78,6 @@ services:
 		"the name is used twice",
 		"a systemd service can allow restart only",
 		`not "reboot"`,
-		"allow deploy needs deploy.image",
 		`service "bad name": name must be`,
 		"runtime must be docker, compose, or systemd",
 	} {

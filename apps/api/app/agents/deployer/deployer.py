@@ -106,6 +106,7 @@ def deploy_spec(
     allow_missing_env: bool,
     repo: str | None,
     commit: str | None,
+    target_service: str | None = None,
 ) -> DeploySpec:
     """The target's input. A variable is secret if the user, Scout, or the model said so."""
     scout_secret = {v.name for v in spec.env_vars if v.secret}
@@ -135,6 +136,7 @@ def deploy_spec(
         allow_missing_env=allow_missing_env,
         repo=repo,
         commit=commit,
+        target_service=target_service,
     )
 
 
@@ -171,6 +173,8 @@ def blocked(checks: list[PreflightCheck]) -> list[PreflightCheck]:
 
 
 def plan_summary(plan: TargetPlan) -> str:
+    if plan.target == "agent":
+        return f"Container {json.loads(plan.rendered).get('service', plan.app)} on the server"
     kind: Literal["Deployment", "ECS service"] = (
         "Deployment" if plan.target == "k8s" else "ECS service"
     )

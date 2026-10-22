@@ -49,6 +49,11 @@ roll_out() { # roll_out SHA [migrate|no-migrate]: each service until healthy
   install -m 0644 "$STATE/compose-$1.yml" /opt/groundcrew/compose.yml
   compose up -d postgres
   healthy postgres 120 || { log "postgres is not healthy"; return 1; }
+  # The Groundcrew registry (releases from the agent deploys on); older releases have none.
+  if compose config --services | grep -qx registry; then
+    compose up -d registry
+    healthy registry 60 || { log "registry is not healthy"; return 1; }
+  fi
   if [ "${2:-migrate}" = migrate ]; then
     log "migrations"
     compose run --rm --no-deps migrate || { log "migrations failed"; return 1; }

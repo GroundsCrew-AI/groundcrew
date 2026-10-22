@@ -77,8 +77,10 @@ class DeployCreate(BaseModel):
 
     workspace_id: uuid.UUID
     repo: DeploySource
-    # A k8s connection, or an AWS connection with Tier=deploy.
+    # A k8s connection, an AWS connection with Tier=deploy, or a Groundcrew agent.
     target_connection_id: uuid.UUID
+    # Agent targets: the service on the server to update (its `allow` lists deploy).
+    target_service: str | None = Field(default=None, max_length=100)
     env: list[EnvVarIn] = Field(default_factory=list, max_length=MAX_ENV_VARS)
     options: DeployOptions = Field(default_factory=DeployOptions)
 

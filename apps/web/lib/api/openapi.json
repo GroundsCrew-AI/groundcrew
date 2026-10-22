@@ -272,6 +272,13 @@
             ],
             "title": "Arch"
           },
+          "deploy_services": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Deploy Services",
+            "type": "array"
+          },
           "enrolled": {
             "title": "Enrolled",
             "type": "boolean"
@@ -343,6 +350,48 @@
             ],
             "title": "Os"
           },
+          "registry": {
+            "default": "groundcrew",
+            "title": "Registry",
+            "type": "string"
+          },
+          "registry_auth": {
+            "default": "groundcrew",
+            "enum": [
+              "groundcrew",
+              "token",
+              "ecr"
+            ],
+            "title": "Registry Auth",
+            "type": "string"
+          },
+          "registry_aws_connection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Aws Connection Id"
+          },
+          "registry_token_saved": {
+            "default": false,
+            "title": "Registry Token Saved",
+            "type": "boolean"
+          },
+          "registry_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Username"
+          },
           "services": {
             "default": 0,
             "title": "Services",
@@ -370,6 +419,70 @@
           "online"
         ],
         "title": "AgentOut",
+        "type": "object"
+      },
+      "AgentRegistryIn": {
+        "description": "The agent's own registry for deploys (instead of the Groundcrew registry): the same\nchoices as a Kubernetes cluster's (K8sDeploySettingsIn), without the cluster settings.",
+        "properties": {
+          "aws_connection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Connection Id"
+          },
+          "registry": {
+            "examples": [
+              "ghcr.io/acme"
+            ],
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Registry",
+            "type": "string"
+          },
+          "registry_auth": {
+            "default": "token",
+            "enum": [
+              "token",
+              "ecr"
+            ],
+            "title": "Registry Auth",
+            "type": "string"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "registry"
+        ],
+        "title": "AgentRegistryIn",
         "type": "object"
       },
       "ApprovalOut": {
@@ -1394,6 +1507,30 @@
         "title": "CommandResultIn",
         "type": "object"
       },
+      "CommandSecretsOut": {
+        "description": "What a deploy needs and the payload does not carry. Returned once.",
+        "properties": {
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/EnvOut"
+            },
+            "title": "Env",
+            "type": "array"
+          },
+          "registry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistryLoginOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "CommandSecretsOut",
+        "type": "object"
+      },
       "ConnectionCleanup": {
         "properties": {
           "connection": {
@@ -1792,6 +1929,18 @@
             "format": "uuid",
             "title": "Target Connection Id",
             "type": "string"
+          },
+          "target_service": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Service"
           },
           "workspace_id": {
             "format": "uuid",
@@ -2360,7 +2509,8 @@
           "target": {
             "enum": [
               "k8s",
-              "aws_ecs"
+              "aws_ecs",
+              "agent"
             ],
             "title": "Target",
             "type": "string"
@@ -2488,7 +2638,8 @@
           "target": {
             "enum": [
               "k8s",
-              "aws_ecs"
+              "aws_ecs",
+              "agent"
             ],
             "title": "Target",
             "type": "string"
@@ -2795,7 +2946,8 @@
           "kind": {
             "enum": [
               "k8s",
-              "aws_ecs"
+              "aws_ecs",
+              "agent"
             ],
             "title": "Kind",
             "type": "string"
@@ -2992,6 +3144,24 @@
           "name"
         ],
         "title": "EnrollOut",
+        "type": "object"
+      },
+      "EnvOut": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "title": "EnvOut",
         "type": "object"
       },
       "EnvVarIn": {
@@ -5910,7 +6080,8 @@
           "target": {
             "enum": [
               "k8s",
-              "aws_ecs"
+              "aws_ecs",
+              "agent"
             ],
             "title": "Target",
             "type": "string"
@@ -6966,6 +7137,29 @@
           "migrations"
         ],
         "title": "Ready",
+        "type": "object"
+      },
+      "RegistryLoginOut": {
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          },
+          "server": {
+            "title": "Server",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "username",
+          "password"
+        ],
+        "title": "RegistryLoginOut",
         "type": "object"
       },
       "ResearchDone": {
@@ -10200,6 +10394,50 @@
         ]
       }
     },
+    "/agent/v1/commands/{command_id}/secrets": {
+      "post": {
+        "description": "A deploy's registry login and env values, for the agent running it: once, while the\ncommand is handed out, and then wiped.",
+        "operationId": "command_secrets_agent_v1_commands__command_id__secrets_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandSecretsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Command Secrets",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
     "/agent/v1/enroll": {
       "post": {
         "description": "Trade a one-time join token for this agent's place in the workspace. A new token for an\nenrolled agent (a reinstall) replaces its key.",
@@ -11987,6 +12225,134 @@
           }
         },
         "summary": "Delete Connection",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/agent/registry": {
+      "delete": {
+        "description": "Back to the Groundcrew registry (the saved token is deleted).",
+        "operationId": "agent_clear_registry_connections__connection_id__agent_registry_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Clear Registry",
+        "tags": [
+          "connections"
+        ]
+      },
+      "put": {
+        "description": "Deploys to this agent keep their images in this registry instead of the Groundcrew\nregistry: a username and token (stored encrypted, never returned; the agent gets them only\nwhile it runs a deploy), or Amazon ECR through an AWS connection with the deploy\ncapability (a fresh login per deploy).",
+        "operationId": "agent_set_registry_connections__connection_id__agent_registry_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRegistryIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Set Registry",
         "tags": [
           "connections"
         ]
