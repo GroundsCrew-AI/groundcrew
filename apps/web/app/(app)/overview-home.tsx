@@ -1,7 +1,8 @@
 "use client";
 
+import { Coins, type LucideIcon } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { GettingStarted } from "@/components/overview/getting-started";
 import { formatUsd, SpendMeter } from "@/components/overview/usage";
@@ -11,6 +12,7 @@ import { RunsIllustration } from "@/components/states/illustrations";
 import { EmptyState, ErrorState, RowsSkeleton } from "@/components/states/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Summary } from "@/lib/api/client";
+import { AREAS, areaColor, type AreaKey } from "@/lib/areas";
 import { formatTokens } from "@/lib/format";
 import { useRuns, useSummary } from "@/lib/queries";
 import { useWorkspace } from "@/lib/workspace";
@@ -20,16 +22,32 @@ function Metric({
   value,
   children,
   href,
+  area,
+  icon,
 }: {
   label: string;
   value: ReactNode;
   children?: ReactNode;
   href?: string;
+  /** The area it belongs to: its icon and hue. */
+  area: AreaKey;
+  /** Another icon in the area's hue. */
+  icon?: LucideIcon;
 }) {
+  const Icon = icon ?? AREAS.find((a) => a.key === area)!.icon;
   const body = (
     <>
-      <p className="text-[12px] text-muted-foreground">{label}</p>
-      <p className="tabular mt-1 text-[22px] leading-none font-semibold tracking-tight">{value}</p>
+      <p className="flex items-center justify-between gap-2 text-[12px] text-muted-foreground">
+        {label}
+        <span
+          aria-hidden="true"
+          className="area-chip flex size-6 shrink-0 items-center justify-center rounded-md"
+          style={{ "--area": areaColor(area) } as CSSProperties}
+        >
+          <Icon className="size-3.5" />
+        </span>
+      </p>
+      <p className="tabular mt-0.5 text-[22px] leading-none font-semibold tracking-tight">{value}</p>
       {children && <div className="mt-2.5">{children}</div>}
     </>
   );
@@ -56,6 +74,7 @@ function Metrics({ summary }: { summary: Summary }) {
       <Metric
         label="Open incidents"
         href="/incidents"
+        area="incidents"
         value={<span className={incidents ? "text-[var(--status-failed)]" : undefined}>{incidents}</span>}
       >
         <Note>
@@ -69,14 +88,15 @@ function Metrics({ summary }: { summary: Summary }) {
       <Metric
         label="Waiting for approval"
         href="/approvals"
+        area="approvals"
         value={<span className={approvals ? "text-[var(--status-waiting)]" : undefined}>{approvals}</span>}
       >
         <Note>{approvals ? "Agents wait until someone decides" : "Nothing waiting"}</Note>
       </Metric>
-      <Metric label="Model spend today" value={formatUsd(summary.usd_today)}>
+      <Metric label="Model spend today" area="overview" icon={Coins} value={formatUsd(summary.usd_today)}>
         <SpendMeter summary={summary} />
       </Metric>
-      <Metric label="Runs today" href="/runs" value={summary.runs_today}>
+      <Metric label="Runs today" href="/runs" area="runs" value={summary.runs_today}>
         <Note>{formatTokens(summary.workspace_tokens_today)} tokens today</Note>
       </Metric>
     </>

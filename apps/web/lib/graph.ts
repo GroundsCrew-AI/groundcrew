@@ -65,6 +65,21 @@ export const EDGE_LABELS: Record<string, string> = {
   logs_to: "logs to",
 };
 
+/** Each kind of line has its own hue (the area tokens, contrast-checked on both themes). */
+export const EDGE_COLORS: Record<string, string> = {
+  calls: "var(--area-runs)",
+  reads: "var(--area-map)",
+  uses: "var(--area-approvals)",
+  pulls_from: "var(--area-docs)",
+  deployed_by: "var(--area-deploy)",
+  logs_to: "var(--area-settings)",
+  defined_in: "var(--subtle)",
+};
+
+export function edgeColor(kind: string): string {
+  return EDGE_COLORS[kind] ?? "var(--subtle)";
+}
+
 export function edgeLabel(kind: string): string {
   return EDGE_LABELS[kind] ?? kind.replaceAll("_", " ");
 }

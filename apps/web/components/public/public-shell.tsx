@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Logo } from "@/components/logo";
+import { AccountLinks } from "@/components/public/account-links";
 import { REPOSITORY_URL } from "@/components/public/contact";
 
 const NAV = [
@@ -60,18 +61,7 @@ export function PublicShell({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2 text-[13.5px]">
-            <Link
-              href="/signin"
-              className={`hidden rounded-md px-2.5 py-1.5 text-muted-foreground transition-colors duration-150 hover:text-foreground sm:inline-flex ${FOCUS}`}
-            >
-              Sign in
-            </Link>
-            <Link
-              href="/signin"
-              className={`inline-flex h-9 items-center rounded-lg bg-primary px-3.5 font-medium text-primary-foreground transition-opacity duration-150 hover:opacity-90 ${FOCUS}`}
-            >
-              Get started
-            </Link>
+            <AccountLinks />
             <details className="relative sm:hidden">
               <summary
                 aria-label="Menu"

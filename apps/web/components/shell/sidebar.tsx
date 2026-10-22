@@ -4,28 +4,21 @@ import { cn } from "cn";
 import {
   Check,
   ChevronsUpDown,
-  Inbox,
-  LayoutGrid,
+  ExternalLink,
   LogOut,
   type LucideIcon,
   Monitor,
   Moon,
-  Network,
   PanelLeftClose,
   PanelLeftOpen,
-  Plug,
   Plus,
-  Rocket,
-  Settings,
-  Siren,
   Sun,
   UserCog,
-  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useState } from "react";
+import { type CSSProperties, useState } from "react";
 
 import { signOutAction } from "@/app/actions";
 import { LogoMark } from "@/components/logo";
@@ -44,13 +37,14 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/user-avatar";
+import { AREAS, areaColor, DOCS, GROUPS } from "@/lib/areas";
 import { useSummary } from "@/lib/queries";
 import { useWorkspace } from "@/lib/workspace";
 
 import { useShell } from "./shell-context";
 
 type Badge = "approvals" | "incidents";
-type NavItem = { href: string; label: string; icon: LucideIcon; badge?: Badge };
+type NavItem = { href: string; label: string; icon: LucideIcon; badge?: Badge; color: string; hint?: string; external?: boolean };
 
 /** How a count reads to a screen reader, and its color: approvals wait on a person, incidents are outages. */
 const BADGES: Record<Badge, { noun: string; color: string }> = {
@@ -58,18 +52,23 @@ const BADGES: Record<Badge, { noun: string; color: string }> = {
   incidents: { noun: "open", color: "var(--status-failed)" },
 };
 
-const PRIMARY: NavItem[] = [
-  { href: "/", label: "Overview", icon: LayoutGrid },
-  { href: "/map", label: "Map", icon: Network },
-  { href: "/deploy", label: "Deploy", icon: Rocket },
-  { href: "/runs", label: "Runs", icon: Workflow },
-  { href: "/incidents", label: "Incidents", icon: Siren, badge: "incidents" },
-  { href: "/approvals", label: "Approvals", icon: Inbox, badge: "approvals" },
-];
-const SECONDARY: NavItem[] = [
-  { href: "/connections", label: "Connections", icon: Plug },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
+const ITEMS: (NavItem & { group: string })[] = AREAS.map((a) => ({
+  href: a.href,
+  label: a.label,
+  icon: a.icon,
+  hint: a.hint,
+  color: areaColor(a.key),
+  group: a.group,
+  badge: a.key === "incidents" || a.key === "approvals" ? a.key : undefined,
+}));
+const DOCS_ITEM: NavItem = {
+  href: DOCS.href,
+  label: DOCS.label,
+  icon: DOCS.icon,
+  hint: "How Groundcrew works, connect guides, and FAQ",
+  color: "var(--area-docs)",
+  external: true,
+};
 
 function isActive(pathname: string, href: string): boolean {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
@@ -95,20 +94,26 @@ function NavLink({
     <Link
       href={item.href}
       onClick={onNavigate}
-      aria-current={active ? "page" : undefined}
+      target={item.external ? "_blank" : undefined}
+      rel={item.external ? "noreferrer" : undefined}
+      aria-current={active && !item.external ? "page" : undefined}
       aria-label={collapsed || count ? label : undefined}
+      style={{ "--area": item.color } as CSSProperties}
       className={cn(
-        "group relative flex h-8 pointer-coarse:h-11 items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors",
+        "group relative flex h-8 pointer-coarse:h-11 items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors duration-150",
         "hover:bg-sidebar-accent hover:text-foreground",
-        active && "bg-sidebar-accent text-foreground",
+        active && !item.external && "bg-[color-mix(in_oklab,var(--area)_12%,transparent)] font-medium text-foreground",
         collapsed && "justify-center px-0",
       )}
     >
-      {active && (
-        <span aria-hidden="true" className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-primary" />
+      {active && !item.external && (
+        <span aria-hidden="true" className="absolute top-1.5 bottom-1.5 left-0 w-[3px] rounded-full bg-[var(--area)]" />
       )}
-      <Icon aria-hidden="true" className={cn("size-4 shrink-0", active && "text-primary")} strokeWidth={1.75} />
+      <Icon aria-hidden="true" className="size-4 shrink-0 text-[var(--area)]" strokeWidth={active ? 2.1 : 1.75} />
       {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+      {!collapsed && item.external && (
+        <ExternalLink aria-hidden="true" className="size-3 text-subtle opacity-0 transition-opacity group-hover:opacity-100" />
+      )}
       {count ? (
         <span
           aria-hidden="true"
@@ -127,7 +132,10 @@ function NavLink({
   return (
     <Tooltip>
       <TooltipTrigger asChild>{link}</TooltipTrigger>
-      <TooltipContent side="right">{item.label}</TooltipContent>
+      <TooltipContent side="right">
+        <span className="font-medium">{item.label}</span>
+        {item.hint && <span className="block text-[11.5px] opacity-80">{item.hint}</span>}
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -253,20 +261,32 @@ export function SidebarContent({
   return (
     <div className="flex h-full flex-col gap-1 p-2">
       <WorkspaceSwitcher collapsed={collapsed} />
-      <nav aria-label="Main" className="mt-3 flex flex-1 flex-col gap-0.5">
-        {PRIMARY.map((item) => (
-          <NavLink
-            key={item.href}
-            item={item}
-            collapsed={collapsed}
-            count={item.badge ? counts[item.badge] : undefined}
-            onNavigate={onNavigate}
-          />
+      <nav aria-label="Main" className="mt-3 flex flex-1 flex-col gap-0.5 overflow-y-auto">
+        {GROUPS.map((group, i) => (
+          <div key={group.key} role="group" aria-label={group.label} className={cn(i > 0 && "mt-3")}>
+            {collapsed ? (
+              i > 0 && <div className="mx-2 mb-2 h-px bg-sidebar-border" role="separator" />
+            ) : (
+              <p className="px-2 pb-1 text-[10.5px] font-semibold tracking-[0.08em] text-subtle uppercase">
+                {group.label}
+              </p>
+            )}
+            <div className="flex flex-col gap-0.5">
+              {ITEMS.filter((item) => item.group === group.key).map((item) => (
+                <NavLink
+                  key={item.href}
+                  item={item}
+                  collapsed={collapsed}
+                  count={item.badge ? counts[item.badge] : undefined}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </div>
+          </div>
         ))}
-        <div className="my-2 h-px bg-sidebar-border" role="separator" />
-        {SECONDARY.map((item) => (
-          <NavLink key={item.href} item={item} collapsed={collapsed} onNavigate={onNavigate} />
-        ))}
+        <div className="mt-auto pt-3">
+          <NavLink item={DOCS_ITEM} collapsed={collapsed} onNavigate={onNavigate} />
+        </div>
       </nav>
       <UserMenu collapsed={collapsed} />
     </div>

@@ -40,6 +40,7 @@ const INTEGRATIONS = [
 const FEATURES = [
   {
     id: "map",
+    hue: "var(--area-map)",
     icon: Network,
     eyebrow: "Discovery",
     title: "One map of what runs where",
@@ -53,6 +54,7 @@ const FEATURES = [
   },
   {
     id: "deploy",
+    hue: "var(--area-deploy)",
     icon: Boxes,
     eyebrow: "Deploys",
     title: "From a repository to a running service",
@@ -66,6 +68,7 @@ const FEATURES = [
   },
   {
     id: "incidents",
+    hue: "var(--area-incidents)",
     icon: Siren,
     eyebrow: "Incidents",
     title: "A root cause you can check",
@@ -79,6 +82,7 @@ const FEATURES = [
   },
   {
     id: "fix",
+    hue: "var(--area-connections)",
     icon: FileCheck2,
     eyebrow: "Fixes",
     title: "Fixes that are proven, not promised",
@@ -144,6 +148,9 @@ const STEPS = [
   },
 ] as const;
 
+// Sign in, connect, discover, deploy and respond: the hues of the areas each step lands in.
+const STEP_HUES = ["var(--area-overview)", "var(--area-connections)", "var(--area-map)", "var(--area-deploy)"];
+
 const AGENTS = [
   { name: "Scout", model: "Nemotron Nano", color: "var(--tier-nano)", body: "Reads repositories and the map. Finds how an app builds and runs." },
   { name: "Builder", model: "Nemotron Super", color: "var(--tier-super)", body: "Writes the Dockerfile, builds in the sandbox, and fixes failed builds." },
@@ -178,10 +185,25 @@ const FAQ = [
   },
 ] as const;
 
-function SectionHeading({ id, eyebrow, title, children }: { id: string; eyebrow: string; title: string; children?: ReactNode }) {
+function SectionHeading({
+  id,
+  eyebrow,
+  title,
+  hue = "var(--primary)",
+  children,
+}: {
+  id: string;
+  eyebrow: string;
+  title: string;
+  /** The eyebrow's color: the area hue of the part of the product the section shows. */
+  hue?: string;
+  children?: ReactNode;
+}) {
   return (
     <div className="max-w-2xl">
-      <p className="text-[13px] font-medium text-primary">{eyebrow}</p>
+      <p className="text-[13px] font-medium" style={{ color: hue }}>
+        {eyebrow}
+      </p>
       <h2 id={id} className="mt-2 scroll-mt-24 text-[26px] leading-tight font-semibold tracking-tight sm:text-[30px]">
         {title}
       </h2>
@@ -198,6 +220,10 @@ export default function WelcomePage() {
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:40px_40px] opacity-40 [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]"
         />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-40 left-1/2 h-[420px] w-[min(1100px,140vw)] -translate-x-1/2 rounded-full [background:var(--brand-gradient)] opacity-[0.13] blur-[90px]"
+        />
         <div className="relative mx-auto grid w-full max-w-6xl grid-cols-1 gap-12 px-4 pt-14 pb-16 sm:px-6 sm:pt-20 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:pb-24">
           <div>
             <p className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1 text-[12.5px] font-medium text-muted-foreground">
@@ -208,7 +234,7 @@ export default function WelcomePage() {
               id="hero"
               className="mt-5 text-[36px] leading-[1.08] font-semibold tracking-tight text-balance sm:text-[48px]"
             >
-              Deploys and incident fixes that wait for your approval.
+              Deploys and incident fixes that wait <span className="brand-text">for your approval.</span>
             </h1>
             <p className="mt-5 max-w-xl text-[16.5px] leading-relaxed text-muted-foreground">
               Groundcrew connects to the infrastructure you already run, maps it into one graph, deploys your apps,
@@ -254,16 +280,22 @@ export default function WelcomePage() {
         <section key={f.id} aria-labelledby={f.id} className={i % 2 === 1 ? "border-b bg-card" : "border-b"}>
           <div className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-10 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-2 lg:items-center lg:gap-16">
             <div className={i % 2 === 1 ? "min-w-0 lg:order-2" : "min-w-0"}>
-              <f.icon aria-hidden="true" className="size-5 text-primary" />
-              <div className="mt-3">
-                <SectionHeading id={f.id} eyebrow={f.eyebrow} title={f.title}>
+              <span
+                aria-hidden="true"
+                className="area-chip inline-flex size-10 items-center justify-center rounded-lg"
+                style={{ "--area": f.hue } as CSSProperties}
+              >
+                <f.icon className="size-5" />
+              </span>
+              <div className="mt-4">
+                <SectionHeading id={f.id} eyebrow={f.eyebrow} title={f.title} hue={f.hue}>
                   {f.body}
                 </SectionHeading>
               </div>
               <ul className="mt-6 space-y-3">
                 {f.points.map((p) => (
                   <li key={p} className="flex gap-3 text-[14.5px] leading-relaxed">
-                    <span aria-hidden="true" className="mt-2.5 h-px w-3 shrink-0 bg-primary" />
+                    <span aria-hidden="true" className="mt-2.5 h-0.5 w-3 shrink-0 rounded-full" style={{ background: f.hue }} />
                     {p}
                   </li>
                 ))}
@@ -305,7 +337,8 @@ export default function WelcomePage() {
               <li key={s.title}>
                 <span
                   aria-hidden="true"
-                  className="flex size-8 items-center justify-center rounded-full border bg-background text-[13px] font-semibold tabular"
+                  className="area-chip flex size-8 items-center justify-center rounded-full text-[13px] font-semibold tabular"
+                  style={{ "--area": STEP_HUES[i] } as CSSProperties}
                 >
                   {i + 1}
                 </span>
@@ -325,7 +358,11 @@ export default function WelcomePage() {
           </SectionHeading>
           <ul className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {AGENTS.map((a) => (
-              <li key={a.name} className="rounded-xl border bg-card p-5">
+              <li
+                key={a.name}
+                className="rounded-xl border border-t-2 bg-card p-5"
+                style={{ borderTopColor: a.color }}
+              >
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-[15px] font-semibold">{a.name}</h3>
                   <span

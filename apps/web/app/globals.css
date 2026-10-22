@@ -49,6 +49,15 @@
   --color-tier-super: var(--tier-super);
   --color-tier-ultra: var(--tier-ultra);
   --color-subtle: var(--subtle);
+  --color-area-overview: var(--area-overview);
+  --color-area-map: var(--area-map);
+  --color-area-deploy: var(--area-deploy);
+  --color-area-runs: var(--area-runs);
+  --color-area-incidents: var(--area-incidents);
+  --color-area-approvals: var(--area-approvals);
+  --color-area-connections: var(--area-connections);
+  --color-area-settings: var(--area-settings);
+  --color-area-docs: var(--area-docs);
   --color-rail: var(--rail);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -60,8 +69,11 @@
 }
 
 /*
- * Groundcrew tokens. Neutral grays with one accent (--primary, taxiway blue) used only for
- * primary actions, the active nav item, and focus rings. Status colors are for status only.
+ * Groundcrew tokens. Neutral grays with one action color (--primary, taxiway blue) for primary
+ * actions, the active nav item, and focus rings. Each area of the product has a hue of its own
+ * (--area-*: nav icons, page header chips, empty states) so places are easy to tell apart; they
+ * never mean status. Status colors are for status only. --brand-gradient is for the logo, the
+ * landing page, and one accent stripe; not for controls.
  * Dark is the default theme; light is the same system inverted. Every text token (subtle,
  * status, tier) is at least 4.5:1 on the backgrounds and on its own .tint fill.
  */
@@ -89,6 +101,18 @@
   --input: #d9dce2;
   --ring: #3755d8;
   --rail: #dcdfe5;
+
+  /* Area hues, light: at least 4.5:1 on the backgrounds (they also color small text). */
+  --area-overview: #3755d8;
+  --area-map: #0f766e;
+  --area-deploy: #6d28d9;
+  --area-runs: #1d4ed8;
+  --area-incidents: #be123c;
+  --area-approvals: #92400e;
+  --area-connections: #047857;
+  --area-settings: #52525b;
+  --area-docs: #c2410c;
+  --brand-gradient: linear-gradient(120deg, #3755d8 0%, #6d28d9 52%, #0f766e 100%);
 
   --status-running: #3755d8;
   --status-waiting: #865705;
@@ -138,6 +162,18 @@
   --input: #2c2e35;
   --ring: #6d8bff;
   --rail: #2a2c33;
+
+  /* Area hues, dark: at least 4.5:1 on the dark backgrounds. */
+  --area-overview: #7f9bff;
+  --area-map: #2dd4bf;
+  --area-deploy: #b39cfb;
+  --area-runs: #6cb2fb;
+  --area-incidents: #fb7f93;
+  --area-approvals: #fbbf24;
+  --area-connections: #34d399;
+  --area-settings: #a1a1aa;
+  --area-docs: #fb923c;
+  --brand-gradient: linear-gradient(120deg, #6d8bff 0%, #a78bfa 52%, #2dd4bf 100%);
 
   --status-running: #7592ff;
   --status-waiting: #e2a63c;
@@ -192,6 +228,18 @@
 @layer utilities {
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+  /* An area's icon chip: the area hue on a faint fill of itself. */
+  .area-chip {
+    color: var(--area);
+    background: color-mix(in oklab, var(--area) 14%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--area) 26%, transparent);
+  }
+  .brand-text {
+    background: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
   /* Tinted surface for a status, tier, or policy color: text in the color, faint fill. */
   .tint {

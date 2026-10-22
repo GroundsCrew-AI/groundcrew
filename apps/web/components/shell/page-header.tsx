@@ -1,28 +1,38 @@
 "use client";
 
 import { cn } from "cn";
-import { Menu } from "lucide-react";
-import type { ReactNode } from "react";
+import { BookOpen, Menu } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import type { CSSProperties, ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { areaColor, areaFor } from "@/lib/areas";
 
 import { useShell } from "./shell-context";
 import { SidebarContent } from "./sidebar";
 
-/** The top bar: page title (with optional parent), and the page's own actions on the right. */
+/** The top bar: the area's icon, the page title (with optional parent), a link to the area's
+ * docs, and the page's own actions on the right. The area comes from the route (lib/areas). */
 export function PageHeader({
   title,
   parent,
   actions,
   className,
+  docs,
 }: {
   title: ReactNode;
   parent?: ReactNode;
   actions?: ReactNode;
   className?: string;
+  /** A more specific docs page than the area's own. */
+  docs?: string;
 }) {
   const { mobileOpen, setMobileOpen } = useShell();
+  const area = areaFor(usePathname());
+  const Icon = area?.icon;
+  const help = docs ?? area?.docs;
   return (
     <header
       className={cn(
@@ -45,7 +55,17 @@ export function PageHeader({
           <SidebarContent collapsed={false} onNavigate={() => setMobileOpen(false)} />
         </SheetContent>
       </Sheet>
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-[13px]">
+        {area && Icon && (
+          <span
+            aria-hidden="true"
+            title={area.hint}
+            style={{ "--area": areaColor(area.key) } as CSSProperties}
+            className="area-chip flex size-6 shrink-0 items-center justify-center rounded-md"
+          >
+            <Icon className="size-3.5" strokeWidth={2} />
+          </span>
+        )}
         {parent && (
           <>
             <span className="truncate text-muted-foreground">{parent}</span>
@@ -56,7 +76,19 @@ export function PageHeader({
         )}
         <h1 className="truncate font-medium">{title}</h1>
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {(actions || help) && (
+        <div className="flex shrink-0 items-center gap-2">
+          {actions}
+          {help && (
+            <Button variant="ghost" size="sm" asChild className="text-muted-foreground">
+              <Link href={help} target="_blank" rel="noreferrer" aria-label={`Docs: ${area?.label ?? "this page"} (opens in a new tab)`}>
+                <BookOpen className="text-[var(--area-docs)]" />
+                <span className="hidden sm:inline">Docs</span>
+              </Link>
+            </Button>
+          )}
+        </div>
+      )}
     </header>
   );
 }

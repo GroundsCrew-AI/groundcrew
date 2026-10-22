@@ -71,6 +71,24 @@ export const PROVIDER_MARKS: Record<string, string> = {
   tooling: "Tools",
 };
 
+/** A hue per provider, so groups and their resources are easy to tell apart on the map. */
+export const PROVIDER_COLORS: Record<string, string> = {
+  aws: "var(--area-docs)",
+  azure: "var(--area-runs)",
+  gcp: "var(--area-overview)",
+  github: "var(--area-deploy)",
+  k8s: "var(--area-overview)",
+  vercel: "var(--foreground)",
+  vm: "var(--area-map)",
+  agent: "var(--area-connections)",
+  groundcrew: "var(--primary)",
+  tooling: "var(--area-settings)",
+};
+
+export function providerColor(provider: string): string {
+  return PROVIDER_COLORS[provider] ?? "var(--area-settings)";
+}
+
 export function ProviderMark({ provider, className }: { provider: string; className?: string }) {
   return (
     <span
