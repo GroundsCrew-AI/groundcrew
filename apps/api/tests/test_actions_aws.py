@@ -371,7 +371,7 @@ async def test_rollback_is_not_offered_when_no_earlier_image_exists(
         await actions.plan_ecs_rollback_service(cid, CLUSTER, "checkout-worker")
     assert str(caught.value) == (
         "No earlier revision of checkout-worker can start: what they use "
-        "(checkout-worker:deleted, checkout-worker:older) no longer exists (checked "
+        "(checkout-worker:deleted, checkout-worker:older) no longer exist (checked "
         "checkout-worker:41, checkout-worker:40), as after an environment is rebuilt. A rollback "
         "cannot help; push the image again, or deploy a fixed revision."
     )

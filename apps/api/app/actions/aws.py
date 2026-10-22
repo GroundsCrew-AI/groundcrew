@@ -424,7 +424,8 @@ class AwsEmergencyActions:
         checked = ", ".join(_short(a) for a in older[:ROLLBACK_CANDIDATES])
         raise EmergencyActionError(
             f"No earlier revision of {service} can start: what they use "
-            f"({', '.join(gone)}) no longer exists (checked {checked}), as after an environment "
+            f"({', '.join(gone)}) no longer {'exist' if len(gone) > 1 else 'exists'} "
+            f"(checked {checked}), as after an environment "
             "is rebuilt. A rollback cannot help; push the image again, or deploy a fixed revision."
         )
 

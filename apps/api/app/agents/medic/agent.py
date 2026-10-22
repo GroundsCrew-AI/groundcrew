@@ -49,6 +49,7 @@ from app.agents.medic.events import (
     ResearchResult,
     Signal,
 )
+from app.agents.medic.schemas import RootCause
 from app.agents.medic.state import FixRecord, MedicState, MemoryUsed, Outcome
 from app.agents.medic.verify import k8s_checks, run_checks
 from app.config import Settings, get_settings
@@ -192,6 +193,28 @@ def _round_ids(records: list[FixRecord], round_: int) -> list[FixRecord]:
             }
         )
     return records
+
+
+def _sentences(parts: list[str]) -> str:
+    """Fix titles and notes as one text: each part ends with a period ("revision.; No fix PR"
+    came from joining sentences with "; ")."""
+    return " ".join(p if p.endswith((".", "?", "!")) else f"{p}." for p in parts if p)
+
+
+# The diagnosis's suggestions Medic has no action for, shown when it cannot fix the incident.
+MANUAL_KINDS = frozenset({"pull_request", "other"})
+MAX_MANUAL = 2
+
+
+def _by_hand(root_cause: RootCause | None) -> list[str]:
+    if root_cause is None or root_cause.false_alarm:
+        return []
+    found = [
+        " ".join(o.description.split())[:300]
+        for o in root_cause.fix_options
+        if o.kind in MANUAL_KINDS and o.description.strip()
+    ]
+    return [f"To fix it by hand: {d}" for d in found[:MAX_MANUAL]]
 
 
 def _save(incident: Incident, state: MedicState) -> None:
@@ -587,7 +610,7 @@ class MedicRunner:
             session,
             run,
             kind="fix_proposed",
-            output_summary="; ".join([f.fix.title for f in state.fixes] + state.notes) or "No fix",
+            output_summary=_sentences([f.fix.title for f in state.fixes] + state.notes) or "No fix",
             data=FixProposed(fixes=[f.fix for f in state.fixes]),
         )
         if not state.fixes:
@@ -691,7 +714,7 @@ class MedicRunner:
             incident,
             run,
             state,
-            "No fix Medic can apply. " + " ".join(state.notes),
+            _sentences(["No fix Medic can apply", *state.notes, *_by_hand(state.root_cause)]),
             run_status=RunStatus.succeeded,
             stop=StopReason.completed,
         )

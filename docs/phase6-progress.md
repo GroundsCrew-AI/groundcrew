@@ -291,6 +291,24 @@ Build, Medic, and setup fixes (2026-10-22): release `e111b5269f33` live, `57f18b
   images for af3758a pushed, migrations run, services back on revision 31. The checkout-demo repository
   variables ECS_SUBNETS and ECS_TASK_SECURITY_GROUP still name the old VPC.
 
+Medic diagnosis grounding (2026-10-22, not deployed yet): from the legacy-flask-app incident,
+where Medic blamed task definition :3 with high confidence for gunicorn "no URI read" worker
+timeouts although the worker settings had not changed, and never read why the service was unhealthy.
+- ECS reader (`app/telemetry/ecs.py`) now also reads the running tasks' health, the service's
+  load balancer target groups (health check path, port, matcher, and why each target fails),
+  and compares each deploy's task definition with the one before it: image, command,
+  environment and secret names (never values), limits. A deploy with the same images and
+  commands is marked as shipping no new application code. No new permissions: the connect
+  template already allows DescribeTaskDefinition, DescribeTargetGroups, DescribeTargetHealth.
+- Diagnosis rules: a deploy before the errors is not proof; timing alone or contradicted
+  evidence caps confidence at medium; failing health checks name the symptom; idle-connection
+  worker timeouts are not "every request hangs". New ranking weights for health and deploy diffs.
+- When Medic cannot fix it, the outcome adds the diagnosis's manual fix ("To fix it by hand:
+  ..."), and notes read as sentences (no more "revision.; No fix PR"). "no longer exist" for
+  several missing items.
+- Teammate code touched (Phase 5, for review): app/agents/medic/agent.py*, diagnose.py*,
+  evidence.py*, app/telemetry/ecs.py*.
+
 Open issues:
 - The automatic rollback path has unit-level logic only; it has not been exercised live (a deploy of a
   commit that fails its health check would show it).

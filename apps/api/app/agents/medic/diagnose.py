@@ -31,6 +31,20 @@ Rules:
   A deploy acts from when it starts, not when its new tasks are live: a migration it runs
   changes the database first. A break that begins between a deploy's start and its completion
   points to that deploy and the commit it ships.
+- A deploy that comes before the errors is not proof it caused them. Say what it changed (a
+  "task definition X vs Y" line lists it) and how that change produces the symptom. When it
+  shipped no new application code (same images and commands), do not blame the code: name what
+  it did change (secrets, environment, settings) if that explains the symptom, else set
+  `triggering_change` to null. A cause resting on timing alone is medium confidence at most,
+  and so is one the evidence contradicts (a claim that a setting changed when a line says it
+  did not).
+- Health checks name the symptom: when load balancer targets or task health checks fail, the
+  reason given (Target.Timeout, a response code mismatch, the failing path) is what the root
+  cause must explain.
+- Worker or request timeouts minutes apart, with no request line read (gunicorn's "no URI
+  read") while the process stays up, usually come from idle or health-check connections held
+  open, not from every request hanging. Do not claim all requests fail unless request logs or
+  health checks show it.
 - `root_cause` explains what broke and why in two to four sentences. `summary` is one sentence.
 - Running is not healthy: "1/1 tasks running" says nothing about health. Never call a service
   recovered or healthy from its task count; only passing health checks and an error rate back
@@ -43,6 +57,9 @@ Rules:
   k8s_rollout_undo to the Deployment's previous revision, k8s_rollout_restart so pods re-read
   ConfigMaps and Secrets), and a pull_request that
   fixes the cause in the repository when the cause is in code, a task definition, or a migration.
+  When the cause needs a change none of these make (a server setting, a health check, a
+  resource limit), add it as `other` with a one-sentence description of what a person should
+  change.
 - A metric spike that starts before the triggering change was not caused by it (a load test,
   a batch job): do not cite it for this incident.
 - `false_alarm` is true only when nothing is wrong for users: the "errors" are not errors
