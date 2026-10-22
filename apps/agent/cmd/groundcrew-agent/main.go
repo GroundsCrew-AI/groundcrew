@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -199,7 +200,10 @@ func serve(cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	c := client.New(cfg.Groundcrew.URL, e.AgentID, key, userAgent())
-	w := &watch.Watcher{Config: cfg, Docker: docker, Systemd: systemd, Client: c, Log: log}
+	w := &watch.Watcher{
+		Config: cfg, Docker: docker, Systemd: systemd, Client: c, Log: log,
+		HistoryPath: filepath.Join(cfg.StateDir, "images.json"),
+	}
 	runner := &commands.Runner{
 		Config:  cfg,
 		AgentID: e.AgentID,

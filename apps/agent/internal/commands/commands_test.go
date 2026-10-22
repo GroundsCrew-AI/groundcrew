@@ -36,6 +36,7 @@ func (f *fakeRuntime) State(_ context.Context, s config.Service) runtime.State {
 func (f *fakeRuntime) Logs(context.Context, config.Service, time.Time) ([]runtime.LogLine, error) {
 	return nil, nil
 }
+func (f *fakeRuntime) HasImage(context.Context, string) bool         { return true }
 func (f *fakeRuntime) Restart(context.Context, config.Service) error { f.restarts++; return nil }
 
 func runner(t *testing.T, allow string) (*Runner, *fakeRuntime) {

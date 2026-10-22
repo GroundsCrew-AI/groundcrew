@@ -37,6 +37,7 @@ func (f *fakeRuntime) Logs(_ context.Context, _ config.Service, since time.Time)
 	}
 	return out, nil
 }
+func (f *fakeRuntime) HasImage(context.Context, string) bool         { return true }
 func (f *fakeRuntime) Restart(context.Context, config.Service) error { return nil }
 
 type poster struct {
@@ -64,7 +65,7 @@ func TestReportsCarryStateChangesHealthAndRedactedErrorLines(t *testing.T) {
 	}
 	now := time.Now()
 	rt := &fakeRuntime{
-		state: runtime.State{Found: true, State: "running", Restarts: 1, ImageDigest: "sha256:a"},
+		state: runtime.State{Found: true, State: "running", Restarts: 1, Image: "web:1", ImageID: "sha256:aaa"},
 		logs: []runtime.LogLine{
 			{At: now.Add(-10 * time.Second), Text: "GET /orders 200"},
 			{At: now.Add(-5 * time.Second), Text: "ERROR db: postgres://app:hunter2@db/app refused"},
@@ -103,7 +104,7 @@ func TestReportsCarryStateChangesHealthAndRedactedErrorLines(t *testing.T) {
 	}
 
 	// The container dies with a new image digest; the check passes again.
-	rt.state = runtime.State{Found: true, State: "exited", Restarts: 2, ExitCode: ptr(137), OOMKilled: true, ImageDigest: "sha256:b"}
+	rt.state = runtime.State{Found: true, State: "exited", Restarts: 2, ExitCode: ptr(137), OOMKilled: true, Image: "web:2", ImageID: "sha256:bbb"}
 	failing = false
 	w.probeDue(ctx, now.Add(time.Minute))
 	if err := w.Report(ctx); err != nil {
@@ -119,7 +120,7 @@ func TestReportsCarryStateChangesHealthAndRedactedErrorLines(t *testing.T) {
 		"health:recovered after 1 failed checks",
 		"state:exited (exit code 137, OOM killed)",
 		"restart:restarted (2 restarts so far)",
-		"deploy:image changed from sha256:a to sha256:b",
+		"deploy:image changed from web:1@aaa to web:2@bbb",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %s", want, got)
@@ -128,8 +129,12 @@ func TestReportsCarryStateChangesHealthAndRedactedErrorLines(t *testing.T) {
 	if strings.Contains(got, "ERROR db") {
 		t.Errorf("a log line was sent twice: %s", got)
 	}
-	if s := second.States[0]; s.HealthFailures != 0 || s.State != "exited" {
+	if s := second.States[0]; s.HealthFailures != 0 || s.State != "exited" ||
+		s.PreviousImageID != "sha256:aaa" || s.PreviousImage != "web:1" {
 		t.Fatalf("state %+v", s)
+	}
+	if first.States[0].PreviousImageID != "" {
+		t.Fatalf("no previous image before the first change: %+v", first.States[0])
 	}
 }
 

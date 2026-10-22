@@ -27,14 +27,16 @@ import (
 
 // Command is what Groundcrew signed (apps/api/app/remote_agents/commands.py).
 type Command struct {
-	V         int       `json:"v"`
-	ID        string    `json:"id"`
-	AgentID   string    `json:"agent_id"`
-	Action    string    `json:"action"`
-	Service   string    `json:"service"`
-	PlanHash  string    `json:"plan_hash"`
-	IssuedAt  time.Time `json:"issued_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	V        int    `json:"v"`
+	ID       string `json:"id"`
+	AgentID  string `json:"agent_id"`
+	Action   string `json:"action"`
+	Service  string `json:"service"`
+	PlanHash string `json:"plan_hash"`
+	// rollback: {"image": the local image id to go back to}
+	Params    map[string]string `json:"params"`
+	IssuedAt  time.Time         `json:"issued_at"`
+	ExpiresAt time.Time         `json:"expires_at"`
 }
 
 type signed struct {
@@ -181,6 +183,25 @@ func (r *Runner) run(ctx context.Context, cmd Command, s config.Service) (bool, 
 			return false, fmt.Sprintf("restarted, but it is %s now", st.State)
 		}
 		return true, "restarted; it is running"
+	case config.Rollback:
+		image := cmd.Params["image"]
+		rb, ok := rt.(runtime.Rollbacker)
+		if !ok || image == "" {
+			return false, "a rollback needs a Docker or Compose service and the image to go back to"
+		}
+		var healthy func(context.Context) error
+		if s.Health != nil {
+			healthy = func(ctx context.Context) error {
+				return runtime.HealthCheck(ctx, s.Health.URL, s.Health.Timeout)
+			}
+		}
+		if err := rb.Rollback(ctx, s, image, cmd.Params["ref"], healthy); err != nil {
+			return false, err.Error()
+		}
+		if healthy != nil {
+			return true, "recreated on the previous image; it is running and healthy"
+		}
+		return true, "recreated on the previous image; it is running"
 	default:
 		return false, fmt.Sprintf("this agent does not run %q yet", cmd.Action)
 	}

@@ -9,9 +9,10 @@ package watch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -66,6 +67,8 @@ type Watcher struct {
 	Log     *slog.Logger
 	// Probe runs health checks (replaced in tests).
 	Probe func(ctx context.Context, url string, timeout time.Duration) error
+	// HistoryPath keeps the images each service ran across agent restarts ("" = memory only).
+	HistoryPath string
 
 	mu       sync.Mutex
 	every    time.Duration
@@ -74,7 +77,17 @@ type Watcher struct {
 	logSince map[string]time.Time
 	pending  []Event
 	kick     chan struct{}
+	history  map[string][]seenImage
 }
+
+// seenImage is an image a service ran: its local id and reference.
+type seenImage struct {
+	ID  string `json:"id"`
+	Ref string `json:"ref"`
+}
+
+// maxHistory images are remembered per service.
+const maxHistory = 5
 
 func (w *Watcher) init() {
 	if w.every == 0 {
@@ -85,9 +98,10 @@ func (w *Watcher) init() {
 		w.health = map[string]*health{}
 		w.logSince = map[string]time.Time{}
 		w.kick = make(chan struct{}, 1)
+		w.history = loadHistory(w.HistoryPath)
 	}
 	if w.Probe == nil {
-		w.Probe = probe
+		w.Probe = runtime.HealthCheck
 	}
 }
 
@@ -185,6 +199,7 @@ func (w *Watcher) Report(ctx context.Context) error {
 	for _, s := range w.Config.Services {
 		rt := runtime.For(s, w.Docker, w.Systemd)
 		st := rt.State(ctx, s)
+		w.previousImage(ctx, rt, s.Name, &st)
 		w.mu.Lock()
 		if h := w.health[s.Name]; h != nil {
 			st.HealthFailures, st.HealthDetail = h.failures, h.detail
@@ -225,8 +240,8 @@ func (w *Watcher) changes(name string, st runtime.State, now time.Time) {
 	if st.Found && before.Found && st.Restarts > before.Restarts {
 		w.add(Event{Service: name, At: now, Kind: "restart", Message: fmt.Sprintf("restarted (%d restarts so far)", st.Restarts)})
 	}
-	if st.ImageDigest != "" && before.ImageDigest != "" && st.ImageDigest != before.ImageDigest {
-		w.add(Event{Service: name, At: now, Kind: "deploy", Message: "image changed from " + before.ImageDigest + " to " + st.ImageDigest})
+	if st.ImageID != "" && before.ImageID != "" && st.ImageID != before.ImageID {
+		w.add(Event{Service: name, At: now, Kind: "deploy", Message: "image changed from " + imageLabel(before) + " to " + imageLabel(st)})
 	}
 }
 
@@ -283,26 +298,63 @@ func trim(s string) string {
 	return s
 }
 
-var probeClient = &http.Client{
-	// A health check judges the service, not where it redirects.
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+// previousImage records the image the service runs and fills in the one it
+// ran before that is still on this host (what a rollback goes back to).
+func (w *Watcher) previousImage(ctx context.Context, rt runtime.Runtime, name string, st *runtime.State) {
+	if st.ImageID == "" {
+		return
+	}
+	w.mu.Lock()
+	seen := w.history[name]
+	if len(seen) == 0 || seen[len(seen)-1].ID != st.ImageID {
+		seen = append(seen, seenImage{ID: st.ImageID, Ref: st.Image})
+		if len(seen) > maxHistory {
+			seen = seen[len(seen)-maxHistory:]
+		}
+		w.history[name] = seen
+		saveHistory(w.HistoryPath, w.history, w.Log)
+	}
+	candidates := append([]seenImage(nil), seen...)
+	w.mu.Unlock()
+	for i := len(candidates) - 1; i >= 0; i-- {
+		c := candidates[i]
+		if c.ID != st.ImageID && rt.HasImage(ctx, c.ID) {
+			st.PreviousImageID, st.PreviousImage = c.ID, c.Ref
+			return
+		}
+	}
 }
 
-func probe(ctx context.Context, url string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
+func imageLabel(st runtime.State) string {
+	id := strings.TrimPrefix(st.ImageID, "sha256:")
+	if len(id) > 12 {
+		id = id[:12]
 	}
-	req.Header.Set("User-Agent", "groundcrew-agent health check")
-	resp, err := probeClient.Do(req)
-	if err != nil {
-		return err
+	return st.Image + "@" + id
+}
+
+func loadHistory(path string) map[string][]seenImage {
+	out := map[string][]seenImage{}
+	if path == "" {
+		return out
 	}
-	resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &out)
 	}
-	return nil
+	return out
+}
+
+func saveHistory(path string, history map[string][]seenImage, log *slog.Logger) {
+	if path == "" {
+		return
+	}
+	data, _ := json.Marshal(history)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err == nil {
+		err = os.Rename(tmp, path)
+		if err == nil {
+			return
+		}
+	}
+	log.Warn("cannot save the image history", "path", path)
 }

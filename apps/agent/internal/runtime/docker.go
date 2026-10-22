@@ -146,6 +146,8 @@ func (d *Docker) State(ctx context.Context, s config.Service) State {
 		Restarts:    c.RestartCount,
 		OOMKilled:   c.State.OOMKilled,
 		ImageDigest: d.digest(ctx, c),
+		Image:       c.Config.Image,
+		ImageID:     c.Image,
 	}
 	if c.State.Status != "running" {
 		code := c.State.ExitCode
@@ -207,6 +209,12 @@ func demux(raw []byte) []byte {
 		raw = raw[size:]
 	}
 	return out.Bytes()
+}
+
+// HasImage reports whether the image id is still on this host.
+func (d *Docker) HasImage(ctx context.Context, id string) bool {
+	_, status, err := d.do(ctx, http.MethodGet, "/images/"+url.PathEscape(id)+"/json")
+	return err == nil && status == http.StatusOK
 }
 
 // Restart stops the container (10 s grace) and starts it again.

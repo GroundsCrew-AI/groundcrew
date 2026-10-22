@@ -7,6 +7,9 @@
 #   --token TOKEN   the join token from Connections > Agent (enrolls and starts the agent)
 #   --url URL       Groundcrew's API (default https://api.groundkrew.com)
 #   --no-docker     do not add the agent's user to the docker group
+#   --restart-units nginx.service,app.service
+#                   let the agent restart these systemd units (and only these), through a
+#                   polkit rule; each restart still needs your approval in Groundcrew
 #
 # What it does: downloads groundcrew-agent for this CPU and checks it against SHA256SUMS,
 # installs it to /usr/local/bin, creates the system user groundcrew-agent, writes
@@ -18,11 +21,13 @@ DOWNLOADS=${GROUNDCREW_DOWNLOADS:-https://groundkrew.com/agent}
 URL=https://api.groundkrew.com
 TOKEN=
 DOCKER=yes
+UNITS=
 while [ $# -gt 0 ]; do
   case $1 in
     --token) TOKEN=$2; shift 2 ;;
     --url) URL=$2; shift 2 ;;
     --no-docker) DOCKER=no; shift ;;
+    --restart-units) UNITS=$2; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -66,6 +71,29 @@ fi
 if getent group systemd-journal >/dev/null; then
   # Reads the journal of the systemd units you list (their error lines go to Groundcrew).
   usermod -aG systemd-journal groundcrew-agent
+fi
+if [ -n "$UNITS" ]; then
+  # A polkit rule that lets the agent's user restart exactly these units. Rules files need a
+  # polkit with JavaScript rules (0.106 or newer: Ubuntu 23.10+, Debian 12+, RHEL 8+).
+  if command -v pkaction >/dev/null && pkaction --version | grep -q ' 0\.10[0-5]'; then
+    say "warning: this polkit ($(pkaction --version)) ignores rules files; restarts of units will be refused"
+  fi
+  list=
+  for unit in $(printf '%s' "$UNITS" | tr ',' ' '); do
+    printf '%s' "$unit" | grep -Eq '^[A-Za-z0-9@._:-]+$' || die "not a unit name: $unit"
+    list="$list\"$unit\", "
+  done
+  install -d -m 0755 /etc/polkit-1/rules.d
+  cat >/etc/polkit-1/rules.d/50-groundcrew-agent.rules <<RULES
+// Groundcrew agent: may restart these units only (install.sh --restart-units).
+polkit.addRule(function(action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" && subject.user == "groundcrew-agent" &&
+      action.lookup("verb") == "restart" && [${list%, }].indexOf(action.lookup("unit")) >= 0) {
+    return polkit.Result.YES;
+  }
+});
+RULES
+  say "the agent may restart: $UNITS"
 fi
 install -d -m 0700 -o groundcrew-agent -g groundcrew-agent /var/lib/groundcrew-agent
 install -d -m 0755 /etc/groundcrew-agent

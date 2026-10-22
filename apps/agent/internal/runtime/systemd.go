@@ -109,3 +109,6 @@ func (s *Systemd) Restart(ctx context.Context, svc config.Service) error {
 	}
 	return nil
 }
+
+// HasImage: units run no images.
+func (s *Systemd) HasImage(context.Context, string) bool { return false }
