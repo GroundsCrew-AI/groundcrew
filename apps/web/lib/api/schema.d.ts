@@ -41,6 +41,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/v1/commands/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll Commands
+         * @description Approved commands for this agent, waiting up to POLL_SECONDS for one. Expired commands
+         *     are marked so; a command is handed out once (status sent).
+         */
+        post: operations["poll_commands_agent_v1_commands_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/commands/{command_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Command Result
+         * @description What the agent did with a command (ran it, or refused it and why).
+         */
+        post: operations["command_result_agent_v1_commands__command_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agent/v1/enroll": {
         parameters: {
             query?: never;
@@ -56,6 +97,27 @@ export interface paths {
          *     enrolled agent (a reinstall) replaces its key.
          */
         post: operations["enroll_agent_v1_enroll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Events
+         * @description The services' live state and what happened since the last report. A detector rule that
+         *     starts firing for a service opens (or joins) an incident on it.
+         */
+        post: operations["events_agent_v1_events_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1532,7 +1594,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service";
             /**
              * Connection Id
              * Format: uuid
@@ -1565,7 +1627,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service";
             /** Details */
             details?: {
                 [key: string]: string;
@@ -2045,6 +2107,29 @@ export interface components {
             evidence_ids: string[];
             /** Text */
             text: string;
+        };
+        /**
+         * CommandOut
+         * @description A command to run: `payload` is the exact signed JSON text, `signature` its base64
+         *     Ed25519 signature by Groundcrew's command key.
+         */
+        CommandOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Payload */
+            payload: string;
+            /** Signature */
+            signature: string;
+        };
+        /** CommandResultIn */
+        CommandResultIn: {
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
         };
         /** ConnectionCleanup */
         ConnectionCleanup: {
@@ -2644,6 +2729,35 @@ export interface components {
              */
             value: string | null;
         };
+        /** EventIn */
+        EventIn: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "state" | "health" | "restart" | "log" | "deploy" | "command";
+            /** Message */
+            message: string;
+            /** Service */
+            service: string;
+        };
+        /** EventsIn */
+        EventsIn: {
+            /** Events */
+            events?: components["schemas"]["EventIn"][];
+            /** States */
+            states?: components["schemas"]["ServiceState"][];
+        };
+        /** EventsOut */
+        EventsOut: {
+            /** Stored */
+            stored: number;
+        };
         /** EvidenceCollected */
         EvidenceCollected: {
             /** Changes */
@@ -2765,7 +2879,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "other";
+            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "other";
             /**
              * Target
              * @default null
@@ -3035,6 +3149,13 @@ export interface components {
         };
         /** HeartbeatOut */
         HeartbeatOut: {
+            /** Command Key */
+            command_key?: string | null;
+            /**
+             * Events Seconds
+             * @default 10
+             */
+            events_seconds: number;
             /**
              * Heartbeat Seconds
              * @default 30
@@ -3130,7 +3251,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "agent_service_down" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
@@ -3254,7 +3375,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "agent_service_down" | "user_report" | "other";
             /**
              * Incident Id
              * Format: uuid
@@ -3349,7 +3470,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "agent_service_down" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** First Signal At */
@@ -3928,6 +4049,11 @@ export interface components {
             /** Users */
             users: number;
         };
+        /** PollOut */
+        PollOut: {
+            /** Commands */
+            commands?: components["schemas"]["CommandOut"][];
+        };
         /** PreflightCheck */
         PreflightCheck: {
             /** Detail */
@@ -3959,7 +4085,7 @@ export interface components {
              * Action
              * @default null
              */
-            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart") | null;
+            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service") | null;
             /**
              * Approval Id
              * @default null
@@ -4540,6 +4666,41 @@ export interface components {
             /** Target */
             target: string;
         };
+        /** ServiceState */
+        ServiceState: {
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Found */
+            found: boolean;
+            /** Health Detail */
+            health_detail?: string | null;
+            /**
+             * Health Failures
+             * @default 0
+             */
+            health_failures: number;
+            /** Image Digest */
+            image_digest?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Oom Killed
+             * @default false
+             */
+            oom_killed: boolean;
+            /**
+             * Restarts
+             * @default 0
+             */
+            restarts: number;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * State
+             * @default
+             */
+            state: string;
+        };
         /** SignIn */
         SignIn: {
             /**
@@ -4596,7 +4757,7 @@ export interface components {
              * Rule
              * @enum {string}
              */
-            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
+            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "agent_service_down" | "user_report" | "other";
         };
         /** SignupsIn */
         SignupsIn: {
@@ -5144,6 +5305,61 @@ export interface operations {
             };
         };
     };
+    poll_commands_agent_v1_commands_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PollOut"];
+                };
+            };
+        };
+    };
+    command_result_agent_v1_commands__command_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandResultIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     enroll_agent_v1_enroll_post: {
         parameters: {
             query?: never;
@@ -5164,6 +5380,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnrollOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    events_agent_v1_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EventsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsOut"];
                 };
             };
             /** @description Validation Error */

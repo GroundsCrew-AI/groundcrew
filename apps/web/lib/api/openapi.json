@@ -71,7 +71,8 @@
               "lambda_rollback_alias",
               "ec2_reboot_instance",
               "k8s_rollout_undo",
-              "k8s_rollout_restart"
+              "k8s_rollout_restart",
+              "agent_restart_service"
             ],
             "title": "Action",
             "type": "string"
@@ -148,7 +149,8 @@
               "lambda_rollback_alias",
               "ec2_reboot_instance",
               "k8s_rollout_undo",
-              "k8s_rollout_restart"
+              "k8s_rollout_restart",
+              "agent_restart_service"
             ],
             "title": "Action",
             "type": "string"
@@ -1334,6 +1336,50 @@
           "evidence_ids"
         ],
         "title": "Claim",
+        "type": "object"
+      },
+      "CommandOut": {
+        "description": "A command to run: `payload` is the exact signed JSON text, `signature` its base64\nEd25519 signature by Groundcrew's command key.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "title": "Payload",
+            "type": "string"
+          },
+          "signature": {
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "payload",
+          "signature"
+        ],
+        "title": "CommandOut",
+        "type": "object"
+      },
+      "CommandResultIn": {
+        "properties": {
+          "message": {
+            "maxLength": 2000,
+            "title": "Message",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "CommandResultIn",
         "type": "object"
       },
       "ConnectionCleanup": {
@@ -3008,6 +3054,82 @@
         "title": "EnvVarView",
         "type": "object"
       },
+      "EventIn": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "state",
+              "health",
+              "restart",
+              "log",
+              "deploy",
+              "command"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 2000,
+            "title": "Message",
+            "type": "string"
+          },
+          "service": {
+            "maxLength": 100,
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "at",
+          "kind",
+          "message"
+        ],
+        "title": "EventIn",
+        "type": "object"
+      },
+      "EventsIn": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventIn"
+            },
+            "maxItems": 500,
+            "title": "Events",
+            "type": "array"
+          },
+          "states": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceState"
+            },
+            "maxItems": 100,
+            "title": "States",
+            "type": "array"
+          }
+        },
+        "title": "EventsIn",
+        "type": "object"
+      },
+      "EventsOut": {
+        "properties": {
+          "stored": {
+            "title": "Stored",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stored"
+        ],
+        "title": "EventsOut",
+        "type": "object"
+      },
       "EvidenceCollected": {
         "properties": {
           "changes": {
@@ -3260,6 +3382,7 @@
               "ec2_reboot_instance",
               "k8s_rollout_undo",
               "k8s_rollout_restart",
+              "agent_restart_service",
               "other"
             ],
             "title": "Kind",
@@ -3959,6 +4082,22 @@
       },
       "HeartbeatOut": {
         "properties": {
+          "command_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Key"
+          },
+          "events_seconds": {
+            "default": 10,
+            "title": "Events Seconds",
+            "type": "integer"
+          },
           "heartbeat_seconds": {
             "default": 30,
             "title": "Heartbeat Seconds",
@@ -4211,6 +4350,7 @@
               "alb_5xx",
               "alb_unhealthy_targets",
               "alb_latency",
+              "agent_service_down",
               "user_report",
               "other"
             ],
@@ -4630,6 +4770,7 @@
               "alb_5xx",
               "alb_unhealthy_targets",
               "alb_latency",
+              "agent_service_down",
               "user_report",
               "other"
             ],
@@ -4893,6 +5034,7 @@
               "alb_5xx",
               "alb_unhealthy_targets",
               "alb_latency",
+              "agent_service_down",
               "user_report",
               "other"
             ],
@@ -6460,6 +6602,19 @@
         "title": "PlatformOut",
         "type": "object"
       },
+      "PollOut": {
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/CommandOut"
+            },
+            "title": "Commands",
+            "type": "array"
+          }
+        },
+        "title": "PollOut",
+        "type": "object"
+      },
       "PreflightCheck": {
         "properties": {
           "detail": {
@@ -6529,7 +6684,8 @@
                   "lambda_rollback_alias",
                   "ec2_reboot_instance",
                   "k8s_rollout_undo",
-                  "k8s_rollout_restart"
+                  "k8s_rollout_restart",
+                  "agent_restart_service"
                 ],
                 "type": "string"
               },
@@ -8179,6 +8335,96 @@
         "title": "ServiceFacts",
         "type": "object"
       },
+      "ServiceState": {
+        "additionalProperties": false,
+        "properties": {
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "found": {
+            "title": "Found",
+            "type": "boolean"
+          },
+          "health_detail": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Detail"
+          },
+          "health_failures": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Health Failures",
+            "type": "integer"
+          },
+          "image_digest": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Digest"
+          },
+          "name": {
+            "maxLength": 100,
+            "title": "Name",
+            "type": "string"
+          },
+          "oom_killed": {
+            "default": false,
+            "title": "Oom Killed",
+            "type": "boolean"
+          },
+          "restarts": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Restarts",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "default": "",
+            "maxLength": 32,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "found"
+        ],
+        "title": "ServiceState",
+        "type": "object"
+      },
       "SignIn": {
         "properties": {
           "email": {
@@ -8299,6 +8545,7 @@
               "alb_5xx",
               "alb_unhealthy_targets",
               "alb_latency",
+              "agent_service_down",
               "user_report",
               "other"
             ],
@@ -9815,6 +10062,82 @@
         ]
       }
     },
+    "/agent/v1/commands/poll": {
+      "post": {
+        "description": "Approved commands for this agent, waiting up to POLL_SECONDS for one. Expired commands\nare marked so; a command is handed out once (status sent).",
+        "operationId": "poll_commands_agent_v1_commands_poll_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PollOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Poll Commands",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/commands/{command_id}/result": {
+      "post": {
+        "description": "What the agent did with a command (ran it, or refused it and why).",
+        "operationId": "command_result_agent_v1_commands__command_id__result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandResultIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Command Result",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
     "/agent/v1/enroll": {
       "post": {
         "description": "Trade a one-time join token for this agent's place in the workspace. A new token for an\nenrolled agent (a reinstall) replaces its key.",
@@ -9852,6 +10175,48 @@
           }
         },
         "summary": "Enroll",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/events": {
+      "post": {
+        "description": "The services' live state and what happened since the last report. A detector rule that\nstarts firing for a service opens (or joins) an incident on it.",
+        "operationId": "events_agent_v1_events_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Events",
         "tags": [
           "agent"
         ]

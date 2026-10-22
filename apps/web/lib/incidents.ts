@@ -80,6 +80,7 @@ const RULES: Record<DetectorRule, string> = {
   lambda_errors: "Function errors",
   lambda_throttles: "Function throttled",
   ec2_status_check: "Instance status check failed",
+  agent_service_down: "Service stopped",
   alb_5xx: "Load balancer 5xx",
   alb_unhealthy_targets: "Unhealthy targets",
   alb_latency: "Slow responses",
@@ -99,6 +100,7 @@ const ACTIONS: Record<string, string> = {
   ec2_reboot_instance: "Reboot instance",
   k8s_rollout_undo: "Roll back Deployment",
   k8s_rollout_restart: "Restart Deployment",
+  agent_restart_service: "Restart service on server",
   pull_request: "Fix pull request",
 };
 
