@@ -9,7 +9,7 @@ Brief: `docs/prompts/agent.md`. Plan: `docs/agent-plan.md`.
 | A2 Signals and Medic | live (release `88e2de779068`) | #63 |
 | A3 Approved fixes (restart) | live (release `88e2de779068`) | #63 |
 | A4a Rollback, systemd restarts | live (release `9b12c7a2be14`) | #63 |
-| A4b Deploys through the agent | built, tested locally, not deployed | #63 |
+| A4b Deploys through the agent | live (release `4025f698754b`) | #63 |
 | A5 Packaging | | |
 
 ## A1 Enroll and report (2026-10-22)
@@ -192,5 +192,5 @@ Checked:
   (kept its env, set the new values), verified healthy, served 200; rollback back to the
   previous image.
 
-Rollout needs: `push-host 50-app` (registry dir, gc-release), `push-host 40-nginx` (`/v2/`),
-then the deploy (migration `d5f2a8c1e9b7`).
+Rollout (2026-10-22): `push-host 50-app`, `push-host 40-nginx`, release `4025f698754b`; live checks:
+`/v2/` 401 with the Basic challenge, push 403, `/internal` 404, registry container healthy.
