@@ -191,6 +191,8 @@ export function MapCanvas({
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       colorMode={resolvedTheme === "light" ? "light" : "dark"}
+      // Hides the library's corner credit (React Flow is MIT licensed, which allows it).
+      proOptions={{ hideAttribution: true }}
       fitView
       fitViewOptions={{ padding: 0.06, maxZoom: 1 }}
       minZoom={0.15}
