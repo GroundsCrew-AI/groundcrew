@@ -83,7 +83,9 @@ build() { # build SHA < tar
   log "building groundcrew/api:$sha"
   docker build -q --label "groundcrew.release=$sha" -t "groundcrew/api:$sha" "$dir/apps/api" >/dev/null
   log "building groundcrew/web:$sha"
+  # The web image also builds and serves the Groundcrew agent (apps/agent) at /agent/.
   docker build -q --label "groundcrew.release=$sha" --build-arg "NEXT_PUBLIC_API_URL=$API_URL" \
+    --build-context "agent-src=$dir/apps/agent" \
     -t "groundcrew/web:$sha" "$dir/apps/web" >/dev/null
   # Each release brings its own Compose file; going back uses the old one.
   install -d -m 0700 "$STATE"

@@ -137,31 +137,32 @@ rule's thresholds). Rules live on the server so they can change without upgradin
   linux/arm64.
 - Built and tested in the `golang` Docker image (no local Go needed): `make agent`,
   `make agent-test`.
-- API: `app/agents_remote/` (routes, signatures, storage), migration for `agents`,
-  `agent_events`, `agent_commands`; reader `app/telemetry/agent.py`; rules
+- API: `app/remote_agents/` (routes, signatures, inventory), migrations for `agents` and
+  `agent_nonces` (A1), `agent_events` and `agent_commands` later; reader `app/telemetry/agent.py`; rules
   `app/incidents/agent_rules.py`; `app/actions/agent.py`; `app/targets/agent.py`.
 - Web: Connections → "Install an agent" (token, install commands, status), agent hosts and
   services on the Map, the incidents and deploy pages unchanged.
 - Install: `install.sh` served from groundkrew.com downloads the binary and its SHA-256 sum,
-  installs the systemd unit, and runs `enroll`. Releases are built by `make agent-release` and
-  published to GitHub Releases (no CI for now, as in Phase 6).
+  installs the systemd unit, and runs `enroll`. The web image builds the binaries at each
+  release (`apps/web/Dockerfile`, build context `agent-src`), so no separate hosting is needed.
 
 ## Milestones (draft PR and stop after each)
 
-- **A1 Enroll and report.** Go agent: config, `check`, `enroll`, heartbeat, inventory for Docker
-  and systemd. API: join tokens, enrollment, signed requests, heartbeat and inventory, agent
-  resources. Web: install dialog, online/offline, agent services on the Map. Tests: Go unit
-  tests; API tests for signatures, replay, revocation, isolation; an end-to-end test with the
-  agent in a container against the local stack.
+- **A1 Enroll and report.** Go agent: config, `check`, `enroll`, heartbeat, inventory for Docker,
+  Compose, and systemd. API: join tokens, enrollment, signed requests, heartbeat and inventory,
+  agent resources. Web: install dialog, online/offline, agent services on the Map, docs page.
+  Downloads: the web image builds the agent and serves it with `SHA256SUMS`, `install.sh`, the
+  systemd unit, and an example configuration at groundkrew.com/agent/ (moved here from A5 so
+  A1 can be installed on a real server). Tests: Go unit tests; API tests for signatures, replay,
+  revocation, isolation; a shared signing vector; an end-to-end run of the binary against a
+  live API; `install.sh` in a clean Debian container.
 - **A2 Signals and Medic.** Events and logs (redacted on the VM), server rules, incidents for
   agent services, the evidence reader so Medic can diagnose them.
 - **A3 Approved fixes.** Command signing, the long poll, `restart` and `rollback` on the VM,
   verify after the fix. Medic proposes them like the cloud fixes.
 - **A4 Deploys.** `AgentTarget`: deploy a built image from the Deploy page through the agent,
   with health check and automatic return to the previous digest.
-- **A5 Compose and packaging.** Compose runtime, `install.sh`, release builds, docs pages
-  (connect an agent, permissions, troubleshooting). Later: a Kubernetes and an ECS packaging of
-  the same agent.
+- **A5 Packaging.** Signed release builds, a Kubernetes and an ECS packaging of the same agent.
 
 ## What you do by hand
 
@@ -169,7 +170,7 @@ rule's thresholds). Rules live on the server so they can change without upgradin
   Groundcrew account, or elsewhere). I can propose the Terraform, but creating it needs your OK.
 - Production rollout of each milestone: your OK, as for every deploy.
 
-## Open questions
+## Decisions
 
-1. Join token lifetime (1 hour) and agents per workspace (proposed 10): fine?
-2. Event retention 7 days: fine?
+- Join tokens work once, for 1 hour (AGENT_JOIN_TOKEN_MINUTES). Agents count as connections, so
+  the workspace's connection quota caps them. Event retention: 7 days (A2).
