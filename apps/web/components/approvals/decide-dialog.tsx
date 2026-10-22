@@ -35,7 +35,7 @@ export function DecideDialog({
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger asChild>{children}</AlertDialogTrigger>
-      <AlertDialogContent>
+      <AlertDialogContent className="sm:max-w-lg">
         <AlertDialogHeader>
           <AlertDialogTitle>{approve ? "Approve this action?" : "Reject this action?"}</AlertDialogTitle>
           <AlertDialogDescription>
@@ -44,12 +44,13 @@ export function DecideDialog({
               : `${agentName(approval.run_agent)} will be told it was rejected and will not run it.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
+        {/* min-w-0: a long line in the action must not widen the dialog past the screen. */}
+        <div className="min-w-0 space-y-2">
+          <div className="flex min-w-0 items-center gap-2 text-[12px] text-muted-foreground">
             <PolicyTag policy={approval.policy} />
             <span className="truncate">{approval.run_goal}</span>
           </div>
-          <ActionCode approval={approval} />
+          <ActionCode approval={approval} className="max-h-64 overflow-y-auto break-all whitespace-pre-wrap" />
         </div>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
