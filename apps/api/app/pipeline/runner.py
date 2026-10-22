@@ -620,6 +620,10 @@ class _Job:
             )
             await self.session.commit()
 
+        async def check(built: Any) -> Any:
+            # The smoke test of each built image: a failure goes back to Builder to fix.
+            return await builder.smoke(built, spec, await self.smoke_env(), run_id=str(self.run.id))
+
         try:
             outcome = await builder.build(
                 root,
@@ -631,6 +635,7 @@ class _Job:
                 recorder=self.recorder("builder"),
                 on_attempt=on_attempt,
                 on_note=on_note,
+                check=check,
             )
         except BuilderError as exc:
             await self.stage_end("build", "builder", started, "failed", str(exc)[:200])
@@ -661,12 +666,9 @@ class _Job:
     async def smoke(self, spec: AppSpec, outcome: Any) -> None:
         await self.check_not_stopped()
         started = await self.stage_start("smoke", "builder")
-        env = [
-            SmokeEnv(name, _secret(value), secret)
-            for name, (value, secret) in (await self.env_values()).items()
-        ]
-        result = await Builder(self.deps.llm, self.deps.sandbox).smoke(
-            outcome, spec, env, run_id=str(self.run.id)
+        # Builder smoke-tested the image it built; an outcome without one is tested here.
+        result = outcome.smoke or await Builder(self.deps.llm, self.deps.sandbox).smoke(
+            outcome, spec, await self.smoke_env(), run_id=str(self.run.id)
         )
         checks = ", ".join(f"{c.path} {c.status_code or c.detail}" for c in result.checks)
         self.state["build"]["smoke"] = {"ok": result.ok, "checks": checks}
@@ -679,6 +681,12 @@ class _Job:
                 error=summarize(f"The smoke test failed ({checks or result.detail}).{logs}", 1500),
             )
         await self.stage_end("smoke", "builder", started, "succeeded", f"{checks} in the sandbox")
+
+    async def smoke_env(self) -> list[SmokeEnv]:
+        return [
+            SmokeEnv(name, _secret(value), secret)
+            for name, (value, secret) in (await self.env_values()).items()
+        ]
 
     async def plan_and_ask(self, *, replan: bool) -> None:
         """plan (plan_deploy + render), preflight, and the approval card. On a replan (the env

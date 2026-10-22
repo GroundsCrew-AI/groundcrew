@@ -140,6 +140,9 @@ Rules:
 Python package that compiles C code needs gcc and the library's dev headers).
 - Change as little as possible; keep everything that worked.
 - Do not repeat a fix that already failed (see earlier attempts).
+- When the failing step is the smoke test, the image built but the app did not start or \
+answer: read its output and fix how it runs (CMD or ENTRYPOINT, files and installed packages \
+in the final stage, the port it listens on, binding 0.0.0.0).
 - No secrets, no ARG or ENV with credentials. Do not download and run scripts from the internet.
 Return the whole corrected Dockerfile, the lines you changed, and the kind of fix."""
 

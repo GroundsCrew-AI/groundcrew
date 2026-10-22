@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from app.agents.builder import Builder, BuilderError, is_transient
-from app.agents.builder.builder import GENERATED_DOCKERFILE, signature
+from app.agents.builder.builder import GENERATED_DOCKERFILE, SMOKE_STEP, signature
 from app.agents.scout.appspec import AppSpec, EnvVar
 from app.config import Settings
 from app.llm.budget import MemoryUsageStore, RunBudget
@@ -172,7 +172,11 @@ def _app(tmp_path: Path, *, dockerfile: str | None = None) -> tuple[Path, AppSpe
 
 
 async def _run(
-    builder: Builder, root: Path, spec: AppSpec, settings: Settings
+    builder: Builder,
+    root: Path,
+    spec: AppSpec,
+    settings: Settings,
+    smokes: list[SmokeResult] | None = None,
 ) -> tuple[Any, list[BuildAttempt], list[str], Recorder]:
     attempts: list[BuildAttempt] = []
     notes: list[str] = []
@@ -194,8 +198,13 @@ async def _run(
         recorder=recorder,
         on_attempt=on_attempt,
         on_note=on_note,
+        check=None if smokes is None else (lambda _built: _next(smokes)),
     )
     return outcome, attempts, notes, recorder
+
+
+async def _next(smokes: list[SmokeResult]) -> SmokeResult:
+    return smokes.pop(0)
 
 
 async def no_sleep(_s: float) -> None:
@@ -449,3 +458,41 @@ def test_daemon_connection_errors_are_recognized() -> None:
     )
     assert daemon_unreachable("Cannot connect to the Docker daemon at unix:///var/run/docker.sock.")
     assert not daemon_unreachable("ERROR: failed to solve: process did not complete: exit code 1")
+
+
+CRASHED = SmokeResult(
+    ok=False,
+    checks=[],
+    duration_ms=600,
+    logs_tail="exec: uvicorn: not found",
+    detail="the app exited at start (exit code 127)",
+)
+ANSWERED = SmokeResult(
+    ok=True, checks=[SmokeCheck("/health", True, 200, "HTTP 200")], duration_ms=40
+)
+
+
+async def test_a_failed_smoke_test_goes_back_to_builder(tmp_path: Path) -> None:
+    """The image built but the app crashed: Builder reads its output and fixes the Dockerfile."""
+    settings = _settings()
+    root, spec = _app(tmp_path)
+    llm = FakeLLM(write(), fix(FIXED, "other"), settings=settings)
+    builder = Builder(llm, ScriptedSandbox(OK, OK), sleep=no_sleep)
+    outcome, attempts, _, _ = await _run(builder, root, spec, settings, [CRASHED, ANSWERED])
+    assert outcome.ok and outcome.smoke is ANSWERED and outcome.automatic_fix
+    first, second = attempts
+    assert not first.ok and first.failing_step == SMOKE_STEP
+    assert first.error_summary == "exec: uvicorn: not found"  # the app's line names the cause
+    assert second.ok
+    asked = llm.requests[-1][1]["content"]
+    assert "exec: uvicorn: not found" in asked and "Failing step: smoke test" in asked
+
+
+async def test_the_last_attempt_keeps_its_failed_smoke_test(tmp_path: Path) -> None:
+    settings = _settings()
+    root, spec = _app(tmp_path)
+    builder = Builder(
+        FakeLLM(write(), settings=settings), ScriptedSandbox(OK), sleep=no_sleep, max_attempts=1
+    )
+    outcome, attempts, _, _ = await _run(builder, root, spec, settings, [CRASHED])
+    assert outcome.ok and outcome.smoke is CRASHED and attempts[0].ok

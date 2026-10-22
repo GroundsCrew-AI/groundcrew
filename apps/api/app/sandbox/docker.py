@@ -174,7 +174,12 @@ class DockerSandbox:
                 )
             async with self._reach(name, port, run_id) as reached:
                 if isinstance(reached, str):
-                    return SmokeResult(False, [], _ms(start), detail=reached)
+                    # Usually the app exited at once (a stopped container has no address or
+                    # published port): say so, with its output.
+                    running, code = await self._running(name)
+                    detail = reached if running else f"the app exited at start (exit code {code})"
+                    crashed = await self._logs(name, scrub)
+                    return SmokeResult(False, [], _ms(start), logs_tail=crashed, detail=detail)
                 checks, detail = await self._probe(name, reached, health_path)
             ok = bool(checks) and checks[0].ok
             logs = None if ok else await self._logs(name, scrub)

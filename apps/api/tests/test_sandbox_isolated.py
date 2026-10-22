@@ -142,9 +142,27 @@ async def test_smoke_publishes_nothing_and_probes_from_inside() -> None:
 
 
 async def test_smoke_without_an_address_fails_clearly() -> None:
-    fake = FakeDocker(replies={"inspect": CommandResult(0, " \n", "")})
+    def inspect(args: list[str]) -> CommandResult:
+        if "{{.State.Running}} {{.State.ExitCode}}" in args:
+            return CommandResult(0, "true 0", "")  # running, but on no network
+        return CommandResult(0, " \n", "")
+
+    fake = FakeDocker(replies={"inspect": inspect})
     result = await _sandbox(fake).run_smoke("app:1", 8000, [], run_id=RUN)
     assert not result.ok and "no address" in result.detail
+
+
+async def test_an_app_that_exits_at_start_says_so_with_its_output() -> None:
+    def inspect(args: list[str]) -> CommandResult:
+        if "{{.State.Running}} {{.State.ExitCode}}" in args:
+            return CommandResult(0, "false 3", "")
+        return CommandResult(0, " \n", "")
+
+    crash = "ModuleNotFoundError: No module named 'app'"
+    fake = FakeDocker(replies={"inspect": inspect, "logs": CommandResult(0, crash, "")})
+    result = await _sandbox(fake).run_smoke("app:1", 8000, [], run_id=RUN)
+    assert not result.ok and result.detail == "the app exited at start (exit code 3)"
+    assert result.logs_tail is not None and crash in result.logs_tail
 
 
 async def test_cleanup_removes_the_builder_then_everything_labelled() -> None:

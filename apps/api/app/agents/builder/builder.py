@@ -116,6 +116,28 @@ class BuildOutcome:
     stop_reason: Literal["no_progress", "max_attempts", "unavailable"] | None = None
     error: str | None = None
     port: int = 8000
+    # The smoke test of the image, when Builder ran it (build(check=...)).
+    smoke: SmokeResult | None = None
+
+
+# A smoke test failure is fed back to Builder like a failed build step.
+SMOKE_STEP = "smoke test (the image built; the app was started and probed on its port)"
+
+
+def smoke_failure(smoke: SmokeResult, built: BuildResult) -> BuildResult:
+    """A passed build whose smoke test failed, as a failed build Builder can fix: the reason,
+    then the app's last lines (a crash, a missing module, a bad argument)."""
+    checks = ", ".join(f"{c.path} {c.status_code or c.detail}" for c in smoke.checks)
+    reason = smoke.detail or checks or "the app did not answer"
+    output = [line.strip() for line in (smoke.logs_tail or "").splitlines() if line.strip()]
+    return BuildResult(
+        ok=False,
+        log_tail=smoke.logs_tail or "(the app wrote nothing)",
+        image_ref=None,
+        duration_ms=built.duration_ms,
+        failing_step=SMOKE_STEP,
+        error_lines=[f"The smoke test failed: {reason}", *output[-8:]],
+    )
 
 
 def app_port(spec: AppSpec, dockerfile: str | None = None) -> int:
@@ -312,7 +334,11 @@ class Builder:
         recorder: CallRecorder,
         on_attempt: Callable[[BuildAttempt], Awaitable[None]],
         on_note: Callable[[str], Awaitable[None]],
+        check: Callable[[BuildOutcome], Awaitable[SmokeResult]] | None = None,
     ) -> BuildOutcome:
+        """Write (or take the repo's) Dockerfile, build, and fix it until it builds. With
+        `check`, each built image is smoke-tested too, and a failed smoke test is fixed like a
+        failed build (the last attempt keeps its result in outcome.smoke)."""
         repo_dockerfile = root / "Dockerfile"
         use_repo = spec.has_dockerfile and repo_dockerfile.is_file()
         source: Literal["repo", "generated", "fixed"]
@@ -350,6 +376,21 @@ class Builder:
             built = await self._build_once(
                 root, path, f"gc-build/{app}:{tag}-a{number}", run_id, on_note
             )
+            outcome: BuildOutcome | None = None
+            if built.ok and built.image_ref:
+                outcome = BuildOutcome(
+                    ok=True,
+                    image_ref=built.image_ref,
+                    image_id=await self.sandbox.image_id(built.image_ref),
+                    dockerfile=current,
+                    attempts=attempts,
+                    automatic_fix=fixed,
+                    port=app_port(spec, current),
+                )
+                if check is not None:
+                    outcome.smoke = await check(outcome)
+                    if not outcome.smoke.ok and number < self.max_attempts:
+                        built = smoke_failure(outcome.smoke, built)
             attempt = BuildAttempt(
                 attempt=number,
                 max_attempts=self.max_attempts,
@@ -366,16 +407,8 @@ class Builder:
             )
             attempts.append(attempt)
             await on_attempt(attempt)
-            if built.ok and built.image_ref:
-                return BuildOutcome(
-                    ok=True,
-                    image_ref=built.image_ref,
-                    image_id=await self.sandbox.image_id(built.image_ref),
-                    dockerfile=current,
-                    attempts=attempts,
-                    automatic_fix=fixed,
-                    port=app_port(spec, current),
-                )
+            if built.ok and outcome is not None:
+                return outcome
 
             if built.unavailable:
                 return self._stopped(
