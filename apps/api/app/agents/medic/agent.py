@@ -51,12 +51,13 @@ from app.agents.medic.events import (
 )
 from app.agents.medic.schemas import RootCause
 from app.agents.medic.state import FixRecord, MedicState, MemoryUsed, Outcome
-from app.agents.medic.verify import k8s_checks, run_checks
+from app.agents.medic.verify import agent_checks, k8s_checks, run_checks
 from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader
 from app.connectors.github import GitHubApp, get_github_app
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
+    Agent,
     Approval,
     ApprovalStatus,
     Connection,
@@ -1210,7 +1211,21 @@ class MedicRunner:
                 close = getattr(kube, "close", None)
                 if close is not None:
                     close()
-        if not readers and not k8s_out:
+        agent_waits: list[str] = []
+        for svc in [
+            r
+            for r in graph.resources.values()
+            if r.type == "agent:service" and r.id in set(graph.affected)
+        ]:
+            host = await session.scalar(
+                select(Agent).where(Agent.connection_id == svc.connection_id)
+            )
+            if host is not None:
+                k8s_out += agent_checks(
+                    svc, host.states or {}, host.states_at, since=since, waits=agent_waits
+                )
+        k8s_waits += agent_waits
+        if not readers and not k8s_out and not agent_waits:
             return None
         aws = (
             await asyncio.to_thread(
@@ -1231,7 +1246,7 @@ class MedicRunner:
             if readers
             else None
         )
-        if not k8s_out:
+        if not k8s_out and not k8s_waits:
             return aws
         checks = [*(aws.checks if aws else []), *k8s_out]
         waits = [w for w in [aws.waiting if aws else "; ".join(waiting or []), *k8s_waits] if w]

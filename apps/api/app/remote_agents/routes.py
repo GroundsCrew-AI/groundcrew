@@ -1,4 +1,5 @@
-"""The agent API (`/agent/v1`): enrollment, heartbeats, and inventory.
+"""The agent API (`/agent/v1`): enrollment, heartbeats, inventory, service states and events,
+and approved commands (a long poll, then the result).
 
 Agents call it directly at AGENT_API_URL (nginx passes `/agent/` through; every other API route
 is reached only through the web app). No user signs in here: enrollment takes a one-time join
@@ -6,6 +7,7 @@ token, and every other call must be signed by the enrolled agent's key (signing.
 connection deletes its agent, so its key stops working at once.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -17,9 +19,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import record
-from app.db.models import Agent, AgentNonce, Connection
+from app.db.models import Agent, AgentCommand, AgentEvent, AgentNonce, Connection
 from app.discovery.engine import start_discovery
+from app.remote_agents import commands as cmd
 from app.remote_agents import inventory as inv
+from app.remote_agents import signals as sig
 from app.remote_agents.signing import (
     NONCE,
     SignatureError,
@@ -28,13 +32,17 @@ from app.remote_agents.signing import (
     token_hash,
     verify,
 )
-from app.routes.deps import SessionDep, SettingsDep, too_many_requests
+from app.routes.deps import SessionDep, SessionFactoryDep, SettingsDep, too_many_requests
 from app.security.ratelimit import limiter
 
 router = APIRouter(prefix="/agent/v1", tags=["agent"])
 
 HEARTBEAT_SECONDS = 30
 INVENTORY_SECONDS = 60
+EVENTS_SECONDS = 10
+# A command poll waits up to this long for a command, checking every POLL_CHECK_SECONDS.
+POLL_SECONDS = 25
+POLL_CHECK_SECONDS = 1.0
 _ENROLLS_PER_MINUTE = 10
 
 
@@ -63,8 +71,33 @@ class HeartbeatIn(BaseModel):
 
 class HeartbeatOut(BaseModel):
     heartbeat_seconds: int = HEARTBEAT_SECONDS
+    events_seconds: int = EVENTS_SECONDS
     # The inventory Groundcrew holds; the agent sends its own when the two differ.
     inventory_hash: str | None = None
+    # Groundcrew's command-signing public key (base64 Ed25519); the agent pins it on first sight.
+    command_key: str | None = None
+
+
+class EventsOut(BaseModel):
+    stored: int
+
+
+class CommandOut(BaseModel):
+    """A command to run: `payload` is the exact signed JSON text, `signature` its base64
+    Ed25519 signature by Groundcrew's command key."""
+
+    id: uuid.UUID
+    payload: str
+    signature: str
+
+
+class PollOut(BaseModel):
+    commands: list[CommandOut] = Field(default_factory=list)
+
+
+class CommandResultIn(BaseModel):
+    ok: bool
+    message: str = Field(max_length=2000)
 
 
 class InventoryOut(BaseModel):
@@ -197,14 +230,20 @@ async def enroll(
 
 
 @router.post("/heartbeat")
-async def heartbeat(body: HeartbeatIn, agent: SignedAgent, session: SessionDep) -> HeartbeatOut:
+async def heartbeat(
+    body: HeartbeatIn, agent: SignedAgent, session: SessionDep, settings: SettingsDep
+) -> HeartbeatOut:
     agent.version = body.version
     conn = await _connection(session, agent)
     if (conn.config or {}).get(inv.VERSION_KEY) != body.version:
         conn.config = {**(conn.config or {}), inv.VERSION_KEY: body.version}
     held = (conn.config or {}).get(inv.HASH_KEY)
     await session.commit()
-    return HeartbeatOut(inventory_hash=held)
+    try:
+        key: str | None = cmd.command_public_key(settings)
+    except cmd.CommandKeyError:
+        key = None
+    return HeartbeatOut(inventory_hash=held, command_key=key)
 
 
 @router.post("/inventory")
@@ -226,3 +265,74 @@ async def inventory(body: inv.Inventory, agent: SignedAgent, session: SessionDep
     run = await start_discovery(session, agent.workspace_id, connection=conn)
     await session.commit()
     return InventoryOut(changed=True, discovery_run_id=run.id)
+
+
+@router.post("/events")
+async def events(
+    body: sig.EventsIn, agent: SignedAgent, session: SessionDep, settings: SettingsDep
+) -> EventsOut:
+    """The services' live state and what happened since the last report. A detector rule that
+    starts firing for a service opens (or joins) an incident on it."""
+    conn = await _connection(session, agent)
+    started = await sig.ingest(session, agent, conn, body, settings)
+    if started:
+        await sig.open_incidents(session, agent.workspace_id, started)
+    return EventsOut(stored=len(body.events))
+
+
+@router.post("/commands/poll")
+async def poll_commands(
+    agent: SignedAgent, session: SessionDep, sessions: SessionFactoryDep
+) -> PollOut:
+    """Approved commands for this agent, waiting up to POLL_SECONDS for one. Expired commands
+    are marked so; a command is handed out once (status sent)."""
+    agent_id = agent.id
+    await session.commit()  # the agent's request is checked; hold no connection while waiting
+    deadline = datetime.now(UTC) + timedelta(seconds=POLL_SECONDS)
+    while True:
+        now = datetime.now(UTC)
+        async with sessions() as s:
+            queued = list(
+                await s.scalars(
+                    select(AgentCommand)
+                    .where(AgentCommand.agent_id == agent_id, AgentCommand.status == "queued")
+                    .order_by(AgentCommand.created_at)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            out = []
+            for c in queued:
+                if c.expires_at <= now:
+                    c.status, c.finished_at, c.result = "expired", now, "Not picked up in time."
+                    continue
+                c.status, c.sent_at = "sent", now
+                out.append(CommandOut(id=c.id, payload=c.payload, signature=c.signature))
+            await s.commit()
+        if out or now >= deadline:
+            return PollOut(commands=out)
+        await asyncio.sleep(POLL_CHECK_SECONDS)
+
+
+@router.post("/commands/{command_id}/result")
+async def command_result(
+    command_id: uuid.UUID, body: CommandResultIn, agent: SignedAgent, session: SessionDep
+) -> EventsOut:
+    """What the agent did with a command (ran it, or refused it and why)."""
+    found = await session.get(AgentCommand, command_id, with_for_update=True)
+    if found is None or found.agent_id != agent.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such command for this agent.")
+    if found.status == "sent":
+        found.status = "succeeded" if body.ok else "failed"
+        found.finished_at = datetime.now(UTC)
+        found.result = body.message[:2000]
+        session.add(
+            AgentEvent(
+                agent_id=agent.id,
+                service=found.service,
+                at=found.finished_at,
+                kind="command",
+                message=f"{found.action} {'done' if body.ok else 'failed'}: {body.message}"[:500],
+            )
+        )
+    await session.commit()
+    return EventsOut(stored=1)

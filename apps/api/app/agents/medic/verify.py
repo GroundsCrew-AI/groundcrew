@@ -18,7 +18,11 @@ complete and every desired pod is ready (a StatefulSet: currentRevision == updat
 readyReplicas == replicas), waiting while pods are still being replaced, or after a fix PR merged
 until a revision created since the merge exists; `health` fails on any pod that crashes, cannot
 start, or fails its readiness probe now (pods being deleted are left out); `errors` reads the
-pods' logs again when a log spike opened the incident."""
+pods' logs again when a log spike opened the incident.
+
+Services a Groundcrew agent watches (`agent_checks`): `health` passes when the agent's report
+after the fix shows the service running with no failed health check in a row; until the agent
+reports again after the fix, the round is waiting."""
 
 import re
 import time
@@ -409,3 +413,29 @@ async def k8s_checks(
             )
         )
     return out
+
+
+def agent_checks(
+    service: Resource,
+    states: dict[str, Any],
+    states_at: datetime | None,
+    *,
+    since: datetime,
+    waits: list[str],
+) -> list[VerifyCheck]:
+    """The service's state as its agent last reported it (`agents.states`)."""
+    from app.remote_agents.signals import RUNNING, ServiceState, describe
+
+    raw = states.get(service.name)
+    if states_at is None or states_at <= since or raw is None:
+        waits.append(f"the agent's next report on {service.name}")
+        return []
+    s = ServiceState.model_validate(raw)
+    running = s.found and s.state in RUNNING
+    healthy = running and s.health_failures == 0
+    detail = describe(s)
+    if running and s.health_failures:
+        detail += f", {s.health_failures} health checks failed in a row ({s.health_detail})"
+    elif healthy:
+        detail += ", health checks passing" if raw.get("health_failures") is not None else ""
+    return [VerifyCheck(name="health", ok=healthy, detail=detail)]

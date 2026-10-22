@@ -57,7 +57,8 @@ Rules:
   a function's previous published version; ec2_reboot_instance for a failed status check; on
   Kubernetes,
   k8s_rollout_undo to the Deployment's previous revision, k8s_rollout_restart so pods re-read
-  ConfigMaps and Secrets), and a pull_request that
+  ConfigMaps and Secrets; agent_restart_service for a service on a server with a Groundcrew
+  agent that stopped or fails its health checks), and a pull_request that
   fixes the cause in the repository when the cause is in code, a task definition, or a migration.
   When the cause needs a change none of these make (a server setting, a health check, a
   resource limit), add it as `other` with a one-sentence description of what a person should

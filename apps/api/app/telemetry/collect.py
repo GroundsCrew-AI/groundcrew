@@ -34,7 +34,17 @@ from app.connectors.vercel import VercelClient
 from app.db.models import Connection, Edge, Resource
 from app.db.session import SessionFactory
 from app.graph.roles import role_of
-from app.telemetry import aws_compute, cloudwatch_logs, ecs, github, k8s, rds, secrets, vercel
+from app.telemetry import (
+    agent,
+    aws_compute,
+    cloudwatch_logs,
+    ecs,
+    github,
+    k8s,
+    rds,
+    secrets,
+    vercel,
+)
 from app.telemetry.evidence import Line, ReaderOutput, line, render
 from app.telemetry.timeline import timeline
 
@@ -190,9 +200,15 @@ Job = Callable[[], Awaitable[ReaderOutput]]
 
 
 def plan_readers(
-    resources: list[Resource], clients: EvidenceClients, since: datetime, until: datetime
+    resources: list[Resource],
+    clients: EvidenceClients,
+    since: datetime,
+    until: datetime,
+    session_factory: SessionFactory | None = None,
 ) -> tuple[dict[str, tuple[Resource, Job]], list[str]]:
-    """One reader per source key; resources no reader covers are listed in the second value."""
+    """One reader per source key; resources no reader covers are listed in the second value.
+    Services a Groundcrew agent watches are read from Groundcrew's own database
+    (`session_factory`)."""
     jobs: dict[str, tuple[Resource, Job]] = {}
     notes: list[str] = []
 
@@ -223,6 +239,9 @@ def plan_readers(
                     until=until,
                 ),
             )
+        elif r.type == "agent:service" and session_factory is not None:
+            key = f"agent:{r.name}"
+            job = partial(agent.read_service, session_factory, r, since, until)
         elif r.type == "logs:log-group":
             key = f"cloudwatch_logs:{r.name}"
             job = aws_job(
@@ -398,7 +417,7 @@ async def collect(
     owned = ConnectionClients(connections, settings) if clients is None else None
     use: EvidenceClients = owned or clients  # type: ignore[assignment]
     try:
-        jobs, skipped = plan_readers([*affected, *neighbors], use, since, until)
+        jobs, skipped = plan_readers([*affected, *neighbors], use, since, until, session_factory)
         keys = list(jobs)
         outputs = await asyncio.gather(*(_run(k, jobs[k][1], until) for k in keys))
     finally:

@@ -28,6 +28,7 @@ FixOptionKind = Literal[
     "ec2_reboot_instance",
     "k8s_rollout_undo",
     "k8s_rollout_restart",
+    "agent_restart_service",
     "other",
 ]
 

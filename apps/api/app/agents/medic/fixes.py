@@ -67,6 +67,7 @@ DOWN_RULES = frozenset(
         "k8s_rollout_failed",
         "k8s_pods_crashing",
         "ec2_status_check",
+        "agent_service_down",
     }
 )
 CRASH_RULES = frozenset(
@@ -225,6 +226,14 @@ def plan_lines(plan: ActionPlan) -> list[PlanLine]:
                 what=f"{plan.target} alias version",
                 before=(plan.current or "-").rsplit(":", 1)[-1],
                 after=(plan.desired or "-").rsplit(":", 1)[-1],
+            )
+        ]
+    if plan.action == "agent_restart_service":
+        return [
+            PlanLine(
+                what=f"{plan.target}",
+                before=(plan.current or "-").split(" ", 1)[-1],
+                after="restarted",
             )
         ]
     if plan.action == "ec2_reboot_instance":
@@ -469,9 +478,10 @@ async def emergency(
     """Emergency fixes for what started it (a secret, deploy, or commit), then a reboot for
     each EC2 instance whose status check fails."""
     out = await _change_fixes(root_cause, signals, graph, changes, actions, start_order, memory)
-    reboots = await _reboots(root_cause, signals, graph, actions, start_order + len(out.records))
-    out.records += reboots.records
-    out.notes += reboots.notes
+    for more in (_reboots, _agent_restarts):
+        found = await more(root_cause, signals, graph, actions, start_order + len(out.records))
+        out.records += found.records
+        out.notes += found.notes
     return out
 
 
@@ -508,6 +518,56 @@ async def _reboots(
                 f"Reboot {found.name}",
                 "Its status check fails; a reboot restarts the operating system, which clears "
                 "most instance check failures.",
+            )
+        )
+        order += 1
+    return out
+
+
+# Rules that mean a service on an agent's host is down: a restart is the emergency fix.
+AGENT_DOWN_RULES = frozenset({"agent_service_down", "health_check"})
+
+
+async def _agent_restarts(
+    root_cause: RootCause,
+    signals: list[Signal],
+    graph: Graph,
+    actions: EmergencyActions | None,
+    order: int,
+) -> Proposal:
+    """A restart for each service on a Groundcrew agent's host that is down or fails its health
+    checks, whatever stopped it: the agent restarts it if its configuration allows."""
+    out = Proposal()
+    down = list(
+        dict.fromkeys(
+            s.resource_id
+            for s in signals
+            if s.rule in AGENT_DOWN_RULES
+            and s.resource_id in graph.resources
+            and graph.resources[s.resource_id].type == "agent:service"
+        )
+    )
+    if root_cause.false_alarm or not down:
+        return out
+    if actions is None:
+        out.notes.append("A service on an agent's host is down, but no emergency actions run here.")
+        return out
+    for rid in down:
+        found = graph.resources[rid] if rid else None
+        if found is None or found.connection_id is None:
+            continue
+        try:
+            plan = await actions.plan_agent_restart_service(found.connection_id, found.name)
+        except EmergencyActionError as exc:
+            out.notes.append(f"No restart of {found.name}: {exc}")
+            continue
+        out.records.append(
+            _emergency_record(
+                plan,
+                order,
+                f"Restart {found.name} on {found.account or 'its host'}",
+                "It stopped or fails its health checks; the agent on its host restarts it, and "
+                "Medic checks it runs and passes them again.",
             )
         )
         order += 1

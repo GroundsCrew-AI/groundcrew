@@ -281,6 +281,54 @@ class Agent(TimestampMixin, Base):
     version: Mapped[str | None] = mapped_column(String(32))
     enrolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The services' live state as last reported ({name: {state, health, restarts, ...}}), when,
+    # and which detector rules fire for each now (an incident opens when one starts firing).
+    states: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
+    states_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    firing: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
+
+
+class AgentEvent(Base):
+    """What an agent saw on its host, kept 7 days: a service's state changing, a failed health
+    check, a restart, an error log line (redacted on the host), a command it ran. Medic reads
+    these as evidence."""
+
+    __tablename__ = "agent_events"
+    __table_args__ = (Index("ix_agent_events_agent_service_at", "agent_id", "service", "at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
+    service: Mapped[str] = mapped_column(String(100))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # state | health | restart | log | command
+    kind: Mapped[str] = mapped_column(String(16))
+    message: Mapped[str] = mapped_column(Text)
+
+
+class AgentCommand(TimestampMixin, Base):
+    """An approved action for an agent to run (app/remote_agents/commands.py). Groundcrew signs
+    `payload` with its command key; the agent checks the signature, the expiry, and its own
+    `allow` list before it runs it, then reports the result."""
+
+    __tablename__ = "agent_commands"
+    __table_args__ = (Index("ix_agent_commands_agent_status", "agent_id", "status"),)
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"))
+    action: Mapped[str] = mapped_column(String(32))
+    service: Mapped[str] = mapped_column(String(100))
+    # The exact signed bytes (JSON) and the base64 Ed25519 signature over them.
+    payload: Mapped[str] = mapped_column(Text)
+    signature: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # queued | sent | succeeded | failed | expired
+    status: Mapped[str] = mapped_column(String(16), default="queued", server_default="queued")
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[str | None] = mapped_column(Text)
 
 
 class AgentNonce(Base):
