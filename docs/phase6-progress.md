@@ -310,7 +310,7 @@ timeouts although the worker settings had not changed, and never read why the se
 - Teammate code touched (Phase 5, for review): app/agents/medic/agent.py*, diagnose.py*,
   evidence.py*, app/telemetry/ecs.py*.
 
-Medic, broken-env follow-up (2026-10-22, not deployed yet):
+Medic, broken-env follow-up (2026-10-22): release `516fa029aa8e` live, `c4c492349fda` kept for rollback.
 - The deploy comparison invented "DATABASE_URL now from another secret": a forced redeploy
   reused revision :31, ECS no longer listed the old deployment, and :31 was compared with :30
   from before the environment was rebuilt. A revision registered more than 15 minutes before
