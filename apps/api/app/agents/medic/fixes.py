@@ -51,6 +51,7 @@ from app.db.models import Connection, Edge, Resource
 from app.llm.budget import RunBudget
 from app.llm.client import OnCall, TokenFactory
 from app.llm.router import Task
+from app.remote_agents import outdated
 from app.tools.github_pr import (
     FixPullRequestError,
     PullRequestDraft,
@@ -538,6 +539,9 @@ async def _reboots(
     return out
 
 
+# Agents from this version report images, so a container can be rolled back.
+ROLLBACK_SINCE = "0.3.0"
+UPGRADE_COMMAND = "curl -fsSL https://groundkrew.com/agent/install.sh | sudo sh"
 # Rules that mean a service on an agent's host is down: a restart is the emergency fix.
 AGENT_DOWN_RULES = frozenset({"agent_service_down", "health_check"})
 
@@ -574,6 +578,16 @@ async def _agent_fixes(
         if found is None or found.connection_id is None:
             continue
         host = found.account or "its host"
+        conn = graph.connections.get(found.connection_id)
+        version = str((conn.config or {}).get("agent_version") or "") if conn else ""
+        if found.config.get("runtime") in ("docker", "compose") and outdated(
+            version, ROLLBACK_SINCE
+        ):
+            out.notes.append(
+                f"The agent on {host} is version {version}; from {ROLLBACK_SINCE} it remembers the "
+                "images a container ran, so Medic can roll it back after a bad deploy. Upgrade it: "
+                f"{UPGRADE_COMMAND}"
+            )
         deployed = [c for c in changes if c.kind == "deploy" and c.resource_id == rid]
         if deployed:
             try:
@@ -816,6 +830,16 @@ async def pull_request(
     out = Proposal()
     change = root_cause.triggering_change
     if root_cause.false_alarm or change is None or change.kind not in ("commit", "deploy"):
+        return out
+    matched = matched_change(root_cause, changes)
+    on_host = graph.resources.get(matched.resource_id) if matched and matched.resource_id else None
+    if on_host is not None and on_host.type == "agent:service":
+        # "image changed to web:2@0a1b2c3d4e5f": the short image id looks like a commit SHA,
+        # but it names an image on the host, not a commit in a repository.
+        out.notes.append(
+            f"No fix PR: the change was a new container image on {on_host.account or 'the host'}, "
+            "not a commit Groundcrew can follow to a repository."
+        )
         return out
     if github is None:
         out.notes.append("No fix PR: the GitHub App is not configured.")

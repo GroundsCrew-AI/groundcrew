@@ -54,7 +54,7 @@ from app.agents.medic.state import FixRecord, MedicState, MemoryUsed, Outcome
 from app.agents.medic.verify import agent_checks, k8s_checks, run_checks
 from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader
-from app.connectors.github import GitHubApp, get_github_app
+from app.connectors.github import GitHubApp, GitHubError, get_github_app
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
     Agent,
@@ -586,19 +586,24 @@ class MedicRunner:
         emergency = await fx.emergency(
             root_cause, signals, graph, evidence.changes, deps.actions, memory=reused
         )
-        pr = await fx.pull_request(
-            incident.id,
-            root_cause,
-            signals,
-            graph,
-            evidence.changes,
-            deps.github,
-            llm,
-            budget,
-            order=len(emergency.records) + 1,
-            on_call=recorder,
-            research=follow_up,
-        )
+        try:
+            pr = await fx.pull_request(
+                incident.id,
+                root_cause,
+                signals,
+                graph,
+                evidence.changes,
+                deps.github,
+                llm,
+                budget,
+                order=len(emergency.records) + 1,
+                on_call=recorder,
+                research=follow_up,
+            )
+        except GitHubError as exc:
+            # The emergency fixes stand on their own; GitHub refusing a lookup must not lose them.
+            logger.warning("medic: fix PR skipped", exc_info=True)
+            pr = fx.Proposal(notes=[f"No fix PR: GitHub refused a lookup ({str(exc)[:200]})."])
         proposed = emergency.records + pr.records
         if state.superseded and _same_fixes(state.superseded, proposed):
             await self._keep_superseded(session, incident, run, state, evidence.notes)
@@ -1031,7 +1036,7 @@ class MedicRunner:
             reason = (
                 "Every fix was rejected."
                 if rejected == len(state.fixes)
-                else "No fix could be applied."
+                else _sentences(["No fix could be applied", *state.notes])
             )
             await self._fail(
                 session,

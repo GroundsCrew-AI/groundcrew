@@ -25,6 +25,8 @@ const STATUS: Record<string, { label: string; color: string }> = {
   preview: { label: "Preview", color: "var(--status-neutral)" },
 };
 
+const AGENT_INSTALL = "https://groundkrew.com/agent/install.sh";
+
 export function connectionStatus(connection: Connection): {
   label: string;
   color: string;
@@ -62,7 +64,7 @@ function detail(connection: Connection): string {
       return [
         agent.hostname,
         `${agent.services} ${agent.services === 1 ? "service" : "services"}`,
-        agent.version && `agent ${agent.version}`,
+        agent.version && `agent ${agent.version}${agent.update_available ? ` (${agent.latest_version} available)` : ""}`,
         !agent.online && agent.last_seen_at && `last seen ${formatRelative(agent.last_seen_at)}`,
       ]
         .filter(Boolean)
@@ -192,6 +194,13 @@ export function ConnectionRow({
             </>
           )}
         </p>
+        {connection.kind === "agent" && connection.agent?.update_available && (
+          <p className="text-[12px] text-[var(--status-waiting)]">
+            Update the agent to {connection.agent.latest_version} to get rollbacks and the latest
+            fixes:{" "}
+            <code className="font-mono">curl -fsSL {AGENT_INSTALL} | sudo sh</code>
+          </p>
+        )}
         {connection.error && connection.status !== "connected" && (
           <p className="text-[12px] text-[var(--status-failed)]">
             {connection.error}

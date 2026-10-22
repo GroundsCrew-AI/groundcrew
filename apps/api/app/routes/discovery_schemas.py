@@ -20,6 +20,7 @@ from app.connectors.kubernetes import CONFIGMAP_CHANGES_KEY
 from app.db.models import Agent, Connection, Edge, Resource
 from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
 from app.graph.roles import role_of
+from app.remote_agents import AGENT_VERSION, outdated
 from app.security.redact import redact_json
 from app.targets.k8s_deploy import deploy_settings
 
@@ -82,6 +83,9 @@ class AgentOut(BaseModel):
     # A join token is waiting to be used until then (null: none).
     join_expires_at: datetime | None = None
     services: int = 0
+    # The version groundkrew.com serves; update_available when this agent runs an older one.
+    latest_version: str = AGENT_VERSION
+    update_available: bool = False
 
     @classmethod
     def build(cls, agent: Agent, conn: Connection, now: datetime) -> "AgentOut":
@@ -101,6 +105,7 @@ class AgentOut(BaseModel):
             last_seen_at=agent.last_seen_at,
             join_expires_at=pending if pending and pending > now else None,
             services=len(stored.get("services") or []),
+            update_available=agent.public_key is not None and outdated(agent.version),
         )
 
 

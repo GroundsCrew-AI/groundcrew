@@ -30,6 +30,8 @@ function agentConnection(agent: Partial<NonNullable<Connection["agent"]>> = {}, 
       last_seen_at: null,
       join_expires_at: "2026-10-22T13:00:00Z",
       services: 0,
+      latest_version: "0.3.0",
+      update_available: false,
       ...agent,
     },
     ...overrides,
@@ -109,5 +111,15 @@ describe("ConnectionRow for an agent", () => {
     rerender(<ConnectionRow connection={offline} onRefresh={vi.fn()} refreshing={false} />);
     expect(screen.getByText("Offline")).toBeInTheDocument();
     expect(screen.getByText(/web-1.example · 1 service · last seen/)).toBeInTheDocument();
+
+    const old = agentConnection(
+      { enrolled: true, online: true, hostname: "web-1.example", version: "0.1.0", services: 1, update_available: true },
+      { status: "connected" },
+    );
+    rerender(<ConnectionRow connection={old} onRefresh={vi.fn()} refreshing={false} />);
+    expect(screen.getByText("web-1.example · 1 service · agent 0.1.0 (0.3.0 available)")).toBeInTheDocument();
+    expect(screen.getByText(/Update the agent to 0.3.0/)).toHaveTextContent(
+      "curl -fsSL https://groundkrew.com/agent/install.sh | sudo sh",
+    );
   });
 });

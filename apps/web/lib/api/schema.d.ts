@@ -1698,6 +1698,11 @@ export interface components {
             join_expires_at?: string | null;
             /** Last Seen At */
             last_seen_at?: string | null;
+            /**
+             * Latest Version
+             * @default 0.3.0
+             */
+            latest_version: string;
             /** Online */
             online: boolean;
             /** Os */
@@ -1707,6 +1712,11 @@ export interface components {
              * @default 0
              */
             services: number;
+            /**
+             * Update Available
+             * @default false
+             */
+            update_available: boolean;
             /** Version */
             version?: string | null;
         };

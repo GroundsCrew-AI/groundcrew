@@ -323,6 +323,11 @@
             ],
             "title": "Last Seen At"
           },
+          "latest_version": {
+            "default": "0.3.0",
+            "title": "Latest Version",
+            "type": "string"
+          },
           "online": {
             "title": "Online",
             "type": "boolean"
@@ -342,6 +347,11 @@
             "default": 0,
             "title": "Services",
             "type": "integer"
+          },
+          "update_available": {
+            "default": false,
+            "title": "Update Available",
+            "type": "boolean"
           },
           "version": {
             "anyOf": [

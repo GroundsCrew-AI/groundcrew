@@ -7,10 +7,10 @@
 # the named build context `agent-src` (apps/agent): docker build --build-context
 # agent-src=apps/agent ... (infra/platform/host/bin/gc-release does).
 FROM golang:1.23-bookworm AS agent
-ARG AGENT_VERSION=0.3.0
 WORKDIR /src
 COPY --from=agent-src . .
-RUN set -eu; mkdir -p /out; \
+# apps/agent/VERSION is the agent's version (the API's AGENT_VERSION must match it).
+RUN set -eu; mkdir -p /out; AGENT_VERSION=$(cat VERSION); \
     for arch in amd64 arm64; do \
       CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -buildvcs=false \
         -ldflags "-s -w -X main.version=$AGENT_VERSION" \

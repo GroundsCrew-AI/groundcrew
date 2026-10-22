@@ -329,3 +329,30 @@ async def test_inventory_refuses_unknown_fields(
     async with session_factory() as session:
         conn = await session.scalar(select(Connection))
         assert conn is not None and "inventory" not in (conn.config or {})
+
+
+def test_the_agent_version_matches_what_the_downloads_build() -> None:
+    from pathlib import Path
+
+    from app.remote_agents import AGENT_VERSION, outdated
+
+    version = Path(__file__).resolve().parents[2] / "agent" / "VERSION"
+    assert version.read_text().strip() == AGENT_VERSION
+    assert outdated("0.1.0") and outdated("0.2.9", "0.3.0") and not outdated("0.3.0")
+    assert not outdated("0.3.0-dev", "0.3.0") and not outdated("dev") and not outdated(None)
+    assert not outdated("1.0.0", "0.3.0")
+
+
+async def test_an_old_agent_shows_an_update(
+    client: httpx.AsyncClient, session_factory: SessionFactory
+) -> None:
+    alice = await _member(session_factory, 7011, "alice")
+    await _enrolled(client, alice)  # FakeAgent enrolls as 0.1.0
+    r = await client.get(
+        "/connections", params={"workspace_id": str(alice.workspace_id)}, headers=alice.headers
+    )
+    agent = r.json()[0]["agent"]
+    assert agent["update_available"] and agent["version"] == "0.1.0"
+    from app.remote_agents import AGENT_VERSION
+
+    assert agent["latest_version"] == AGENT_VERSION

@@ -406,6 +406,10 @@ async def test_medic_restarts_a_stopped_service_end_to_end(
     assert (
         fix.fix.action == "agent_restart_service" and fix.fix.title == f"Restart {FLASK} on web-1"
     )
+    # The agent enrolled as 0.1.0: Medic says a newer one could roll back, and how to upgrade.
+    assert any(
+        "Upgrade it: curl -fsSL https://groundkrew.com/agent/install.sh" in n for n in st.notes
+    )
     await asyncio.gather(_approve_all(sf, ws, incident.id, run_id), _fake_agent_runs_commands(sf))
     payload = {"incident_id": str(incident.id), "run_id": str(run_id)}
     # The agent reports right after a command and every 10 seconds: each round reads a fresh one.
@@ -551,6 +555,8 @@ async def test_medic_rolls_back_a_service_that_broke_after_its_image_changed(
     (fix,) = st.fixes
     assert fix.fix.action == "agent_rollback_service"
     assert fix.fix.title == f"Roll back {FLASK} on web-1 to web:1@aaaaaaaaaaaa"
+    # The image id in the change looks like a commit SHA: no fix PR is attempted for it.
+    assert any("not a commit Groundcrew can follow" in n for n in st.notes), st.notes
     await asyncio.gather(_approve_all(sf, ws, incident.id, run_id), _fake_agent_runs_commands(sf))
     payload = {"incident_id": str(incident.id), "run_id": str(run_id)}
     for _ in range(2):

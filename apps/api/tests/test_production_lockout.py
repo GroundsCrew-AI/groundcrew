@@ -197,3 +197,12 @@ async def test_password_and_google_can_be_turned_back_on(client: httpx.AsyncClie
     )
     options = (await client.get("/auth/options", headers=service_headers())).json()
     assert options["password"] is True and options["google"] is True
+
+
+async def test_test_runs_are_not_found(client: httpx.AsyncClient, alice: Member) -> None:
+    r = await client.post(
+        "/runs",
+        json={"agent": "echo_ops", "goal": "x", "workspace_id": str(alice.workspace_id)},
+        headers=alice.headers,
+    )
+    assert r.status_code == 404 and "local development" in r.json()["detail"]
