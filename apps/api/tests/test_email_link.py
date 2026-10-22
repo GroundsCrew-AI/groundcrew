@@ -29,6 +29,7 @@ def _settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "internal_jwt_secret": SecretStr(TEST_JWT_SECRET),
         "web_origin": "https://groundkrew.com",
+        "agent_api_url": "https://api.groundkrew.com",
         **overrides,
     }
     return Settings(_env_file=None, **values)

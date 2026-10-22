@@ -269,6 +269,15 @@ class Settings(BaseSettings):
     quota_max_build_seconds: int = 900
     quota_connections_per_workspace: int = 10
 
+    # Groundcrew agents (app/remote_agents). The address agents reach the API at (shown in the
+    # install commands); how long a join token works; how far a signed request's clock may be
+    # off; calls a minute per agent; and when an agent with no heartbeat counts as offline.
+    agent_api_url: str = "http://localhost:8000"
+    agent_join_token_minutes: int = 60
+    agent_request_skew_seconds: int = 300
+    agent_rate_limit_per_minute: int = 120
+    agent_offline_after_seconds: int = 180
+
     # Abuse limits in the API (nginx limits each client address in front of it). Per user: API
     # calls a minute, stream tokens a minute, and live streams open at once. Request bodies
     # larger than MAX_REQUEST_BYTES are refused (413).
@@ -409,6 +418,8 @@ class Settings(BaseSettings):
             problems.append("INTERNAL_JWT_SECRET is shorter than 32 characters")
         if "localhost" in self.web_origin or "127.0.0.1" in self.web_origin:
             problems.append("WEB_ORIGIN still points at localhost")
+        if "localhost" in self.agent_api_url or "127.0.0.1" in self.agent_api_url:
+            problems.append("AGENT_API_URL still points at localhost")
         # Dev-only switches must not be set at all on a hosted instance (each is also refused
         # at the place it is used).
         for name in ("live_script_self_approve", "pipeline_fake", "k8s_allow_private_servers"):

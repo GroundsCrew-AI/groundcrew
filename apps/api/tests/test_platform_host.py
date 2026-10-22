@@ -98,11 +98,14 @@ def test_nginx_exposes_only_the_apis_public_routes() -> None:
     assert [loc.strip() for loc in locations] == [
         "~ ^/runs/[0-9a-fA-F-]+/events$",
         "= /github/webhook",
+        "/agent/v1/",
         "= /health",
         "= /ready",
         "/",
     ]
     assert "return 404;" in api.split("location / {")[1]
+    # Agent calls are signed and checked by the API; nginx limits each address.
+    assert "limit_req zone=gc_agent" in api.split("location /agent/v1/ {")[1].split("}")[0]
     assert "proxy_buffering off;" in api and "proxy_read_timeout 3600s;" in api
     common_tls = (HOST / "nginx" / "groundcrew-common.conf").read_text()
     assert "ssl_protocols TLSv1.2 TLSv1.3;" in common_tls

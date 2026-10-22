@@ -58,6 +58,7 @@ from app.graph.summary_check import check_summary
 from app.llm.budget import PgUsageStore, RunBudget
 from app.llm.client import ChatModel, TokenFactory
 from app.llm.recorder import StepRecorder
+from app.remote_agents import inventory
 from app.security.redact import summarize
 from app.steps import record_step
 
@@ -150,12 +151,24 @@ async def _discover_preview(
     raise ConnectorError(f"{conn.kind} discovery is in preview and does not run live yet.")
 
 
+async def _discover_agent(
+    conn: Connection, settings: Settings, progress: Progress
+) -> ConnectorResult:
+    """What the agent last reported (app/remote_agents/inventory.py); nothing is called."""
+    found = inventory.stored(conn)
+    if found is None:
+        raise ConnectorError("The agent has not reported its services yet.")
+    await progress(f"{len(found.services)} services reported by the agent on {found.host.hostname}")
+    return inventory.to_resources(conn, found)
+
+
 DEFAULT_CONNECTORS: dict[str, DiscoverFn] = {
     "aws": _discover_aws,
     "github": _discover_github,
     "vercel": _discover_vercel,
     "azure": _discover_preview,
     "k8s": _discover_k8s,
+    "agent": _discover_agent,
 }
 
 

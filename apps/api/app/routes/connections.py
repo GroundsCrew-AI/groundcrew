@@ -8,7 +8,7 @@ ARN, the ExternalId, and the account ID.
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote, urlencode
@@ -37,11 +37,22 @@ from app.connectors.deploy_infra import deploy_role_arn, operate_role_arn
 from app.connectors.github import GitHubApp, GitHubError, check_repo_name, get_github_app
 from app.connectors.kubernetes import kubeconfig_summary
 from app.connectors.vercel import VercelClient, VercelError
-from app.db.models import Connection, Resource, RunStatus, User, Workspace, WorkspaceRole
+from app.db.models import (
+    Agent,
+    Connection,
+    Resource,
+    RunStatus,
+    User,
+    Workspace,
+    WorkspaceRole,
+)
 from app.discovery.engine import start_discovery
 from app.discovery.types import ConnectorError
+from app.remote_agents.signing import new_join_token
 from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.discovery_schemas import (
+    AgentConnectIn,
+    AgentJoinOut,
     AwsCompleteIn,
     AwsOperateIn,
     AwsOperateValuesOut,
@@ -157,9 +168,17 @@ async def _counts(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID
     return {cid: int(n) for cid, n in rows if cid is not None}
 
 
+async def _agents(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, Agent]:
+    if not ids:
+        return {}
+    found = await session.scalars(select(Agent).where(Agent.connection_id.in_(ids)))
+    return {a.connection_id: a for a in found}
+
+
 async def _out(session: AsyncSession, conn: Connection) -> ConnectionOut:
     counts = await _counts(session, [conn.id])
-    return ConnectionOut.build(conn, counts.get(conn.id, 0))
+    agents = await _agents(session, [conn.id])
+    return ConnectionOut.build(conn, counts.get(conn.id, 0), agents.get(conn.id))
 
 
 def _encrypt(secret: str) -> str:
@@ -182,7 +201,8 @@ async def list_connections(
         )
     )
     counts = await _counts(session, [c.id for c in conns])
-    return [ConnectionOut.build(c, counts.get(c.id, 0)) for c in conns]
+    agents = await _agents(session, [c.id for c in conns if c.kind == "agent"])
+    return [ConnectionOut.build(c, counts.get(c.id, 0), agents.get(c.id)) for c in conns]
 
 
 # ------------------------------------------------------------------------------- AWS
@@ -948,6 +968,72 @@ async def github_link(
     await _audit(session, user, conn, "created", ip)
     await session.commit()
     return await _out(session, conn)
+
+
+# ----------------------------------------------------------------------------- Agent
+
+
+async def _join(session: AsyncSession, agent: Agent, settings: Settings) -> tuple[str, datetime]:
+    token, hashed = new_join_token()
+    agent.join_token_hash = hashed
+    agent.join_expires_at = datetime.now(UTC) + timedelta(minutes=settings.agent_join_token_minutes)
+    await session.flush()
+    return token, agent.join_expires_at
+
+
+@router.post("/agent")
+async def agent_connect(
+    body: AgentConnectIn,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
+) -> AgentJoinOut:
+    """Add a Groundcrew agent: a connection that waits for the agent to enroll with the one-time
+    join token returned here (shown once; only its hash is kept)."""
+    await _check_owner(session, user, body.workspace_id)
+    await quotas.check_can_add_connection(session, body.workspace_id, settings)
+    conn = Connection(
+        workspace_id=body.workspace_id, kind="agent", name=body.name, status="pending", config={}
+    )
+    session.add(conn)
+    await session.flush()
+    agent = Agent(workspace_id=body.workspace_id, connection_id=conn.id)
+    session.add(agent)
+    token, expires = await _join(session, agent, settings)
+    await _audit(session, user, conn, "created", ip)
+    await session.commit()
+    return AgentJoinOut(
+        connection=await _out(session, conn),
+        token=token,
+        expires_at=expires,
+        api_url=settings.agent_api_url,
+    )
+
+
+@router.post("/{connection_id}/agent/token")
+async def agent_new_token(
+    connection_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
+) -> AgentJoinOut:
+    """A new join token (the old one stops working): to finish a setup whose token expired, or
+    to reinstall the agent, whose new key then replaces the old one."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    agent = await session.scalar(select(Agent).where(Agent.connection_id == conn.id))
+    if conn.kind != "agent" or agent is None:
+        raise _unprocessable("Only an agent connection has join tokens.")
+    token, expires = await _join(session, agent, settings)
+    await _audit(session, user, conn, "agent_token_created", ip)
+    await session.commit()
+    return AgentJoinOut(
+        connection=await _out(session, conn),
+        token=token,
+        expires_at=expires,
+        api_url=settings.agent_api_url,
+    )
 
 
 # ---------------------------------------------------------------------------- Vercel

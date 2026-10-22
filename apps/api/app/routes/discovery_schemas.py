@@ -6,7 +6,7 @@ redact_json before it leaves the API.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -17,7 +17,7 @@ from app.connectors.access import access_summary
 from app.connectors.aws import AWS_REGION, MAX_CONNECTION_REGIONS, connection_regions
 from app.connectors.credentials import capabilities
 from app.connectors.kubernetes import CONFIGMAP_CHANGES_KEY
-from app.db.models import Connection, Edge, Resource
+from app.db.models import Agent, Connection, Edge, Resource
 from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
 from app.graph.roles import role_of
 from app.security.redact import redact_json
@@ -30,6 +30,7 @@ class ConnectionKind(StrEnum):
     vercel = "vercel"
     azure = "azure"
     k8s = "k8s"
+    agent = "agent"
 
 
 ConnectionStatus = Literal["pending", "connected", "error"]
@@ -65,6 +66,42 @@ class K8sDeploySettingsOut(BaseModel):
     # "ecr": aws_connection_id logs in to the ECR registry at push time (no stored token).
     registry_auth: Literal["token", "ecr"] = "token"
     aws_connection_id: uuid.UUID | None = None
+
+
+class AgentOut(BaseModel):
+    """A Groundcrew agent's state (connection kind `agent`)."""
+
+    enrolled: bool
+    online: bool
+    hostname: str | None = None
+    os: str | None = None
+    arch: str | None = None
+    version: str | None = None
+    enrolled_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    # A join token is waiting to be used until then (null: none).
+    join_expires_at: datetime | None = None
+    services: int = 0
+
+    @classmethod
+    def build(cls, agent: Agent, conn: Connection, now: datetime) -> "AgentOut":
+        offline_after = timedelta(seconds=get_settings().agent_offline_after_seconds)
+        stored = (conn.config or {}).get("inventory") or {}
+        pending = agent.join_expires_at if agent.join_token_hash else None
+        return cls(
+            enrolled=agent.public_key is not None,
+            online=agent.last_seen_at is not None
+            and agent.public_key is not None
+            and now - agent.last_seen_at < offline_after,
+            hostname=agent.hostname,
+            os=agent.os,
+            arch=agent.arch,
+            version=agent.version,
+            enrolled_at=agent.enrolled_at,
+            last_seen_at=agent.last_seen_at,
+            join_expires_at=pending if pending and pending > now else None,
+            services=len(stored.get("services") or []),
+        )
 
 
 class ConnectionOut(BaseModel):
@@ -103,6 +140,8 @@ class ConnectionOut(BaseModel):
     deploy_settings: K8sDeploySettingsOut | None = None
     # Kubernetes: the owner opted in to ConfigMap changes as incident causes. Null: not k8s.
     configmap_changes: bool | None = None
+    # Agent: enrollment, online state, and host (null for other kinds).
+    agent: AgentOut | None = None
     # What Groundcrew can read and change through it, in plain sentences (app.connectors.access).
     access: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -111,7 +150,9 @@ class ConnectionOut(BaseModel):
     created_at: datetime
 
     @classmethod
-    def build(cls, conn: Connection, resource_count: int = 0) -> "ConnectionOut":
+    def build(
+        cls, conn: Connection, resource_count: int = 0, agent: Agent | None = None
+    ) -> "ConnectionOut":
         c = conn.config or {}
         last = LastDiscovery.model_validate(conn.last_discovery) if conn.last_discovery else None
         deploy = deploy_settings(conn)
@@ -143,12 +184,28 @@ class ConnectionOut(BaseModel):
             namespaces=c.get("namespaces"),
             deploy_settings=K8sDeploySettingsOut(**deploy.public()) if deploy else None,
             configmap_changes=bool(c.get(CONFIGMAP_CHANGES_KEY)) if conn.kind == "k8s" else None,
+            agent=AgentOut.build(agent, conn, datetime.now(UTC)) if agent else None,
             access=access_summary(conn, get_settings()),
             error=c.get("last_error"),
             resource_count=resource_count,
             last_discovery=last,
             created_at=conn.created_at,
         )
+
+
+class AgentConnectIn(BaseModel):
+    workspace_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=200, examples=["web-1 (Hetzner)"])
+
+
+class AgentJoinOut(BaseModel):
+    """A new agent connection (or a new token for one). The token is shown only here."""
+
+    connection: ConnectionOut
+    token: str
+    expires_at: datetime
+    # Where the agent reaches Groundcrew (its `groundcrew.url` setting).
+    api_url: str
 
 
 class AwsRegionsIn(BaseModel):

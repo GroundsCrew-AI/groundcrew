@@ -243,7 +243,7 @@ class Connection(TimestampMixin, Base):
     workspace_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
     )
-    # aws | azure | github | k8s | vm | vercel
+    # aws | azure | github | k8s | vm | vercel | agent
     kind: Mapped[str] = mapped_column(String(32))
     name: Mapped[str] = mapped_column(String(200))
     # Non-secret settings: role ARN, external ID, subscription ID, host, ...
@@ -255,6 +255,44 @@ class Connection(TimestampMixin, Base):
     # The last discovery of this connection: {at, run_id, status, resources, stale, error,
     # duration_ms, notes}. Empty until it has run once.
     last_discovery: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
+
+
+class Agent(TimestampMixin, Base):
+    """A Groundcrew agent on a host: one per `agent` connection. It enrolls with a one-time join
+    token (only its SHA-256 is kept) and its own Ed25519 public key; every later request is
+    signed with the private key, which never leaves the host (app/remote_agents). The services it
+    reports live in the connection's config (`inventory`), where discovery reads them."""
+
+    __tablename__ = "agents"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    connection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("connections.id", ondelete="CASCADE"), unique=True
+    )
+    join_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    join_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Base64 of the raw 32-byte Ed25519 public key. Null until enrolled.
+    public_key: Mapped[str | None] = mapped_column(String(64))
+    hostname: Mapped[str | None] = mapped_column(String(253))
+    os: Mapped[str | None] = mapped_column(String(64))
+    arch: Mapped[str | None] = mapped_column(String(32))
+    version: Mapped[str | None] = mapped_column(String(32))
+    enrolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentNonce(Base):
+    """Nonces of recent signed agent requests, so a captured request cannot be replayed."""
+
+    __tablename__ = "agent_nonces"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+    )
+    nonce: Mapped[str] = mapped_column(String(64), primary_key=True)
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class Resource(TimestampMixin, Base):

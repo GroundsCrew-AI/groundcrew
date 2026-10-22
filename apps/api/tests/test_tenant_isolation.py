@@ -298,6 +298,16 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         lambda t: "/incidents",
         lambda t: {"workspace_id": str(t.workspace), "resource_ids": [str(t.resource)]},
     ),
+    ("POST", "/connections/agent"): (
+        "POST",
+        lambda t: "/connections/agent",
+        lambda t: {"workspace_id": str(t.workspace), "name": "intruder"},
+    ),
+    ("POST", "/connections/{connection_id}/agent/token"): (
+        "POST",
+        lambda t: f"/connections/{t.k8s}/agent/token",
+        _none,
+    ),
     ("GET", "/incidents/{incident_id}"): ("GET", lambda t: f"/incidents/{t.incident}", _none),
     ("POST", "/incidents/{incident_id}/fixes/{fix_id}/retry"): (
         "POST",
@@ -324,6 +334,9 @@ NOT_WORKSPACE_SCOPED = {
     ("POST", "/github/webhook"): "signed by GitHub, no user (test_github_claims.py)",
     ("GET", "/connections/aws/template"): "the public connect template",
     ("GET", "/connections/aws/template-url"): "the public connect template URL",
+    ("POST", "/agent/v1/enroll"): "a one-time join token, no user (test_remote_agents.py)",
+    ("POST", "/agent/v1/heartbeat"): "signed by the agent's key, no user (test_remote_agents.py)",
+    ("POST", "/agent/v1/inventory"): "signed by the agent's key, no user (test_remote_agents.py)",
     ("GET", "/admin/platform"): "platform operators only, 404 for others (test_abuse.py)",
     ("PUT", "/admin/platform/signups"): "platform operators only, 404 for others (test_abuse.py)",
 }

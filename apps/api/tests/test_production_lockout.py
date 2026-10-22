@@ -36,6 +36,7 @@ def _prod(**overrides: Any) -> Settings:
         "internal_jwt_secret": SecretStr("test-internal-jwt-secret-0123456789abcdef"),
         "approval_token_key": SecretStr(SECRET),
         "web_origin": "https://groundkrew.com",
+        "agent_api_url": "https://api.groundkrew.com",
         "smtp_host": "smtp.resend.com",
         # conftest turns it on for the fake API servers on 127.0.0.1.
         "k8s_allow_private_servers": None,

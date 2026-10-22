@@ -274,6 +274,7 @@ With `APP_ENV=staging` or `production`, the API and worker refuse to start until
 | `INTERNAL_JWT_SECRET` | 32+ characters, shared with the web app |
 | `APPROVAL_TOKEN_KEY` | Signs single-use approved-action tokens |
 | `WEB_ORIGIN` | The public web URL (not localhost): CORS and links in emails |
+| `AGENT_API_URL` | The public API URL Groundcrew agents call (not localhost), shown in their install command |
 | `SMTP_HOST` (and the other `SMTP_*`) | Confirmation and reset emails, when `PASSWORD_AUTH_ENABLED=true` |
 
 They also refuse to start with any local development switch set: `LIVE_SCRIPT_SELF_APPROVE`,

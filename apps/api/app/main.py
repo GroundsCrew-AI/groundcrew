@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.db.session import get_engine
 from app.log import request_id_var, setup_logging
 from app.quotas import QuotaExceededError
+from app.remote_agents import routes as remote_agents
 from app.routes import (
     admin,
     approvals,
@@ -262,7 +263,8 @@ async def validation_error(_request: Request, exc: RequestValidationError) -> JS
 
 
 # Every route except /health, /ready, and the SSE stream requires the signed-in user
-# (CurrentUser); /auth requires the web server's service token instead.
+# (CurrentUser); /auth requires the web server's service token instead, and /agent/v1 a
+# request signed by an enrolled agent (app/remote_agents).
 app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(workspace_admin.router)
@@ -275,6 +277,7 @@ app.include_router(incidents.router)
 app.include_router(evidence.router)
 app.include_router(admin.router)
 app.include_router(github_webhook.router)
+app.include_router(remote_agents.router)
 
 
 def _openapi() -> dict[str, Any]:
