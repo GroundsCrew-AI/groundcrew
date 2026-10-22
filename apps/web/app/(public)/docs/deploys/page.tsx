@@ -79,8 +79,8 @@ export default function DeploysPage() {
           head={["Stage", "Who", "What happens"]}
           rows={[
             ["Scout", "Scout", "Reads the repository: language, framework, port, health path, and the env vars the code reads."],
-            ["Build", "Builder", "Builds the image in the sandbox and starts it to check that it answers HTTP. When the build or that check fails, it reads the error and the app's output, changes the Dockerfile, and tries again, up to 5 attempts."],
-            ["Smoke", "Builder", "The result of that check for the image that will be deployed: the health path (or /) answered."],
+            ["Build", "Builder", "Builds the image in the sandbox and starts it to check that it answers HTTP. When the build fails or the app crashes or stays silent, it reads the error and the app's output, changes the Dockerfile, and tries again, up to 5 attempts. Builder never puts your env vars or credentials into the image."],
+            ["Smoke", "Builder", "The result of that check for the image that will be deployed. The sandbox cannot reach your databases, so an app that answers but reports itself unhealthy (a 503 from its health check) goes on, with a note; Verify checks health again on the target."],
             ["Plan", "Deployer", "Turns what Scout found into the exact resources for your target."],
             ["Preflight", "Deployer", "Read-only checks: the image passed, required env vars are set, names are free, the target is ready."],
             ["Approval", "You", "The plan waits for an owner or approver."],
@@ -203,8 +203,8 @@ export default function DeploysPage() {
             <strong>The daily build limit.</strong> A workspace can run 10 deploy builds a day, reset at 00:00 UTC.
           </li>
           <li>
-            <strong>Smoke test failed.</strong> The app did not answer HTTP in the sandbox after every attempt. The
-            deploy page shows the app&apos;s last output. Check the port it listens on and that it starts without
+            <strong>Smoke test failed.</strong> The app crashed or did not answer HTTP in the sandbox after every
+            attempt. The deploy page shows the app&apos;s last lines. Check the port it listens on and that it starts without
             services it cannot reach from the sandbox.
           </li>
           <li>

@@ -671,14 +671,38 @@ class _Job:
             outcome, spec, await self.smoke_env(), run_id=str(self.run.id)
         )
         checks = ", ".join(f"{c.path} {c.status_code or c.detail}" for c in result.checks)
+        if not result.ok and result.answered:
+            # The app runs and answers; its health check failed on something the sandbox
+            # does not have (its database, a queue). Verify checks health on the target.
+            note = (
+                f"The app started and answered HTTP ({checks}), but its health check did not "
+                "pass in the sandbox, which cannot reach your databases or other services. "
+                "Verify checks the health path again once it runs on the target."
+                + _last_lines(result.logs_tail)
+            )
+            await record_step(
+                self.session,
+                self.run,
+                kind="note",
+                agent="builder",
+                output_summary=summarize(note, 1500),
+            )
+            self.state["build"]["smoke"] = {"ok": True, "checks": checks, "unhealthy": True}
+            await self.stage_end(
+                "smoke", "builder", started, "succeeded", f"the app answered ({checks})"
+            )
+            return
         self.state["build"]["smoke"] = {"ok": result.ok, "checks": checks}
         if not result.ok:
             await self.stage_end("smoke", "builder", started, "failed", checks or result.detail)
-            logs = f"\n{result.logs_tail}" if result.logs_tail else ""
             await self.finish(
                 RunStatus.failed,
                 StopReason.error,
-                error=summarize(f"The smoke test failed ({checks or result.detail}).{logs}", 1500),
+                error=summarize(
+                    f"The smoke test failed: {result.detail or checks}."
+                    + _last_lines(result.logs_tail),
+                    1500,
+                ),
             )
         await self.stage_end("smoke", "builder", started, "succeeded", f"{checks} in the sandbox")
 
@@ -1111,3 +1135,12 @@ __all__ = [
     "purge_env",
     "seal_env",
 ]
+
+
+def _last_lines(logs: str | None, count: int = 4) -> str:
+    """The app's last few lines, each cut short (JSON log lines run long)."""
+    lines = [line.strip() for line in (logs or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    shown = [line if len(line) <= 240 else line[:237] + "..." for line in lines[-count:]]
+    return "\nThe app's last lines:\n" + "\n".join(shown)

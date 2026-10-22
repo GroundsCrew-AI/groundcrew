@@ -496,3 +496,53 @@ async def test_the_last_attempt_keeps_its_failed_smoke_test(tmp_path: Path) -> N
     )
     outcome, attempts, _, _ = await _run(builder, root, spec, settings, [CRASHED])
     assert outcome.ok and outcome.smoke is CRASHED and attempts[0].ok
+
+
+UNHEALTHY = SmokeResult(
+    ok=False,
+    checks=[SmokeCheck("/health", False, 503, "HTTP 503")],
+    duration_ms=60_000,
+    logs_tail='{"msg": "health check failed: database unreachable"}',
+    detail="/health did not answer 2xx/3xx within 60s (HTTP 503)",
+)
+
+
+async def test_an_app_that_answers_is_not_sent_back_to_builder(tmp_path: Path) -> None:
+    """A 503 from the health check is the sandbox having no database, not the Dockerfile."""
+    settings = _settings()
+    root, spec = _app(tmp_path)
+    llm = FakeLLM(write(), settings=settings)
+    builder = Builder(llm, ScriptedSandbox(OK), sleep=no_sleep)
+    outcome, attempts, _, _ = await _run(builder, root, spec, settings, [UNHEALTHY])
+    assert outcome.ok and outcome.smoke is UNHEALTHY and len(attempts) == 1 and attempts[0].ok
+    assert len(llm.requests) == 1  # no fix asked for
+
+
+def test_runtime_env_never_goes_into_the_image() -> None:
+    from app.agents.builder.builder import drop_runtime_env
+
+    dockerfile = (
+        "FROM python:3.12-slim\n"
+        "ENV PYTHONUNBUFFERED=1 DATABASE_URL=postgresql://user:pass@localhost/db\n"
+        "ENV STRIPE_API_KEY placeholder\n"
+        "ENV FEATURE_FLAGS=on LOG_LEVEL=info\n"
+        'CMD ["gunicorn", "app:app"]\n'
+    )
+    text, removed = drop_runtime_env(dockerfile, {"FEATURE_FLAGS"})
+    assert removed == ["DATABASE_URL", "STRIPE_API_KEY", "FEATURE_FLAGS"]
+    assert text == (
+        "FROM python:3.12-slim\n"
+        "ENV PYTHONUNBUFFERED=1\n"
+        "ENV LOG_LEVEL=info\n"
+        'CMD ["gunicorn", "app:app"]\n'
+    )
+
+
+async def test_builder_removes_placeholder_env_and_says_so(tmp_path: Path) -> None:
+    settings = _settings()
+    root, spec = _app(tmp_path)
+    llm = FakeLLM(write(NAIVE + "ENV DATABASE_URL=sqlite:///tmp.db\n"), settings=settings)
+    builder = Builder(llm, ScriptedSandbox(OK), sleep=no_sleep)
+    outcome, _, notes, _ = await _run(builder, root, spec, settings)
+    assert "DATABASE_URL" not in outcome.dockerfile
+    assert notes and notes[0].startswith("Removed ENV DATABASE_URL from the Dockerfile")

@@ -196,6 +196,50 @@ def _shell_word(arg: str) -> str:
     return shlex.quote(arg)
 
 
+_ENV_LINE = re.compile(r"(?im)^(\s*)ENV\s+(.+?)\s*$")
+# Names that are a service's address or a credential: they come from the deploy, never the image.
+_RUNTIME_ONLY = re.compile(r"(?i)(_URL|_URI|_DSN|PASSWORD|SECRET|TOKEN|_KEY)$|^DATABASE")
+# The app's env vars an image may still set: how it serves, not what it connects to.
+_GONE = "\x00"
+_IMAGE_ENV = {"PORT", "HOST", "PATH", "PYTHONPATH", "PYTHONUNBUFFERED", "NODE_ENV", "TZ", "LANG"}
+
+
+def drop_runtime_env(dockerfile: str, app_env: set[str]) -> tuple[str, list[str]]:
+    """Remove ENV settings for the app's own env vars (Scout's list) and for anything that
+    names a service or a credential. A placeholder baked into the image (DATABASE_URL to make
+    the smoke test pass) would reach production; these values come from the deploy."""
+    removed: list[str] = []
+
+    def keep(name: str) -> bool:
+        if name.upper() in _IMAGE_ENV:
+            return True
+        if name in app_env or _RUNTIME_ONLY.search(name):
+            removed.append(name)
+            return False
+        return True
+
+    def rewrite(m: re.Match[str]) -> str:
+        body = m.group(2)
+        if body.endswith("\\"):
+            return m.group(0)  # continued on the next line: left as written
+        try:
+            words = shlex.split(body, posix=False)
+        except ValueError:
+            return m.group(0)
+        if not words:
+            return m.group(0)
+        if "=" not in words[0]:
+            # ENV NAME value (the legacy form): one variable.
+            return m.group(0) if keep(words[0]) else _GONE
+        kept = [w for w in words if keep(w.split("=", 1)[0])]
+        if len(kept) == len(words):
+            return m.group(0)
+        return f"{m.group(1)}ENV {' '.join(kept)}" if kept else _GONE
+
+    lines = _ENV_LINE.sub(rewrite, dockerfile).split("\n")
+    return "\n".join(line for line in lines if line != _GONE), removed
+
+
 def expand_exec_variables(dockerfile: str) -> str:
     """Docker runs exec-form CMD and ENTRYPOINT (["uvicorn", "--port", "${PORT:-8080}"])
     without a shell, so a variable there reaches the app as the literal text. Such a line
@@ -359,7 +403,7 @@ class Builder:
             draft: DockerfileDraft = result.parsed
             source, current, rationale = (
                 "generated",
-                clean_dockerfile(draft.dockerfile),
+                await self._without_runtime_env(clean_dockerfile(draft.dockerfile), spec, on_note),
                 draft.rationale,
             )
             model_call = _model_call(result, recorder, "write_dockerfile")
@@ -389,8 +433,12 @@ class Builder:
                 )
                 if check is not None:
                     outcome.smoke = await check(outcome)
-                    if not outcome.smoke.ok and number < self.max_attempts:
-                        built = smoke_failure(outcome.smoke, built)
+                    # An app that answers HTTP runs; a 5xx from its health check is about
+                    # what it connects to (a database the sandbox cannot reach), which no
+                    # Dockerfile change fixes. A crash or silence goes back to Builder.
+                    smoke = outcome.smoke
+                    if not smoke.ok and not smoke.answered and number < self.max_attempts:
+                        built = smoke_failure(smoke, built)
             attempt = BuildAttempt(
                 attempt=number,
                 max_attempts=self.max_attempts,
@@ -467,7 +515,9 @@ class Builder:
                 escalate=number + 1 >= ESCALATE_FROM_ATTEMPT,
             )
             fix: DockerfileFix = result.parsed
-            fixed_text = clean_dockerfile(fix.dockerfile)
+            fixed_text = await self._without_runtime_env(
+                clean_dockerfile(fix.dockerfile), spec, on_note
+            )
             if fixed_text.strip() == current.strip():
                 return self._stopped(
                     attempts, current, "no_progress", spec, "The fix returned the same Dockerfile."
@@ -478,6 +528,18 @@ class Builder:
             model_call = _model_call(result, recorder, "fix_build")
             path = self._write(root, current)
         raise AssertionError("unreachable")  # pragma: no cover
+
+    @staticmethod
+    async def _without_runtime_env(
+        dockerfile: str, spec: AppSpec, on_note: Callable[[str], Awaitable[None]]
+    ) -> str:
+        text, removed = drop_runtime_env(dockerfile, {e.name for e in spec.env_vars})
+        if removed:
+            await on_note(
+                f"Removed ENV {', '.join(removed)} from the Dockerfile: the app's settings and "
+                "credentials come from the deploy at run time, never from the image."
+            )
+        return text
 
     @staticmethod
     def _stopped(

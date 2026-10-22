@@ -143,6 +143,8 @@ Python package that compiles C code needs gcc and the library's dev headers).
 - When the failing step is the smoke test, the image built but the app did not start or \
 answer: read its output and fix how it runs (CMD or ENTRYPOINT, files and installed packages \
 in the final stage, the port it listens on, binding 0.0.0.0).
+- Never set the app's env vars in the Dockerfile, not even placeholders (DATABASE_URL, API keys): \
+they come from the deploy at run time, and Groundcrew removes such ENV lines.
 - No secrets, no ARG or ENV with credentials. Do not download and run scripts from the internet.
 Return the whole corrected Dockerfile, the lines you changed, and the kind of fix."""
 

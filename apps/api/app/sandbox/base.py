@@ -73,6 +73,11 @@ class SmokeResult:
     logs_tail: str | None = None
     detail: str = ""
 
+    @property
+    def answered(self) -> bool:
+        """The app answered HTTP (any status): the image runs and listens on its port."""
+        return any(c.status_code for c in self.checks)
+
 
 @dataclass(frozen=True)
 class RegistryLogin:

@@ -49,9 +49,17 @@ FIXED = "FROM python:3.12-slim\nRUN apt-get install -y libpq-dev gcc\n" + NAIVE.
 class Sandbox:
     """Builds fail once on psycopg2, then pass; every call is logged in `events`."""
 
-    def __init__(self, events: list[str], *, failures: int = 1, same_error: bool = False) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        failures: int = 1,
+        same_error: bool = False,
+        smoke: SmokeResult | None = None,
+    ) -> None:
         self.events = events
         self.failures = failures
+        self.smoke = smoke
         self.builds = 0
 
     async def build(
@@ -77,6 +85,8 @@ class Sandbox:
         health_path: str | None = None,
     ) -> SmokeResult:
         self.events.append("smoke " + ",".join(sorted(e.name for e in env)))
+        if self.smoke is not None:
+            return self.smoke
         return SmokeResult(True, [SmokeCheck(health_path or "/", True, 200, "HTTP 200")], 5)
 
     async def push(self, image_ref: str, target: PushTarget) -> PushResult:
@@ -664,3 +674,29 @@ async def test_a_workspace_out_of_builds_stops_before_building(
     assert run.status == RunStatus.failed and run.stop_reason == "budget"
     assert "limit of 0 deploy builds today" in (run.error or "")
     assert not [e for e in stack.events if e.startswith("build")]
+
+
+async def test_an_app_that_answers_but_is_unhealthy_in_the_sandbox_goes_on(
+    client: httpx.AsyncClient, alice: Member, session_factory: SessionFactory
+) -> None:
+    """Its health check needs the database, which the sandbox cannot reach: the image is fine,
+    the run says why the check failed, and Verify checks health on the target."""
+    unhealthy = SmokeResult(
+        False,
+        [SmokeCheck("/health", False, 503, "HTTP 503")],
+        60_000,
+        logs_tail='{"msg": "health check failed: database unreachable"}',
+        detail="/health did not answer 2xx/3xx within 60s (HTTP 503)",
+    )
+    stack = Stack(session_factory, alice, smoke=unhealthy)
+    k8s = await _connection(
+        session_factory, alice.workspace_id, "k8s", "kind", {"cluster": "kind-test"}
+    )
+    deploy_id = await _start(client, alice, k8s, [])
+    await stack.drain()
+    run = await _run(session_factory, deploy_id)
+    assert run.status == RunStatus.waiting_approval
+    steps = await _steps(session_factory, deploy_id)
+    assert [s.data["ok"] for s in steps if s.kind == "build_attempt"] == [False, True]
+    notes = [s.output_summary or "" for s in steps if s.kind == "note"]
+    assert any("cannot reach your databases" in n and "database unreachable" in n for n in notes)
