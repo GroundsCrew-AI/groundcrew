@@ -8,7 +8,7 @@ Brief: `docs/prompts/agent.md`. Plan: `docs/agent-plan.md`.
 | A1 Enroll and report | live (release `45620dfed954`); real VM install still to try | #63 (draft) |
 | A2 Signals and Medic | live (release `88e2de779068`) | #63 |
 | A3 Approved fixes (restart) | live (release `88e2de779068`) | #63 |
-| A4a Rollback, systemd restarts | built, tested locally, not deployed | #63 |
+| A4a Rollback, systemd restarts | live (release `9b12c7a2be14`) | #63 |
 | A4b Deploys through the agent | | |
 | A5 Packaging | | |
 
