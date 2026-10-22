@@ -291,7 +291,8 @@ Build, Medic, and setup fixes (2026-10-22): release `e111b5269f33` live, `57f18b
   images for af3758a pushed, migrations run, services back on revision 31. The checkout-demo repository
   variables ECS_SUBNETS and ECS_TASK_SECURITY_GROUP still name the old VPC.
 
-Medic diagnosis grounding (2026-10-22, not deployed yet): from the legacy-flask-app incident,
+Medic diagnosis grounding (2026-10-22): release `c4c492349fda` live, `e111b5269f33` kept for rollback.
+From the legacy-flask-app incident,
 where Medic blamed task definition :3 with high confidence for gunicorn "no URI read" worker
 timeouts although the worker settings had not changed, and never read why the service was unhealthy.
 - ECS reader (`app/telemetry/ecs.py`) now also reads the running tasks' health, the service's
