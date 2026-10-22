@@ -1,0 +1,23 @@
+# Groundcrew agent configuration. After a change: sudo groundcrew-agent check, then
+# sudo systemctl restart groundcrew-agent.
+groundcrew:
+  url: https://api.groundkrew.com
+
+# List the services the agent watches. Nothing is allowed unless a service's `allow` lists it,
+# and every action still needs an approval in Groundcrew.
+services: []
+#  - name: web                     # how it shows in Groundcrew
+#    runtime: docker               # docker | compose | systemd
+#    container: web                # docker: the container name
+#    health:
+#      url: http://127.0.0.1:8000/health
+#    logs: container
+#    allow: [restart]              # restart | rollback | deploy (systemd: restart only)
+#
+#  - name: shop
+#    runtime: compose
+#    compose: {project: shop, service: web}
+#
+#  - name: nginx
+#    runtime: systemd
+#    unit: nginx.service
