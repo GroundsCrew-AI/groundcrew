@@ -1,6 +1,8 @@
 // Package agent runs the reporting loop: a heartbeat every 30 seconds (or what
 // Groundcrew asks for), and the inventory when it changes, plus every 15
-// minutes so Groundcrew catches up after a restart on its side.
+// minutes so Groundcrew catches up after a restart on its side. The heartbeat
+// also brings Groundcrew's command key (pinned on first sight) and how often
+// the watcher should report.
 package agent
 
 import (
@@ -11,6 +13,8 @@ import (
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/client"
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/config"
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/inventory"
+	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/state"
+	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/watch"
 )
 
 const (
@@ -28,10 +32,14 @@ type Agent struct {
 	Systemd inventory.Inspector
 	Log     *slog.Logger
 	Version string
+	// Optional: where the command key is pinned, and the watcher to tune.
+	State   *state.Dir
+	Watcher *watch.Watcher
 
-	started  time.Time
-	sentHash string
-	sentAt   time.Time
+	started   time.Time
+	keyWarned bool
+	sentHash  string
+	sentAt    time.Time
 }
 
 type heartbeatIn struct {
@@ -41,7 +49,9 @@ type heartbeatIn struct {
 
 type heartbeatOut struct {
 	HeartbeatSeconds int     `json:"heartbeat_seconds"`
+	EventsSeconds    int     `json:"events_seconds"`
 	InventoryHash    *string `json:"inventory_hash"`
+	CommandKey       *string `json:"command_key"`
 }
 
 type inventoryOut struct {
@@ -75,6 +85,7 @@ func (a *Agent) Run(ctx context.Context) error {
 					every = time.Duration(out.HeartbeatSeconds) * time.Second
 					wait = every
 				}
+				a.apply(out)
 				if out.InventoryHash == nil && a.sentHash != "" {
 					// Groundcrew holds no inventory (the connection was reset): send it again.
 					a.sentHash = ""
@@ -93,6 +104,21 @@ func (a *Agent) Run(ctx context.Context) error {
 			return nil
 		case <-time.After(time.Until(next)):
 		}
+	}
+}
+
+// apply takes what the heartbeat answer asks for: the report interval, and
+// Groundcrew's command key to pin.
+func (a *Agent) apply(out heartbeatOut) {
+	if a.Watcher != nil && out.EventsSeconds > 0 {
+		a.Watcher.SetEvery(time.Duration(out.EventsSeconds) * time.Second)
+	}
+	if a.State == nil || out.CommandKey == nil {
+		return
+	}
+	if _, err := a.State.PinCommandKey(*out.CommandKey); err != nil && !a.keyWarned {
+		a.keyWarned = true
+		a.Log.Error("commands from Groundcrew will be refused", "error", err)
 	}
 }
 

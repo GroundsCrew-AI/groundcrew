@@ -63,6 +63,10 @@ if [ "$DOCKER" = yes ] && getent group docker >/dev/null; then
   say "added groundcrew-agent to the docker group, so it can read containers."
   say "note: docker group members can control Docker, which is root-equivalent on this host."
 fi
+if getent group systemd-journal >/dev/null; then
+  # Reads the journal of the systemd units you list (their error lines go to Groundcrew).
+  usermod -aG systemd-journal groundcrew-agent
+fi
 install -d -m 0700 -o groundcrew-agent -g groundcrew-agent /var/lib/groundcrew-agent
 install -d -m 0755 /etc/groundcrew-agent
 CONFIG=/etc/groundcrew-agent/agent.yaml

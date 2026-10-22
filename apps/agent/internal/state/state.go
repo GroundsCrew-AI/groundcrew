@@ -7,17 +7,20 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
 	keyFile        = "key.pem"
 	enrollmentFile = "enrollment.json"
+	commandKeyFile = "command_key"
 )
 
 // Enrollment is what Groundcrew answered when the agent enrolled.
@@ -114,4 +117,49 @@ func writeFile(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// ErrCommandKeyChanged means Groundcrew sent a command key other than the one
+// pinned: commands are refused until the agent is enrolled again.
+var ErrCommandKeyChanged = errors.New("Groundcrew's command key changed since it was pinned: enroll the agent again to trust the new key")
+
+// PinCommandKey stores Groundcrew's command key the first time it is seen and
+// returns the pinned key; a different key later is ErrCommandKeyChanged.
+func (d Dir) PinCommandKey(b64 string) (ed25519.PublicKey, error) {
+	key, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || len(key) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("not an Ed25519 public key: %q", b64)
+	}
+	if pinned, err := d.CommandKey(); err == nil && pinned != nil {
+		if !pinned.Equal(ed25519.PublicKey(key)) {
+			return pinned, ErrCommandKeyChanged
+		}
+		return pinned, nil
+	}
+	return key, writeFile(filepath.Join(d.Path, commandKeyFile), []byte(b64+"\n"))
+}
+
+// CommandKey is the pinned key, or nil before the first heartbeat.
+func (d Dir) CommandKey() (ed25519.PublicKey, error) {
+	data, err := os.ReadFile(filepath.Join(d.Path, commandKeyFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil || len(key) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("%s is not an Ed25519 public key", commandKeyFile)
+	}
+	return key, nil
+}
+
+// ClearCommandKey forgets the pinned key (a new enrollment trusts the key it gets next).
+func (d Dir) ClearCommandKey() error {
+	err := os.Remove(filepath.Join(d.Path, commandKeyFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }

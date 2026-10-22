@@ -25,9 +25,12 @@ import (
 
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/agent"
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/client"
+	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/commands"
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/config"
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/inventory"
+	agentrt "github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/runtime"
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/state"
+	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/watch"
 )
 
 // version is set at build time: -ldflags "-X main.version=0.1.0".
@@ -88,12 +91,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func inspectors(cfg *config.Config) (inventory.Inspector, inventory.Inspector) {
-	return inventory.NewDocker(cfg.Docker.Socket), inventory.NewSystemd()
+func runtimes(cfg *config.Config) (agentrt.Runtime, agentrt.Runtime) {
+	return agentrt.NewDocker(cfg.Docker.Socket), agentrt.NewSystemd()
 }
 
 func check(cfg *config.Config, w io.Writer) error {
-	docker, systemd := inspectors(cfg)
+	docker, systemd := runtimes(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	inv := inventory.Collect(ctx, cfg, docker, systemd)
@@ -162,6 +165,10 @@ func enroll(cfg *config.Config, token string, w io.Writer) error {
 		return fmt.Errorf("enrollment failed: %w", err)
 	}
 	// Stored only now: a refused token leaves the working key and enrollment as they were.
+	// A new enrollment trusts the command key its first heartbeat brings.
+	if err := dir.ClearCommandKey(); err != nil {
+		return err
+	}
 	if err := dir.SaveKey(key); err != nil {
 		return fmt.Errorf("enrolled, but cannot write the key to %s: %w", cfg.StateDir, err)
 	}
@@ -188,17 +195,39 @@ func serve(cfg *config.Config) error {
 	if e.URL != cfg.Groundcrew.URL {
 		return fmt.Errorf("enrolled with %s, but the configuration says %s: enroll again with a new token", e.URL, cfg.Groundcrew.URL)
 	}
-	docker, systemd := inspectors(cfg)
+	docker, systemd := runtimes(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	c := client.New(cfg.Groundcrew.URL, e.AgentID, key, userAgent())
+	w := &watch.Watcher{Config: cfg, Docker: docker, Systemd: systemd, Client: c, Log: log}
+	runner := &commands.Runner{
+		Config:  cfg,
+		AgentID: e.AgentID,
+		Client:  c,
+		Docker:  docker,
+		Systemd: systemd,
+		Log:     log,
+		After:   w.Kick,
+		Key: func() ed25519.PublicKey {
+			k, err := dir.CommandKey()
+			if err != nil {
+				log.Error("cannot read the pinned command key", "error", err)
+			}
+			return k
+		},
+	}
 	a := &agent.Agent{
 		Config:  cfg,
-		Client:  client.New(cfg.Groundcrew.URL, e.AgentID, key, userAgent()),
+		Client:  c,
 		Docker:  docker,
 		Systemd: systemd,
 		Log:     log,
 		Version: version,
+		State:   &dir,
+		Watcher: w,
 	}
+	go w.Run(ctx)
+	go runner.Run(ctx)
 	return a.Run(ctx)
 }
 
