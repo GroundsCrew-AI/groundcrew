@@ -11,6 +11,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   k8s: "Kubernetes",
   vercel: "Vercel",
   vm: "VM",
+  agent: "Agent",
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -25,6 +26,8 @@ const TYPE_LABELS: Record<string, string> = {
   "ec2:security-group": "Security group",
   "ec2:vpc": "VPC",
   "ec2:instance": "EC2 instance",
+  "agent:host": "Server",
+  "agent:service": "Service",
   "lambda:function": "Lambda function",
   "s3:bucket": "S3 bucket",
   "sqs:queue": "SQS queue",

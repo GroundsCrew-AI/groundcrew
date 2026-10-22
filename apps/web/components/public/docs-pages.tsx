@@ -17,6 +17,7 @@ export const DOCS_GROUPS: DocsGroup[] = [
       { href: "/docs/connect/github", title: "GitHub" },
       { href: "/docs/connect/vercel", title: "Vercel" },
       { href: "/docs/connect/kubernetes", title: "Kubernetes" },
+      { href: "/docs/connect/agent", title: "Servers (agent)" },
     ],
   },
   {

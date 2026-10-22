@@ -14,6 +14,7 @@ import { AwsRegionsDialog } from "./aws-regions-dialog";
 import { K8sConfigMapsDialog } from "./k8s-configmaps-dialog";
 import { K8sDeploySettingsDialog } from "./k8s-deploy-settings-dialog";
 import { K8sOperateDialog } from "./k8s-operate-dialog";
+import { AgentConnectDialog } from "./agent-connect-dialog";
 import { AwsTierDialog } from "./aws-tier-dialog";
 import { RemoveConnection } from "./remove-connection";
 
@@ -29,6 +30,12 @@ export function connectionStatus(connection: Connection): {
   color: string;
 } {
   if (connection.preview) return STATUS.preview!;
+  if (connection.kind === "agent") {
+    if (!connection.agent?.enrolled)
+      return { label: "Waiting for the agent", color: "var(--status-waiting)" };
+    if (!connection.agent.online)
+      return { label: "Offline", color: "var(--status-failed)" };
+  }
   return STATUS[connection.status] ?? STATUS.error!;
 }
 
@@ -49,6 +56,18 @@ function detail(connection: Connection): string {
         : "Personal account";
     case "azure":
       return `Resource group ${connection.resource_group ?? ""}`;
+    case "agent": {
+      const agent = connection.agent;
+      if (!agent?.enrolled) return "Install the agent with its join token";
+      return [
+        agent.hostname,
+        `${agent.services} ${agent.services === 1 ? "service" : "services"}`,
+        agent.version && `agent ${agent.version}`,
+        !agent.online && agent.last_seen_at && `last seen ${formatRelative(agent.last_seen_at)}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    }
     default:
       return connection.server ?? "";
   }
@@ -97,6 +116,7 @@ export function ConnectionRow({
   const [regionsOpen, setRegionsOpen] = useState(false);
   const [deployOpen, setDeployOpen] = useState(false);
   const [configMapsOpen, setConfigMapsOpen] = useState(false);
+  const [tokenOpen, setTokenOpen] = useState(false);
   const awsConnected =
     connection.kind === "aws" && connection.status === "connected";
   const k8sConnected =
@@ -269,12 +289,29 @@ export function ConnectionRow({
               : "Enable emergency fixes"}
           </Button>
         )}
+        {connection.kind === "agent" && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setTokenOpen(true)}
+            {...ownerOnly}
+          >
+            New join token
+          </Button>
+        )}
         <RemoveConnection
           connection={connection}
           disabled={!canManage}
           describedBy={ownerOnly["aria-describedby"]}
         />
       </div>
+      {connection.kind === "agent" && tokenOpen && (
+        <AgentConnectDialog
+          connection={connection}
+          open
+          onOpenChange={setTokenOpen}
+        />
+      )}
       {awsConnected && tierOpen && (
         <AwsTierDialog
           connection={connection}

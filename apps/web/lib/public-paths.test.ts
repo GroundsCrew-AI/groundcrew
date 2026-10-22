@@ -7,10 +7,13 @@ describe("isPublicPath", () => {
     for (const path of PUBLIC_PATHS) expect(isPublicPath(path), path).toBe(true);
     expect(isPublicPath("/docs/connect/aws")).toBe(true);
     expect(isPublicPath("/terms/")).toBe(true);
+    for (const file of ["install.sh", "SHA256SUMS", "groundcrew-agent-linux-amd64", "groundcrew-agent.service"]) {
+      expect(isPublicPath(`/agent/${file}`), file).toBe(true);
+    }
   });
 
   it("keeps everything else behind sign-in", () => {
-    for (const path of ["/", "/settings", "/runs/123", "/terms-x", "/docsx", "/api/gc/me", "/welcome/../settings", "/docs/../settings", "/docs/./x"]) {
+    for (const path of ["/", "/settings", "/runs/123", "/terms-x", "/docsx", "/api/gc/me", "/welcome/../settings", "/docs/../settings", "/docs/./x", "/agent", "/agent/", "/agent/../settings", "/agent/a/b"]) {
       expect(isPublicPath(path), path).toBe(false);
     }
   });

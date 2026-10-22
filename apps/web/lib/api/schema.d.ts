@@ -41,6 +41,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/v1/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enroll
+         * @description Trade a one-time join token for this agent's place in the workspace. A new token for an
+         *     enrolled agent (a reinstall) replaces its key.
+         */
+        post: operations["enroll_agent_v1_enroll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Heartbeat */
+        post: operations["heartbeat_agent_v1_heartbeat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inventory
+         * @description The services the agent watches. A change is stored and starts a discovery of this
+         *     connection, which puts them on the Map (and marks services no longer listed as stale).
+         */
+        post: operations["inventory_agent_v1_inventory_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/approvals/{approval_id}/decide": {
         parameters: {
             query?: never;
@@ -272,6 +331,27 @@ export interface paths {
         get: operations["list_connections_connections_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent Connect
+         * @description Add a Groundcrew agent: a connection that waits for the agent to enroll with the one-time
+         *     join token returned here (shown once; only its hash is kept).
+         */
+        post: operations["agent_connect_connections_agent_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -525,6 +605,27 @@ export interface paths {
          *     removed by them: see `cleanup`.
          */
         delete: operations["delete_connection_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connection_id}/agent/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent New Token
+         * @description A new join token (the old one stops working): to finish a setup whose token expired, or
+         *     to reinstall the agent, whose new key then replaces the old one.
+         */
+        post: operations["agent_new_token_connections__connection_id__agent_token_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1489,6 +1590,64 @@ export interface components {
             /** Summary */
             summary: string;
         };
+        /** AgentConnectIn */
+        AgentConnectIn: {
+            /**
+             * Name
+             * @example web-1 (Hetzner)
+             */
+            name: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /**
+         * AgentJoinOut
+         * @description A new agent connection (or a new token for one). The token is shown only here.
+         */
+        AgentJoinOut: {
+            /** Api Url */
+            api_url: string;
+            connection: components["schemas"]["ConnectionOut"];
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Token */
+            token: string;
+        };
+        /**
+         * AgentOut
+         * @description A Groundcrew agent's state (connection kind `agent`).
+         */
+        AgentOut: {
+            /** Arch */
+            arch?: string | null;
+            /** Enrolled */
+            enrolled: boolean;
+            /** Enrolled At */
+            enrolled_at?: string | null;
+            /** Hostname */
+            hostname?: string | null;
+            /** Join Expires At */
+            join_expires_at?: string | null;
+            /** Last Seen At */
+            last_seen_at?: string | null;
+            /** Online */
+            online: boolean;
+            /** Os */
+            os?: string | null;
+            /**
+             * Services
+             * @default 0
+             */
+            services: number;
+            /** Version */
+            version?: string | null;
+        };
         /** ApprovalOut */
         ApprovalOut: {
             /** Arguments */
@@ -1912,13 +2071,14 @@ export interface components {
          * ConnectionKind
          * @enum {string}
          */
-        ConnectionKind: "aws" | "github" | "vercel" | "azure" | "k8s";
+        ConnectionKind: "aws" | "github" | "vercel" | "azure" | "k8s" | "agent";
         /** ConnectionOut */
         ConnectionOut: {
             /** Access */
             access?: string[];
             /** Account */
             account?: string | null;
+            agent?: components["schemas"]["AgentOut"] | null;
             /** Capabilities */
             capabilities?: ("observe" | "deploy" | "operate")[] | null;
             /** Configmap Changes */
@@ -2403,6 +2563,49 @@ export interface components {
              */
             email: string;
         };
+        /** EnrollIn */
+        EnrollIn: {
+            /** Arch */
+            arch: string;
+            /** Hostname */
+            hostname: string;
+            /** Os */
+            os: string;
+            /**
+             * Public Key
+             * @description Base64 of the raw Ed25519 public key
+             */
+            public_key: string;
+            /** Token */
+            token: string;
+            /** Version */
+            version: string;
+        };
+        /** EnrollOut */
+        EnrollOut: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /**
+             * Heartbeat Seconds
+             * @default 30
+             */
+            heartbeat_seconds: number;
+            /**
+             * Inventory Seconds
+             * @default 60
+             */
+            inventory_seconds: number;
+            /** Name */
+            name: string;
+        };
         /** EnvVarIn */
         EnvVarIn: {
             /**
@@ -2821,6 +3024,47 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** HeartbeatIn */
+        HeartbeatIn: {
+            /** Config Hash */
+            config_hash?: string | null;
+            /** Uptime Seconds */
+            uptime_seconds: number;
+            /** Version */
+            version: string;
+        };
+        /** HeartbeatOut */
+        HeartbeatOut: {
+            /**
+             * Heartbeat Seconds
+             * @default 30
+             */
+            heartbeat_seconds: number;
+            /** Inventory Hash */
+            inventory_hash?: string | null;
+        };
+        /** HostFacts */
+        HostFacts: {
+            /**
+             * Arch
+             * @example amd64
+             */
+            arch: string;
+            /**
+             * Distribution
+             * @example Ubuntu 24.04
+             */
+            distribution?: string | null;
+            /** Hostname */
+            hostname: string;
+            /** Kernel */
+            kernel?: string | null;
+            /**
+             * Os
+             * @example linux
+             */
+            os: string;
+        };
         /**
          * IncidentCreate
          * @description "Report incident": a person (or the watcher) names what is broken.
@@ -3218,6 +3462,19 @@ export interface components {
              * @enum {string}
              */
             type: "incident_updated";
+        };
+        /** Inventory */
+        Inventory: {
+            host: components["schemas"]["HostFacts"];
+            /** Services */
+            services?: components["schemas"]["ServiceFacts"][];
+        };
+        /** InventoryOut */
+        InventoryOut: {
+            /** Changed */
+            changed: boolean;
+            /** Discovery Run Id */
+            discovery_run_id?: string | null;
         };
         /** InviteOut */
         InviteOut: {
@@ -4245,6 +4502,44 @@ export interface components {
             /** Ultra Equiv Usd */
             ultra_equiv_usd?: number | null;
         };
+        /** ServiceFacts */
+        ServiceFacts: {
+            /** Allow */
+            allow?: ("restart" | "rollback" | "deploy")[];
+            /** Deploy Image */
+            deploy_image?: string | null;
+            /**
+             * Found
+             * @default true
+             */
+            found: boolean;
+            /** Health Url */
+            health_url?: string | null;
+            /** Image */
+            image?: string | null;
+            /** Image Digest */
+            image_digest?: string | null;
+            /** Logs */
+            logs?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Ports
+             * @example [
+             *       "8000/tcp"
+             *     ]
+             */
+            ports?: string[];
+            /** Problem */
+            problem?: string | null;
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "docker" | "compose" | "systemd";
+            /** Target */
+            target: string;
+        };
         /** SignIn */
         SignIn: {
             /**
@@ -4849,6 +5144,105 @@ export interface operations {
             };
         };
     };
+    enroll_agent_v1_enroll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnrollIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    heartbeat_agent_v1_heartbeat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeartbeatIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeartbeatOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inventory_agent_v1_inventory_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Inventory"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     decide_approvals__approval_id__decide_post: {
         parameters: {
             query?: never;
@@ -5274,6 +5668,41 @@ export interface operations {
             };
         };
     };
+    agent_connect_connections_agent_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentConnectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJoinOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     aws_complete_connections_aws_complete_post: {
         parameters: {
             query?: never;
@@ -5667,6 +6096,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_new_token_connections__connection_id__agent_token_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJoinOut"];
                 };
             };
             /** @description Validation Error */

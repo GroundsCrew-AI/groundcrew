@@ -291,6 +291,32 @@ export function useConnectVercel() {
   });
 }
 
+export type AgentJoin = Schemas["AgentJoinOut"];
+
+/** Add a Groundcrew agent: the answer holds its one-time join token. */
+export function useConnectAgent() {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async (body: Schemas["AgentConnectIn"]) =>
+      unwrap(await api.POST("/connections/agent", { body })),
+    onSuccess: (_data, body) => invalidate(body.workspace_id),
+  });
+}
+
+/** A new join token for an agent connection (the old one stops working). */
+export function useAgentToken() {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async (connection: Connection) =>
+      unwrap(
+        await api.POST("/connections/{connection_id}/agent/token", {
+          params: { path: { connection_id: connection.id } },
+        }),
+      ),
+    onSuccess: (_data, connection) => invalidate(connection.workspace_id),
+  });
+}
+
 export function useConnectAzure() {
   const invalidate = useInvalidateWorkspace();
   return useMutation({
