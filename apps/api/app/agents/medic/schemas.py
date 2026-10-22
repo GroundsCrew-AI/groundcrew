@@ -29,6 +29,7 @@ FixOptionKind = Literal[
     "k8s_rollout_undo",
     "k8s_rollout_restart",
     "agent_restart_service",
+    "agent_rollback_service",
     "other",
 ]
 

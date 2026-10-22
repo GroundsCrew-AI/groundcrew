@@ -60,6 +60,12 @@ class ServiceState(_Strict):
     health_failures: int = Field(default=0, ge=0)
     health_detail: str | None = Field(default=None, max_length=300)
     image_digest: str | None = Field(default=None, max_length=100)
+    # Docker and Compose: the image reference and local id it runs, and the one it ran before
+    # that is still on the host (what a rollback goes back to).
+    image: str | None = Field(default=None, max_length=500)
+    image_id: str | None = Field(default=None, max_length=100)
+    previous_image: str | None = Field(default=None, max_length=500)
+    previous_image_id: str | None = Field(default=None, max_length=100)
 
 
 class EventIn(_Strict):
@@ -82,6 +88,13 @@ def describe(s: ServiceState) -> str:
     if s.state not in RUNNING and s.exit_code is not None:
         text += f" (exit code {s.exit_code}{', OOM killed' if s.oom_killed else ''})"
     return text
+
+
+def image_label(ref: str | None, image_id: str | None) -> str:
+    """ "web:2@0a1b2c3d4e5f": the reference and the short local id (the same text the agent
+    uses in its image change events)."""
+    short = (image_id or "").removeprefix("sha256:")[:12]
+    return f"{ref or '?'}@{short}"
 
 
 def service_signals(

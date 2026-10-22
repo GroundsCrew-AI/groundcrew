@@ -7,7 +7,7 @@
 # the named build context `agent-src` (apps/agent): docker build --build-context
 # agent-src=apps/agent ... (infra/platform/host/bin/gc-release does).
 FROM golang:1.23-bookworm AS agent
-ARG AGENT_VERSION=0.2.0
+ARG AGENT_VERSION=0.3.0
 WORKDIR /src
 COPY --from=agent-src . .
 RUN set -eu; mkdir -p /out; \

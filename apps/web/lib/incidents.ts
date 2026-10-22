@@ -101,6 +101,7 @@ const ACTIONS: Record<string, string> = {
   k8s_rollout_undo: "Roll back Deployment",
   k8s_rollout_restart: "Restart Deployment",
   agent_restart_service: "Restart service on server",
+  agent_rollback_service: "Roll back service on server",
   pull_request: "Fix pull request",
 };
 

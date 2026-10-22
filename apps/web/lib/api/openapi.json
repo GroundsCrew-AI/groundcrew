@@ -72,7 +72,8 @@
               "ec2_reboot_instance",
               "k8s_rollout_undo",
               "k8s_rollout_restart",
-              "agent_restart_service"
+              "agent_restart_service",
+              "agent_rollback_service"
             ],
             "title": "Action",
             "type": "string"
@@ -150,7 +151,8 @@
               "ec2_reboot_instance",
               "k8s_rollout_undo",
               "k8s_rollout_restart",
-              "agent_restart_service"
+              "agent_restart_service",
+              "agent_rollback_service"
             ],
             "title": "Action",
             "type": "string"
@@ -3383,6 +3385,7 @@
               "k8s_rollout_undo",
               "k8s_rollout_restart",
               "agent_restart_service",
+              "agent_rollback_service",
               "other"
             ],
             "title": "Kind",
@@ -6685,7 +6688,8 @@
                   "ec2_reboot_instance",
                   "k8s_rollout_undo",
                   "k8s_rollout_restart",
-                  "agent_restart_service"
+                  "agent_restart_service",
+                  "agent_rollback_service"
                 ],
                 "type": "string"
               },
@@ -8371,6 +8375,18 @@
             "title": "Health Failures",
             "type": "integer"
           },
+          "image": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          },
           "image_digest": {
             "anyOf": [
               {
@@ -8383,6 +8399,18 @@
             ],
             "title": "Image Digest"
           },
+          "image_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Id"
+          },
           "name": {
             "maxLength": 100,
             "title": "Name",
@@ -8392,6 +8420,30 @@
             "default": false,
             "title": "Oom Killed",
             "type": "boolean"
+          },
+          "previous_image": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Image"
+          },
+          "previous_image_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Image Id"
           },
           "restarts": {
             "default": 0,

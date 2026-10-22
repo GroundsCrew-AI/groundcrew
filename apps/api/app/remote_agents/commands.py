@@ -9,7 +9,9 @@ A command's `payload` is the exact JSON text that was signed (the agent verifies
 then reads them), so no JSON canonicalization has to match across languages:
 
     {"v": 1, "id": ..., "agent_id": ..., "action": "restart", "service": ..., "plan_hash": ...,
-     "issued_at": ..., "expires_at": ...}
+     "params": {...}, "issued_at": ..., "expires_at": ...}
+
+`params` holds a rollback's target: {"image": <local image id>, "ref": <its reference>}.
 
 The agent runs a command only if it is signed by the pinned key, not expired, not seen before,
 and its configuration `allow`s the action for that service.
@@ -33,6 +35,7 @@ COMMAND_VERSION = 1
 COMMAND_TTL = timedelta(minutes=5)
 # Actions an agent runs, as its configuration names them.
 RESTART = "restart"
+ROLLBACK = "rollback"
 
 
 class CommandKeyError(Exception):
@@ -66,6 +69,7 @@ def issue(
     run_id: uuid.UUID | None,
     settings: Settings,
     now: datetime | None = None,
+    params: dict[str, str] | None = None,
 ) -> AgentCommand:
     """A signed command, ready to add to the session."""
     now = now or datetime.now(UTC)
@@ -79,6 +83,7 @@ def issue(
             "action": action,
             "service": service,
             "plan_hash": plan_hash,
+            "params": params or {},
             "issued_at": now.isoformat(),
             "expires_at": expires.isoformat(),
         },

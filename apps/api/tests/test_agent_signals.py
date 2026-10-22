@@ -60,14 +60,21 @@ def state(name: str = FLASK, **kw: Any) -> dict[str, Any]:
 
 
 async def _agent_with_services(
-    client: httpx.AsyncClient, sf: SessionFactory, owner: Member
+    client: httpx.AsyncClient,
+    sf: SessionFactory,
+    owner: Member,
+    allow: list[str] | None = None,
 ) -> tuple[FakeAgent, uuid.UUID]:
-    """An enrolled agent whose inventory reached the Map."""
+    """An enrolled agent whose inventory reached the Map (`allow` for the flask service)."""
     added = await _add(client, owner)
     agent = FakeAgent(client)
     assert (await agent.enroll(added["token"])).status_code == 200
     conn_id = uuid.UUID(added["connection"]["id"])
-    r = await agent.post("/agent/v1/inventory", INVENTORY)
+    inventory = INVENTORY
+    if allow is not None:
+        services = [dict(INVENTORY["services"][0], allow=allow), *INVENTORY["services"][1:]]
+        inventory = {**INVENTORY, "services": services}
+    r = await agent.post("/agent/v1/inventory", inventory)
     await DiscoveryEngine(sf).run(uuid.UUID(r.json()["discovery_run_id"]), connection_id=conn_id)
     return agent, conn_id
 
@@ -273,7 +280,11 @@ async def _fake_agent_runs_commands(sf: SessionFactory, *, ok: bool = True) -> s
             row = await session.get(Agent, c.agent_id)
             assert row is not None
             if ok:
-                row.states = {**row.states, c.service: state(c.service, restarts=2)}
+                after = state(c.service, restarts=2)
+                image = json.loads(c.payload)["params"].get("image")
+                if image:
+                    after |= {"image": "web:1", "image_id": image}
+                row.states = {**row.states, c.service: after}
                 row.states_at = datetime.now(UTC) + timedelta(seconds=1)
             await session.commit()
             return c.payload
@@ -409,3 +420,145 @@ async def test_medic_restarts_a_stopped_service_end_to_end(
         and st.verify.checks[0].detail == f"{FLASK} running, health checks passing"
     )
     assert conn_id is not None
+
+
+BAD = {"image": "web:2", "image_id": "sha256:" + "b" * 64}
+GOOD = {"previous_image": "web:1", "previous_image_id": "sha256:" + "a" * 64}
+
+
+async def test_a_rollback_goes_back_to_the_previous_image_through_a_signed_command(
+    client: httpx.AsyncClient, session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    sf = session_factory
+    alice = await _member(sf, 8110, "alice")
+    agent, conn_id = await _agent_with_services(client, sf, alice, allow=["restart", "rollback"])
+    await agent.post(
+        "/agent/v1/events",
+        {"states": [state(state="exited", exit_code=3, **BAD, **GOOD)], "events": []},
+    )
+    actions = AgentEmergencyActions(sf, _settings())
+    plan = await actions.plan_agent_rollback_service(conn_id, FLASK)
+    assert plan.current == "web:2@bbbbbbbbbbbb" and plan.desired == "web:1@aaaaaaaaaaaa"
+    assert plan.params["image"] == GOOD["previous_image_id"]
+    run = await medic_run(sf, workspace)
+    token = await approve_medic_action(
+        sf, workspace, run, action=plan.action, plan_hash=plan.plan_hash()
+    )
+    result, payload = await asyncio.gather(
+        actions.execute(plan, token, run_id=run.id), _fake_agent_runs_commands(sf)
+    )
+    assert result.ok and result.summary == f"Rolled {FLASK} on web-1 back to web:1@aaaaaaaaaaaa."
+    sent = json.loads(payload)
+    assert sent["action"] == "rollback" and sent["params"] == {
+        "image": GOOD["previous_image_id"],
+        "ref": "web:1",
+    }
+
+    # The image changed again since the plan: nothing is sent.
+    token = await approve_medic_action(
+        sf, workspace, run, action=plan.action, plan_hash=plan.plan_hash()
+    )
+    moved = await actions.execute(plan, token, run_id=run.id)
+    assert not moved.ok and "changed since the plan" in moved.summary
+
+
+async def test_a_rollback_needs_its_allow_and_an_earlier_image(
+    client: httpx.AsyncClient, session_factory: SessionFactory
+) -> None:
+    alice = await _member(session_factory, 8111, "alice")
+    agent, conn_id = await _agent_with_services(client, session_factory, alice)
+    actions = AgentEmergencyActions(session_factory, _settings())
+    await agent.post(
+        "/agent/v1/events", {"states": [state(state="exited", **BAD, **GOOD)], "events": []}
+    )
+    with pytest.raises(EmergencyActionError, match="does not allow rollback"):
+        await actions.plan_agent_rollback_service(conn_id, FLASK)
+
+    bob = await _member(session_factory, 8112, "bob")
+    agent, conn_id = await _agent_with_services(client, session_factory, bob, allow=["rollback"])
+    await agent.post("/agent/v1/events", {"states": [state(state="exited", **BAD)], "events": []})
+    with pytest.raises(EmergencyActionError, match="no earlier image"):
+        await actions.plan_agent_rollback_service(conn_id, FLASK)
+
+
+async def test_medic_rolls_back_a_service_that_broke_after_its_image_changed(
+    client: httpx.AsyncClient, session_factory: SessionFactory, use_deps: Any
+) -> None:
+    sf = session_factory
+    owner = await _member(sf, 8113, "owner")
+    agent, _ = await _agent_with_services(client, sf, owner, allow=["restart", "rollback"])
+    await agent.post(
+        "/agent/v1/events",
+        {"states": [state(image="web:1", image_id=GOOD["previous_image_id"])], "events": []},
+    )
+    now = datetime.now(UTC).isoformat()
+    broke = {
+        "states": [state(state="exited", exit_code=3, **BAD, **GOOD)],
+        "events": [
+            {
+                "service": FLASK,
+                "at": now,
+                "kind": "deploy",
+                "message": "image changed from web:1@aaaaaaaaaaaa to web:2@bbbbbbbbbbbb",
+            },
+            {"service": FLASK, "at": now, "kind": "state", "message": "exited (exit code 3)"},
+        ],
+    }
+    await agent.post("/agent/v1/events", broke)
+    (incident,) = await _incidents(sf)
+    async with sf() as session:
+        svc = await session.scalar(select(Resource).where(Resource.name == FLASK))
+        ws = await session.get(Workspace, incident.workspace_id)
+        assert svc is not None and ws is not None
+    from app.agents.medic.events import ChangeMarker
+
+    ev = Evidence()
+    key = f"agent:{FLASK}"
+    ev.sources[key] = [line(datetime.now(UTC), "agent", FLASK, "[state] exited (exit code 3)")]
+    ev.truncated[key] = False
+    ev.source_resources[key] = svc.id
+    ev.changes = [
+        ChangeMarker(
+            kind="deploy",
+            ref=f"web-1/{FLASK}@web:2@bbbbbbbbbbbb",
+            at=datetime.now(UTC) - timedelta(seconds=30),
+            resource_id=svc.id,
+            label="image changed",
+        )
+    ]
+    root = {
+        "summary": f"{FLASK} exits since its image changed to web:2.",
+        "root_cause": "The new image exits with code 3 at start.",
+        "claims": [{"text": "It exits.", "evidence_ids": [eid(ev, key, "exited")]}],
+        "triggering_change": {"kind": "deploy", "ref": f"web-1/{FLASK}@web:2@bbbbbbbbbbbb"},
+        "affected_resources": [FLASK],
+        "confidence": "high",
+        "fix_options": [{"kind": "agent_rollback_service", "description": "Roll back."}],
+    }
+    router = EmergencyActionRouter(None, None, AgentEmergencyActions(sf, _settings()))
+    use_deps(
+        Harness(
+            sf,
+            ev,
+            FakeLLM(reply(json.dumps(root)), settings=medic_settings()),
+            actions=cast(Any, router),
+        )
+    )
+    run_id = (await _state(sf, incident.id))[2].id
+    await investigate_incident_job(sf, {"incident_id": str(incident.id), "run_id": str(run_id)})
+    inc, st, _ = await _state(sf, incident.id)
+    assert inc.status == "waiting_approval", st.error or st.notes
+    (fix,) = st.fixes
+    assert fix.fix.action == "agent_rollback_service"
+    assert fix.fix.title == f"Roll back {FLASK} on web-1 to web:1@aaaaaaaaaaaa"
+    await asyncio.gather(_approve_all(sf, ws, incident.id, run_id), _fake_agent_runs_commands(sf))
+    payload = {"incident_id": str(incident.id), "run_id": str(run_id)}
+    for _ in range(2):
+        await asyncio.sleep(1.1)
+        await agent.post(
+            "/agent/v1/events",
+            {"states": [state(image="web:1", image_id=GOOD["previous_image_id"])], "events": []},
+        )
+        await verify_incident_job(sf, payload)
+    inc, st, _ = await _state(sf, incident.id)
+    assert inc.status == "resolved", st.verify

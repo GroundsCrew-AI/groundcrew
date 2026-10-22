@@ -228,6 +228,12 @@ def plan_lines(plan: ActionPlan) -> list[PlanLine]:
                 after=(plan.desired or "-").rsplit(":", 1)[-1],
             )
         ]
+    if plan.action == "agent_rollback_service":
+        return [
+            PlanLine(
+                what=f"{plan.target} image", before=plan.current or "-", after=plan.desired or "-"
+            )
+        ]
     if plan.action == "agent_restart_service":
         return [
             PlanLine(
@@ -478,8 +484,16 @@ async def emergency(
     """Emergency fixes for what started it (a secret, deploy, or commit), then a reboot for
     each EC2 instance whose status check fails."""
     out = await _change_fixes(root_cause, signals, graph, changes, actions, start_order, memory)
-    for more in (_reboots, _agent_restarts):
-        found = await more(root_cause, signals, graph, actions, start_order + len(out.records))
+    reboots = await _reboots(root_cause, signals, graph, actions, start_order + len(out.records))
+    agents = await _agent_fixes(
+        root_cause,
+        signals,
+        graph,
+        changes,
+        actions,
+        start_order + len(out.records) + len(reboots.records),
+    )
+    for found in (reboots, agents):
         out.records += found.records
         out.notes += found.notes
     return out
@@ -528,15 +542,18 @@ async def _reboots(
 AGENT_DOWN_RULES = frozenset({"agent_service_down", "health_check"})
 
 
-async def _agent_restarts(
+async def _agent_fixes(
     root_cause: RootCause,
     signals: list[Signal],
     graph: Graph,
+    changes: list[ChangeMarker],
     actions: EmergencyActions | None,
     order: int,
 ) -> Proposal:
-    """A restart for each service on a Groundcrew agent's host that is down or fails its health
-    checks, whatever stopped it: the agent restarts it if its configuration allows."""
+    """For each service on a Groundcrew agent's host that is down or fails its health checks:
+    a rollback to the image it ran before when its image changed in the incident window (a bad
+    deploy), else a restart. The agent acts only if its configuration allows it; a refused
+    rollback falls back to a restart."""
     out = Proposal()
     down = list(
         dict.fromkeys(
@@ -556,6 +573,26 @@ async def _agent_restarts(
         found = graph.resources[rid] if rid else None
         if found is None or found.connection_id is None:
             continue
+        host = found.account or "its host"
+        deployed = [c for c in changes if c.kind == "deploy" and c.resource_id == rid]
+        if deployed:
+            try:
+                plan = await actions.plan_agent_rollback_service(found.connection_id, found.name)
+            except EmergencyActionError as exc:
+                out.notes.append(f"No rollback of {found.name}: {exc}")
+            else:
+                out.records.append(
+                    _emergency_record(
+                        plan,
+                        order,
+                        f"Roll back {found.name} on {host} to {plan.desired}",
+                        "Its image changed right before it failed; the agent recreates it from "
+                        "the image it ran before, with the same settings and volumes, and keeps "
+                        "the current container if that one does not come up healthy.",
+                    )
+                )
+                order += 1
+                continue
         try:
             plan = await actions.plan_agent_restart_service(found.connection_id, found.name)
         except EmergencyActionError as exc:
@@ -565,7 +602,7 @@ async def _agent_restarts(
             _emergency_record(
                 plan,
                 order,
-                f"Restart {found.name} on {found.account or 'its host'}",
+                f"Restart {found.name} on {host}",
                 "It stopped or fails its health checks; the agent on its host restarts it, and "
                 "Medic checks it runs and passes them again.",
             )

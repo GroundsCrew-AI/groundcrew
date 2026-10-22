@@ -154,6 +154,11 @@ class FakeEmergencyActions:
         """No agent services here (tests of agent restarts use AgentEmergencyActions)."""
         raise EmergencyActionError(f"No Groundcrew agent reports {service} here.")
 
+    async def plan_agent_rollback_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        raise EmergencyActionError(f"No Groundcrew agent reports {service} here.")
+
     def _service(self, cluster: str, service: str) -> FakeService:
         try:
             return self.services[f"{cluster}/{service}"]

@@ -47,7 +47,7 @@ async def read_service(
         text = e.message if e.kind == "log" else f"[{e.kind}] {e.message}"
         out.lines.append(line(e.at, SOURCE, service, text))
         if e.kind == "deploy":
-            digest = e.message.rsplit(" ", 1)[-1]
+            digest = e.message.rsplit(" to ", 1)[-1]
             out.changes.append(
                 ChangeMarker(
                     kind="deploy",

@@ -8,7 +8,8 @@ Brief: `docs/prompts/agent.md`. Plan: `docs/agent-plan.md`.
 | A1 Enroll and report | live (release `45620dfed954`); real VM install still to try | #63 (draft) |
 | A2 Signals and Medic | live (release `88e2de779068`) | #63 |
 | A3 Approved fixes (restart) | live (release `88e2de779068`) | #63 |
-| A4 Deploys | | |
+| A4a Rollback, systemd restarts | built, tested locally, not deployed | #63 |
+| A4b Deploys through the agent | | |
 | A5 Packaging | | |
 
 ## A1 Enroll and report (2026-10-22)
@@ -113,3 +114,36 @@ binary (its version label still reads 0.1.0: AGENT_VERSION is 0.2.0 from the nex
 
 Not done yet: rollback and deploy through the agent (A4), restarting systemd units needs a
 polkit or sudo rule for the agent's user.
+
+## A4a Rollback to the previous image; systemd restarts (2026-10-22)
+
+Done:
+- Agent: `runtime.Docker.Rollback` recreates a Docker or Compose container from the image it ran
+  before, with the same name, environment, labels (Compose keeps managing it), ports, restart
+  policy, networks and aliases, and every volume, anonymous ones included. What only came from
+  the current image (command, entrypoint, image env vars and labels, exposed ports, volumes)
+  is left out so the earlier image brings its own. The old container is stopped and parked
+  until the new one runs and passes its health check, else it is put back. The watcher keeps
+  the last 5 images per service (`images.json` in the state dir) and reports the current and
+  previous image (still on the host); image changes are now by local image id.
+- API: action `agent_rollback_service` (needs `allow: [rollback]` and an earlier image; refuses
+  if the image changed since the plan); command `params` carry the image id and name. Medic
+  proposes a rollback when the service's image changed in the incident window, else a restart
+  (a refused rollback falls back to a restart).
+- Installer: `--restart-units a.service,b.service` writes a polkit rule that lets the agent's
+  user restart exactly those units (polkit with JavaScript rules).
+- Agent version label 0.3.0 from this release.
+
+Checked:
+- Go: recreate body unit test (user settings kept, image defaults dropped, volumes, networks);
+  an opt-in test on the real Docker engine (GC_DOCKER_TEST=1): rollback keeps an anonymous
+  volume's data, labels, env, the port and the image name, removes the old container, and a
+  rollback to a failing image restores the running one. The first run of that test found a real
+  bug (the bad image's command was copied) that is now fixed.
+- API: rollback plan and execution through a signed command, refusals, Medic choosing rollback
+  after an image change through to resolved; full suite 1203 passed.
+- polkit rule rendered by install.sh and evaluated in Node with a polkit stand-in: only restart
+  of a listed unit by the agent's user is allowed. Not tried on a real polkit yet.
+- Live on this machine: a container on nginx, then a "deploy" of an image that exits; the agent
+  reported the image change and the previous image, an incident opened, the evidence carried
+  the deploy change, and the approved rollback brought nginx back with its volume in 4 s.

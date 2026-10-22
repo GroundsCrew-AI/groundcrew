@@ -1,6 +1,9 @@
 """Emergency actions on services a Groundcrew agent watches (connection kind `agent`).
 
 - agent_restart_service: the agent restarts the container (Docker, Compose) or unit (systemd).
+- agent_rollback_service: the agent recreates the container from the image it ran before (still
+  on the host), with the same settings and volumes, and puts the old one back if the new one does
+  not run and pass its health check. `current` / `desired` are "<image ref>@<short id>".
 
 A plan needs an enrolled, online agent that reports the service, and the service must `allow`
 restart in the agent's own configuration file: Groundcrew cannot widen what the host allows.
@@ -19,6 +22,7 @@ from sqlalchemy import select
 
 from app.actions.base import (
     AGENT_RESTART_SERVICE,
+    AGENT_ROLLBACK_SERVICE,
     ActionPlan,
     ActionResult,
     EmergencyActionError,
@@ -29,7 +33,7 @@ from app.db.session import SessionFactory
 from app.policy.actions import ApprovedAction, consume_approved_action
 from app.remote_agents import commands
 from app.remote_agents import inventory as inv
-from app.remote_agents.signals import ServiceState, describe
+from app.remote_agents.signals import ServiceState, describe, image_label
 
 # How long execute waits for the agent to report the command's result.
 RESULT_TIMEOUT = timedelta(seconds=120)
@@ -58,28 +62,37 @@ class AgentEmergencyActions:
         raw = (agent.states or {}).get(service)
         return ServiceState.model_validate(raw) if raw else None
 
-    async def plan_agent_restart_service(
-        self, connection_id: uuid.UUID, service: str
-    ) -> ActionPlan:
+    async def _plan_base(
+        self, connection_id: uuid.UUID, service: str, verb: str, allow: str
+    ) -> tuple[Connection, Agent, str, ServiceState]:
+        """The checks every agent action shares: an online agent that reports the service, and
+        the service's `allow` in the agent's own configuration."""
         conn, agent = await self._load(connection_id)
         host = agent.hostname or conn.name
-        now = datetime.now(UTC)
-        if not self._online(agent, now):
+        if not self._online(agent, datetime.now(UTC)):
             raise EmergencyActionError(
-                f"The agent on {host} is offline, so it cannot restart {service}."
+                f"The agent on {host} is offline, so it cannot {verb} {service}."
             )
         stored = inv.stored(conn)
         facts = next((s for s in (stored.services if stored else []) if s.name == service), None)
         if facts is None:
             raise EmergencyActionError(f"The agent on {host} does not report {service}.")
-        if commands.RESTART not in facts.allow:
+        if allow not in facts.allow:
             raise EmergencyActionError(
-                f"{service} does not allow restart on {host}: add `allow: [restart]` to it in "
+                f"{service} does not allow {allow} on {host}: add {allow} to its `allow` list in "
                 "/etc/groundcrew-agent/agent.yaml, restart the agent, then run Medic again."
             )
         state = self._state(agent, service)
         if state is None or not state.found:
             raise EmergencyActionError(f"The agent on {host} cannot find {service} now.")
+        return conn, agent, host, state
+
+    async def plan_agent_restart_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        _, _, host, state = await self._plan_base(
+            connection_id, service, "restart", commands.RESTART
+        )
         current = describe(state)
         return ActionPlan(
             action=AGENT_RESTART_SERVICE,
@@ -89,7 +102,36 @@ class AgentEmergencyActions:
             current=current,
             desired=None,
             summary=f"Restart {service} on {host} (now {current.split(' ', 1)[-1]})",
-            planned_at=now,
+            planned_at=datetime.now(UTC),
+        )
+
+    async def plan_agent_rollback_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        _, _, host, state = await self._plan_base(
+            connection_id, service, "roll back", commands.ROLLBACK
+        )
+        if not state.image_id or not state.previous_image_id:
+            raise EmergencyActionError(
+                f"{service} on {host} has no earlier image on the host to go back to (the agent "
+                "remembers the images a container ran while it watches it)."
+            )
+        current = image_label(state.image, state.image_id)
+        desired = image_label(state.previous_image, state.previous_image_id)
+        return ActionPlan(
+            action=AGENT_ROLLBACK_SERVICE,
+            connection_id=connection_id,
+            target=f"{host}/{service}",
+            params={
+                "service": service,
+                "image": state.previous_image_id,
+                "ref": state.previous_image or "",
+                "from": state.image_id,
+            },
+            current=current,
+            desired=desired,
+            summary=f"Recreate {service} on {host} from {desired} (now {current})",
+            planned_at=datetime.now(UTC),
         )
 
     async def execute(
@@ -123,7 +165,10 @@ class AgentEmergencyActions:
         if not self._online(agent, datetime.now(UTC)):
             return result(False, "Not run: the agent is offline.", error="no heartbeat")
         state = self._state(agent, service)
-        now_state = describe(state) if state else f"{service} not reported"
+        if plan.action == AGENT_ROLLBACK_SERVICE:
+            now_state = image_label(state.image, state.image_id) if state else "not reported"
+        else:
+            now_state = describe(state) if state else f"{service} not reported"
         if now_state != plan.current:
             return result(
                 False,
@@ -131,9 +176,13 @@ class AgentEmergencyActions:
                 error=f"it is {now_state}, the plan expected {plan.current}",
             )
         async with self.session_factory() as session:
+            rollback = plan.action == AGENT_ROLLBACK_SERVICE
             command = commands.issue(
                 agent,
-                action=commands.RESTART,
+                action=commands.ROLLBACK if rollback else commands.RESTART,
+                params={"image": plan.params["image"], "ref": plan.params.get("ref", "")}
+                if rollback
+                else None,
                 service=service,
                 plan_hash=plan.plan_hash(),
                 run_id=run_id,
@@ -151,11 +200,15 @@ class AgentEmergencyActions:
                     return result(False, "Not run: the command was removed.", error="removed")
                 if found.status in ("succeeded", "failed", "expired"):
                     ok = found.status == "succeeded"
+                    host = agent.hostname or conn.name
+                    done = (
+                        f"Rolled {service} on {host} back to {plan.desired}."
+                        if plan.action == AGENT_ROLLBACK_SERVICE
+                        else f"Restarted {service} on {host}."
+                    )
                     return result(
                         ok,
-                        f"Restarted {service} on {agent.hostname or conn.name}."
-                        if ok
-                        else f"The agent could not restart {service}.",
+                        done if ok else f"The agent could not {_verb(plan)} {service}.",
                         details={"command_id": str(command_id)},
                         error=None if ok else (found.result or found.status),
                     )
@@ -171,3 +224,7 @@ class AgentEmergencyActions:
             details={"command_id": str(command_id)},
             error="timed out waiting for the agent",
         )
+
+
+def _verb(plan: ActionPlan) -> str:
+    return "roll back" if plan.action == AGENT_ROLLBACK_SERVICE else "restart"

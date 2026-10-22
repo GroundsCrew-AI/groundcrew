@@ -1594,7 +1594,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "agent_rollback_service";
             /**
              * Connection Id
              * Format: uuid
@@ -1627,7 +1627,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "agent_rollback_service";
             /** Details */
             details?: {
                 [key: string]: string;
@@ -2879,7 +2879,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "other";
+            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "agent_rollback_service" | "other";
             /**
              * Target
              * @default null
@@ -4085,7 +4085,7 @@ export interface components {
              * Action
              * @default null
              */
-            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service") | null;
+            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "agent_rollback_service") | null;
             /**
              * Approval Id
              * @default null
@@ -4679,8 +4679,12 @@ export interface components {
              * @default 0
              */
             health_failures: number;
+            /** Image */
+            image?: string | null;
             /** Image Digest */
             image_digest?: string | null;
+            /** Image Id */
+            image_id?: string | null;
             /** Name */
             name: string;
             /**
@@ -4688,6 +4692,10 @@ export interface components {
              * @default false
              */
             oom_killed: boolean;
+            /** Previous Image */
+            previous_image?: string | null;
+            /** Previous Image Id */
+            previous_image_id?: string | null;
             /**
              * Restarts
              * @default 0

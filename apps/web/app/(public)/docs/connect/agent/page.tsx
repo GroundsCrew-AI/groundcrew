@@ -133,8 +133,21 @@ export default function ConnectAgentPage() {
           <li>ten or more error lines show up in its logs within five minutes.</li>
         </ul>
         <p>
-          Medic diagnoses it from what the agent reported. When the service is down and its <Inline>allow</Inline>{" "}
-          list includes <Inline>restart</Inline>, Medic proposes a restart. After you approve it, Groundcrew sends the
+          Medic diagnoses it from what the agent reported. When the service is down, Medic proposes one fix:
+        </p>
+        <ul>
+          <li>
+            <strong>Roll back</strong>, when its image changed just before it broke and <Inline>rollback</Inline> is
+            allowed. The agent recreates the container from the image it ran before (it remembers the last few images
+            each container ran, while those are still on the server), with the same settings, ports, networks, and
+            volumes. If the recreated container does not run and pass its health check, the agent puts the current one
+            back.
+          </li>
+          <li>
+            <strong>Restart</strong>, otherwise, when <Inline>restart</Inline> is allowed.
+          </li>
+        </ul>
+        <p> After you approve it, Groundcrew sends the
           agent a command signed with Groundcrew&apos;s own key. The agent runs it only if the signature matches the key
           it pinned when it first connected, the command has not expired or run before, and its configuration allows
           it. Medic then checks the agent&apos;s next reports and resolves the incident once the service runs and passes
@@ -142,8 +155,10 @@ export default function ConnectAgentPage() {
         </p>
         <Callout kind="note">
           <p>
-            Restarting a systemd unit needs permission for the agent&apos;s user (a polkit or sudo rule for that unit).
-            Without one, the agent reports that the restart was refused. Docker and Compose services need nothing more.
+            Restarting a systemd unit needs permission for the agent&apos;s user. Install with{" "}
+            <Inline>--restart-units nginx.service,app.service</Inline> to allow exactly those units (a polkit rule;
+            polkit 0.106 or newer, as on Ubuntu 23.10+ and Debian 12+). Without it, the agent reports that the restart
+            was refused. Rollback is for Docker and Compose services. Docker and Compose services need nothing more.
           </p>
         </Callout>
       </DocSection>
