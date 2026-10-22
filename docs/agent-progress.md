@@ -6,8 +6,8 @@ Brief: `docs/prompts/agent.md`. Plan: `docs/agent-plan.md`.
 |---|---|---|
 | A0 Plan | done | (on the `agent` branch) |
 | A1 Enroll and report | live (release `45620dfed954`); real VM install still to try | #63 (draft) |
-| A2 Signals and Medic | built with A3, tested locally, not deployed | #63 |
-| A3 Approved fixes (restart) | built with A2, tested locally, not deployed | #63 |
+| A2 Signals and Medic | live (release `88e2de779068`) | #63 |
+| A3 Approved fixes (restart) | live (release `88e2de779068`) | #63 |
 | A4 Deploys | | |
 | A5 Packaging | | |
 
@@ -106,6 +106,10 @@ Checked:
   failed health checks and the exit as evidence; the approved restart reached the agent by long
   poll and the container ran again 4 s later; then "health recovered after 7 failed checks" and
   the rule stopped firing. Found and fixed on the way: an empty event list was sent as `null`.
+
+Rollout (2026-10-22): release `88e2de779068` (`45620dfed954` kept), migration `c3e8f1a2b4d6`;
+/agent/v1/events and /commands/poll refuse unsigned requests; the downloads serve the new
+binary (its version label still reads 0.1.0: AGENT_VERSION is 0.2.0 from the next release).
 
 Not done yet: rollback and deploy through the agent (A4), restarting systemd units needs a
 polkit or sudo rule for the agent's user.
