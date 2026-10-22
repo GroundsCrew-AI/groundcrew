@@ -5,7 +5,7 @@ Brief: `docs/prompts/agent.md`. Plan: `docs/agent-plan.md`.
 | Milestone | State | PR |
 |---|---|---|
 | A0 Plan | done | (on the `agent` branch) |
-| A1 Enroll and report | built, tested locally, not deployed | #63 (draft) |
+| A1 Enroll and report | live (release `45620dfed954`); real VM install still to try | #63 (draft) |
 | A2 Signals and Medic | | |
 | A3 Approved fixes | | |
 | A4 Deploys | | |
@@ -50,7 +50,15 @@ Checked:
   and permissions, enroll, unit enabled, agent reporting; a second run upgrades and keeps the
   configuration. shellcheck clean.
 
+Rollout (2026-10-22, with your OK): `push-host 40-nginx` (agent location), `push-host 50-app`
+(gc-release with the agent build context), then release `45620dfed954` from the `agent` branch
+(`516fa029aa8e` kept for rollback); migration `7a1c4e2b9d30` ran; AGENT_API_URL set.
+Live checks: groundkrew.com/agent/ serves install.sh, SHA256SUMS (same sums as the local build),
+the unit, the example configuration, and both binaries; /agent/v1/enroll refuses a bad token and
+/agent/v1/heartbeat an unsigned request (401); other API routes still 404 from outside;
+/docs/connect/agent is up.
+
 Open issues:
-- Production rollout needs your OK: the API migration, the new nginx location (host config via
-  push.sh), `gc-release` (host script), and AGENT_API_URL in ops/production.env (added locally).
 - Not yet tried on a real VM against groundkrew.com.
+- Production now runs the `agent` branch (it includes everything on `phase6-deploy`): merge
+  #62 and then #63, or deploy from `phase6-deploy` only after #63 is merged into it.
