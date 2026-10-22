@@ -14,6 +14,7 @@ from app.connectors.aws import AWS_OPERATE_OPERATIONS, AWS_READ_OPERATIONS
 from app.db.models import Connection, Workspace
 from app.db.session import SessionFactory
 from app.policy.engine import PolicyViolationError
+from app.security.redact import summarize
 from tests.aws_fixture import ACCOUNT, REGION, fixture_session
 from tests.medic_fakes import approve_medic_action, medic_run
 
@@ -390,6 +391,24 @@ async def test_a_refused_call_says_which_stack_parameter_to_change(
         "checkout/checkout-worker. Add it to OperateServiceArns on the groundcrew-read-only "
         "stack (CloudFormation, Update, keep the current template), then run Medic again."
     )
+
+
+async def test_a_refused_secret_names_it_and_the_value_that_survives_a_rebuild(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    world = World()
+    world.denied = {"secretsmanager:DescribeSecret"}
+    actions, cid = await _setup(session_factory, workspace, world)
+    with pytest.raises(EmergencyActionError) as caught:
+        await actions.plan_secret_rollback_version(cid, SECRET)
+    assert str(caught.value) == (
+        f"Groundcrew's emergency-fix role may not use secretsmanager:DescribeSecret on {SECRET}. "
+        f"Add it to OperateSecretArns as {SECRET.rsplit('-', 1)[0]}-* on the "
+        "groundcrew-read-only stack (CloudFormation, Update, keep the current template), then "
+        "run Medic again."
+    )
+    # What the timeline shows goes through redaction: the action name stays readable.
+    assert "secretsmanager:DescribeSecret" in (summarize(str(caught.value)) or "")
 
 
 async def test_rollback_skips_revisions_whose_secret_was_deleted(

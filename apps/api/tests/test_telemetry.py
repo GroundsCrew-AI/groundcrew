@@ -205,6 +205,27 @@ def test_ecs_reader_reads_target_and_task_health_and_what_a_deploy_changed() -> 
     assert "production" not in diff.message and "eJVGhT" not in diff.message
 
 
+def test_ecs_reader_says_when_a_deploy_reused_an_existing_revision() -> None:
+    """A forced redeploy after a secret change: ECS no longer lists the old deployment, and
+    revision 3 was registered long before. Comparing with revision 2 would invent a change."""
+    responses = _flask_aws()
+    old = responses["ecs:DescribeTaskDefinition"]
+
+    def describe(p: dict[str, Any]) -> dict[str, Any]:
+        found: dict[str, Any] = old(p)
+        found["taskDefinition"]["registeredAt"] = at(-600)
+        return found
+
+    responses["ecs:DescribeTaskDefinition"] = describe
+    out = ecs.read_service(_reader(responses), REGION, CLUSTER, "legacy-flask-app", SINCE, UNTIL)
+    (diff,) = [x for x in out.lines if x.message.startswith("task definition legacy-flask-app:3")]
+    assert diff.message == (
+        f"task definition legacy-flask-app:3 was registered at {at(-600).isoformat()}, before "
+        "this deploy: it reused an existing revision (no task definition change); its new tasks "
+        "read secrets and environment again when they start"
+    )
+
+
 def test_ecs_compare_names_changed_code_and_settings() -> None:
     old = _flask_definition(2, "oJsbmj")
     new = _flask_definition(3, "oJsbmj", image="flask:b001")

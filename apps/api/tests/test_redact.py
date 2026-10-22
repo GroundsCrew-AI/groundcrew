@@ -43,6 +43,13 @@ def test_keeps_ordinary_text() -> None:
     assert redact(text) == text
 
 
+def test_keeps_secrets_manager_action_names_but_not_values() -> None:
+    text = "may not use secretsmanager:DescribeSecret or secretsmanager:UpdateSecretVersionStage"
+    assert redact(text) == text
+    assert redact("secret: Hunter2Password") == f"secret: {REDACTED}"
+    assert redact("secretsmanager:hunter2") == f"secretsmanager:{REDACTED}"
+
+
 def test_redacts_configured_secret_value() -> None:
     # conftest sets TOKEN_FACTORY_API_KEY to this value.
     assert "test-key-not-real" not in redact("called with test-key-not-real")

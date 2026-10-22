@@ -35,7 +35,9 @@ Rules:
   "task definition X vs Y" line lists it) and how that change produces the symptom. When it
   shipped no new application code (same images and commands), do not blame the code: name what
   it did change (secrets, environment, settings) if that explains the symptom, else set
-  `triggering_change` to null. A cause resting on timing alone is medium confidence at most,
+  `triggering_change` to null. A deploy that reused an existing revision changed nothing: it
+  only restarted tasks, which then read secrets again, so a secret change just before it is
+  the cause, not the deploy. A cause resting on timing alone is medium confidence at most,
   and so is one the evidence contradicts (a claim that a setting changed when a line says it
   did not).
 - Health checks name the symptom: when load balancer targets or task health checks fail, the

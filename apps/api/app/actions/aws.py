@@ -154,9 +154,14 @@ def denied_text(client: Client, operation: str, resource: str | None) -> str:
     api = client.meta.method_to_api_mapping.get(operation, operation)
     what = resource or "this resource"
     parameter = OPERATE_PARAMETERS.get(service)
+    value = ""
+    if service == "secretsmanager" and resource and ":secret:" in resource:
+        # Its six-character suffix changes when the secret is created again (an environment
+        # rebuilt by Terraform), so the name with "-*" keeps working afterwards.
+        value = f" as {resource.rsplit('-', 1)[0]}-*"
     where = (
-        f"Add it to {parameter} on the groundcrew-read-only stack (CloudFormation, Update, "
-        "keep the current template), then run Medic again."
+        f"Add it to {parameter}{value} on the groundcrew-read-only stack (CloudFormation, "
+        "Update, keep the current template), then run Medic again."
         if parameter
         else "Check the groundcrew-operate role on the groundcrew-read-only stack."
     )
@@ -433,7 +438,7 @@ class AwsEmergencyActions:
         self, connection_id: uuid.UUID, secret_arn: str
     ) -> ActionPlan:
         sm = await self._client(connection_id, "secretsmanager", secret_arn)
-        secret = await self._call(sm, "describe_secret", SecretId=secret_arn)
+        secret = await self._call(sm, "describe_secret", resource=secret_arn, SecretId=secret_arn)
         stages: dict[str, list[str]] = secret.get("VersionIdsToStages") or {}
         current = next((v for v, s in stages.items() if "AWSCURRENT" in s), None)
         previous = next((v for v, s in stages.items() if "AWSPREVIOUS" in s), None)
@@ -607,7 +612,12 @@ class AwsEmergencyActions:
                 sm = await self._client(
                     plan.connection_id, "secretsmanager", plan.params["secret_arn"]
                 )
-                secret = await self._call(sm, "describe_secret", SecretId=plan.params["secret_arn"])
+                secret = await self._call(
+                    sm,
+                    "describe_secret",
+                    resource=plan.params["secret_arn"],
+                    SecretId=plan.params["secret_arn"],
+                )
                 stages: dict[str, list[str]] = secret.get("VersionIdsToStages") or {}
                 now = next((v for v, s in stages.items() if "AWSCURRENT" in s), None)
                 if now != plan.current or plan.desired is None:
@@ -619,6 +629,7 @@ class AwsEmergencyActions:
                 await self._call(
                     sm,
                     "update_secret_version_stage",
+                    resource=plan.params["secret_arn"],
                     SecretId=plan.params["secret_arn"],
                     VersionStage="AWSCURRENT",
                     MoveToVersionId=plan.desired,

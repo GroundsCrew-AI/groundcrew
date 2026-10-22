@@ -310,6 +310,18 @@ timeouts although the worker settings had not changed, and never read why the se
 - Teammate code touched (Phase 5, for review): app/agents/medic/agent.py*, diagnose.py*,
   evidence.py*, app/telemetry/ecs.py*.
 
+Medic, broken-env follow-up (2026-10-22, not deployed yet):
+- The deploy comparison invented "DATABASE_URL now from another secret": a forced redeploy
+  reused revision :31, ECS no longer listed the old deployment, and :31 was compared with :30
+  from before the environment was rebuilt. A revision registered more than 15 minutes before
+  its deploy is now reported as reused (no task definition change; tasks re-read secrets);
+  the diagnosis rules point at the secret change before such a deploy.
+- A refused secret now names the secret and the stack value that survives a rebuild
+  (`...:secret:<name>-*`); `secretsmanager:DescribeSecret` is no longer redacted in summaries.
+- Live: the checkout stack's OperateSecretArns does not cover the recreated
+  checkout/database-url secret, so the secret rollback was refused. Update the stack with the
+  value from the Emergency-fix dialog.
+
 Open issues:
 - The automatic rollback path has unit-level logic only; it has not been exercised live (a deploy of a
   commit that fails its health check would show it).

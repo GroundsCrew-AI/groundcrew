@@ -26,6 +26,13 @@ _KEY_WORDS = (
 # Keys whose value identifies a secret rather than holding it: secret_id, SecretName, secretArn.
 _IDENTIFIER_KEY = re.compile(r"(?i)[_.-]?(id|ids|name|names|arn|arns)[\"']?\s*[:=]\s*[\"']?$")
 
+# An IAM action of Secrets Manager (secretsmanager:DescribeSecret) names an API call, not a
+# value: refusals that name it must stay readable.
+_API_ACTION = re.compile(
+    r"secretsmanager:(?:Describe|Get|List|Put|Update|Create|Delete|Rotate|Restore|Cancel|Tag|"
+    r"Untag|Validate|Batch|Remove|Replicate|Stop)[A-Za-z]*"
+)
+
 _PATTERNS: tuple[tuple[re.Pattern[str], Any], ...] = (
     # PEM private keys (whole block, or to the end if truncated)
     (
@@ -54,7 +61,11 @@ _PATTERNS: tuple[tuple[re.Pattern[str], Any], ...] = (
             rf"(?i)(\b[\w.-]*(?:{_KEY_WORDS})[\w.-]*[\"']?\s*[:=]\s*[\"']?)"
             r"(?!\d+\b)[^\s\"',;}&]+"
         ),
-        lambda m: m.group(0) if _IDENTIFIER_KEY.search(m.group(1)) else m.group(1) + REDACTED,
+        lambda m: (
+            m.group(0)
+            if _IDENTIFIER_KEY.search(m.group(1)) or _API_ACTION.fullmatch(m.group(0))
+            else m.group(1) + REDACTED
+        ),
     ),
 )
 _ARN = re.compile(r"\barn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:\d{0,12}:[^\s\"',;}?&@]+")

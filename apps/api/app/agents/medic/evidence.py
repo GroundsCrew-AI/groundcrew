@@ -36,7 +36,7 @@ _WEIGHTS: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"(?i)health ?checks?|rollout FAILED|deployment failed|circuit breaker"), 3.5),
     (re.compile(r"\bUNHEALTHY\b|\bunhealthy\b|targets healthy"), 3.5),
     # What a deploy changed (app.telemetry.ecs.compare): weighs on whether it is the cause.
-    (re.compile(r"^task definition \S+ vs "), 3.0),
+    (re.compile(r"^task definition \S+ (vs |was registered at )"), 3.0),
     (re.compile(r"(?i)\b(error|failed|failure|timed? ?out|killed)\b"), 2.5),
     (re.compile(r"^commit |^workflow run |^production deployment |^deployment "), 2.5),
     (re.compile(r"\[SLOW\]"), 3.0),

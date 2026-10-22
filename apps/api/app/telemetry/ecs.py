@@ -13,7 +13,7 @@ deploy changed no code, which the diagnosis must know before it blames the deplo
 values are never shown, only the names that changed.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -28,6 +28,9 @@ MAX_RUNNING_TASKS = 10
 # Deploys in the window whose task definition is compared with the previous one.
 MAX_COMPARED = 2
 MAX_COMMAND_CHARS = 200
+# A deploy registers its revision just before it starts; one registered longer before was
+# reused (force new deployment, a restart, or a rollback to an older revision).
+REUSED_AFTER = timedelta(minutes=15)
 _READ_ERRORS = (AwsError, BotoCoreError, ClientError)
 
 
@@ -167,8 +170,9 @@ def _revision(arn: str) -> tuple[str, int] | None:
     return (family, int(rev)) if family and rev.isdigit() else None
 
 
-def _previous(deployment: dict[str, Any], deployments: list[dict[str, Any]]) -> str | None:
-    """The task definition a deploy replaced: the newest older deployment's, else revision - 1."""
+def _older_deployment(deployment: dict[str, Any], deployments: list[dict[str, Any]]) -> str | None:
+    """The task definition of the newest deployment older than this one, if ECS still lists it
+    (it drops the old deployment once a rollout completes)."""
     new = str(deployment.get("taskDefinition") or "")
     created = parse_time(deployment.get("createdAt"))
     older: list[tuple[datetime, str]] = []
@@ -176,12 +180,14 @@ def _previous(deployment: dict[str, Any], deployments: list[dict[str, Any]]) -> 
         at, td = parse_time(d.get("createdAt")), str(d.get("taskDefinition") or "")
         if created is not None and at is not None and at < created and td and td != new:
             older.append((at, td))
-    if older:
-        return max(older)[1]
-    parsed = _revision(new)
+    return max(older)[1] if older else None
+
+
+def _revision_before(arn: str) -> str | None:
+    parsed = _revision(arn)
     if parsed is None or parsed[1] <= 1:
         return None
-    return f"{new.rsplit(':', 1)[0]}:{parsed[1] - 1}"
+    return f"{arn.rsplit(':', 1)[0]}:{parsed[1] - 1}"
 
 
 def _command(container: dict[str, Any]) -> str:
@@ -385,21 +391,42 @@ def _deploy_diffs(
     )
     out: list[Line] = []
     for d in started[:MAX_COMPARED]:
-        new_arn, old_arn = str(d.get("taskDefinition") or ""), _previous(d, deployments)
+        new_arn = str(d.get("taskDefinition") or "")
         at = parse_time(d.get("createdAt")) or since
-        if not new_arn or not old_arn:
-            continue
-        try:
-            text = compare(
-                _definition(reader, region, new_arn), _definition(reader, region, old_arn)
-            )
-        except _READ_ERRORS as exc:
-            text = (
-                f"task definition {_short(new_arn)} not compared with {_short(old_arn)}: "
-                f"{error_text(exc)}"
-            )
-        out.append(line(at, SOURCE, name, text))
+        if new_arn:
+            out.append(line(at, SOURCE, name, _deploy_diff(reader, region, d, deployments)))
     return out
+
+
+def _deploy_diff(
+    reader: AwsReader, region: str | None, d: dict[str, Any], deployments: list[dict[str, Any]]
+) -> str:
+    """What one deploy changed. Without the older deployment, revision - 1 is compared only
+    when this revision was registered for the deploy; else the deploy reused it."""
+    new_arn = str(d.get("taskDefinition") or "")
+    older = _older_deployment(d, deployments)
+    try:
+        new = _definition(reader, region, new_arn)
+        if older is None:
+            registered = parse_time(new.get("registeredAt"))
+            created = parse_time(d.get("createdAt"))
+            if (
+                registered is not None
+                and created is not None
+                and registered < created - REUSED_AFTER
+            ):
+                return (
+                    f"task definition {_short(new_arn)} was registered at "
+                    f"{registered.isoformat()}, before this deploy: it reused an existing "
+                    "revision (no task definition change); its new tasks read secrets and "
+                    "environment again when they start"
+                )
+            older = _revision_before(new_arn)
+            if older is None:
+                return f"task definition {_short(new_arn)}: no earlier revision to compare"
+        return compare(new, _definition(reader, region, older))
+    except _READ_ERRORS as exc:
+        return f"task definition {_short(new_arn)} not compared: {error_text(exc)}"
 
 
 def extras(
