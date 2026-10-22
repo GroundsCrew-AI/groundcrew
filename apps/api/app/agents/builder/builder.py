@@ -21,7 +21,9 @@ The loop (docs/prompts/phase4-rizwan.md, M4):
 
 import asyncio
 import difflib
+import json
 import re
+import shlex
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -150,12 +152,45 @@ _FENCE = re.compile(r"^\s*```[\w-]*\s*\n|\n\s*```\s*$")
 
 def clean_dockerfile(text: str) -> str:
     """The Dockerfile as the model meant it: no Markdown fences, real newlines (some replies
-    put the whole file on one line with literal \\n), and a trailing newline."""
+    put the whole file on one line with literal \\n), exec-form commands that use variables in
+    shell form, and a trailing newline."""
     text = text.strip()
     if "\n" not in text and "\\n" in text:
         text = text.replace("\\n", "\n").replace('\\"', '"')
     text = _FENCE.sub("", text).strip()
-    return text + "\n"
+    return expand_exec_variables(text) + "\n"
+
+
+_EXEC_FORM = re.compile(r"(?im)^(\s*)(CMD|ENTRYPOINT)\s+(\[.*\])\s*$")
+_SHELL_SAFE = re.compile(r"^[\w@%+=:,./-]+$")
+
+
+def _shell_word(arg: str) -> str:
+    if _SHELL_SAFE.match(arg):
+        return arg
+    if "$" in arg:
+        # Double quotes keep ${VAR:-default} expanding.
+        return '"' + re.sub(r'(["\\`])', r"\\\1", arg) + '"'
+    return shlex.quote(arg)
+
+
+def expand_exec_variables(dockerfile: str) -> str:
+    """Docker runs exec-form CMD and ENTRYPOINT (["uvicorn", "--port", "${PORT:-8080}"])
+    without a shell, so a variable there reaches the app as the literal text. Such a line
+    becomes shell form with exec (the app stays PID 1 and gets signals)."""
+
+    def rewrite(m: re.Match[str]) -> str:
+        try:
+            args = json.loads(m.group(3))
+        except ValueError:
+            return m.group(0)
+        if not (isinstance(args, list) and args and all(isinstance(a, str) for a in args)):
+            return m.group(0)
+        if not any("$" in a for a in args) or args[0] in ("sh", "/bin/sh", "bash", "/bin/bash"):
+            return m.group(0)
+        return f"{m.group(1)}{m.group(2)} exec " + " ".join(_shell_word(a) for a in args)
+
+    return _EXEC_FORM.sub(rewrite, dockerfile)
 
 
 def error_summary(result: BuildResult) -> str | None:

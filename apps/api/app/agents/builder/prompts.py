@@ -125,6 +125,8 @@ so the layer caches.
 - Run as a non-root user when the base image allows it.
 - Start the app with its production server and bind to 0.0.0.0 on the app's port (EXPOSE it). \
 No dev servers, no --reload.
+- CMD and ENTRYPOINT in exec form (["app", "--port", "8080"]) get no variable expansion: write \
+the port as a number, or use shell form with exec (CMD exec app --port ${PORT:-8080}).
 - No secrets, no ARG or ENV with credentials; env vars come at run time.
 - Do not download and run scripts from the internet. Keep it short.
 Return the whole Dockerfile."""

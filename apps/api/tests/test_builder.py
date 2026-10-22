@@ -412,6 +412,18 @@ def test_model_dockerfiles_are_cleaned() -> None:
     assert clean_dockerfile("FROM a\nRUN echo '\\n'\n") == "FROM a\nRUN echo '\\n'\n"
 
 
+def test_exec_form_commands_with_variables_run_through_a_shell() -> None:
+    """Docker does not expand ${API_PORT:-8080} in exec form; uvicorn got it as the port."""
+    from app.agents.builder.builder import clean_dockerfile
+
+    model = 'FROM a\nCMD ["uvicorn", "app.main:app", "--port", "${API_PORT:-8080}"]'
+    assert clean_dockerfile(model) == (
+        'FROM a\nCMD exec uvicorn app.main:app --port "${API_PORT:-8080}"\n'
+    )
+    kept = 'CMD ["node", "server.js"]\nENTRYPOINT ["sh", "-c", "exec x --port $PORT"]'
+    assert clean_dockerfile(kept) == kept + "\n"
+
+
 async def test_a_build_service_outage_stops_at_once_without_a_fix(tmp_path: Path) -> None:
     """No Dockerfile fix can help when the build daemon refuses the connection."""
     settings = _settings()

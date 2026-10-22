@@ -478,7 +478,9 @@ def _facts(r: Resource) -> list[str]:
         if tags:
             out.append(f"image {tags[0][:7]}")
     elif r.type == "rds:db":
-        out.append(f"{c.get('engine')} {c.get('engine_version')}")
+        engine = " ".join(str(c[k]) for k in ("engine", "engine_version") if c.get(k))
+        if engine:
+            out.append(engine)
         out.append("public" if c.get("publicly_accessible") else "private")
     elif r.type == "ecr:repository":
         images = c.get("images") or []
