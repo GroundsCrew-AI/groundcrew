@@ -5,7 +5,7 @@ Brief: `docs/prompts/agent.md`. Plan: `docs/agent-plan.md`.
 | Milestone | State | PR |
 |---|---|---|
 | A0 Plan | done | (on the `agent` branch) |
-| A1 Enroll and report | built, tested locally, not deployed | draft |
+| A1 Enroll and report | built, tested locally, not deployed | #63 (draft) |
 | A2 Signals and Medic | | |
 | A3 Approved fixes | | |
 | A4 Deploys | | |
