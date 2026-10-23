@@ -266,6 +266,19 @@ class GitHubApp:
         paths = [str(i["path"]) for i in data.get("tree", []) if i.get("type") == "blob"]
         return paths, bool(data.get("truncated"))
 
+    async def file_text(self, installation_id: int, full_name: str, path: str, ref: str) -> str:
+        """One file's text at `ref` through the contents API (GET only)."""
+        name = check_repo_name(full_name)
+        token = await self.installation_token(installation_id)
+        text = await self._request(
+            "GET",
+            f"/repos/{name}/contents/{quote(path)}",
+            bearer=token,
+            params={"ref": ref},
+            accept="application/vnd.github.raw",
+        )
+        return str(text)
+
     async def repo(self, installation_id: int, full_name: str) -> dict[str, Any]:
         data: dict[str, Any] = await self.get(
             installation_id, f"/repos/{check_repo_name(full_name)}"

@@ -433,8 +433,20 @@ async def test_services_lists_the_folders_to_deploy(
     class FakeGitHub:
         async def tree_paths(self, installation_id: int, repo: str, ref: str) -> Any:
             assert (installation_id, repo, ref) == (7, "acme/shop", "main")
-            files = ["Makefile", "api/requirements.txt", "web/package.json", "worker/go.mod"]
+            files = [
+                "Makefile",
+                "compose.yaml",
+                "api/requirements.txt",
+                "web/package.json",
+                "worker/go.mod",
+                "site/Dockerfile",
+                "tools/cli/server/main.rs",
+            ]
             return files, False
+
+        async def file_text(self, installation_id: int, repo: str, path: str, ref: str) -> str:
+            assert (path, ref) == ("compose.yaml", "main")
+            return "services:\n  cli: {build: ./tools/cli/server}\n  db: {image: postgres}\n"
 
     monkeypatch.setattr(deploys_routes, "get_github_app", FakeGitHub)
     async with session_factory() as session:
@@ -458,6 +470,8 @@ async def test_services_lists_the_folders_to_deploy(
     assert resp.json() == {
         "services": [
             {"path": "api", "manifests": ["requirements.txt"]},
+            {"path": "site", "manifests": ["Dockerfile"]},
+            {"path": "tools/cli/server", "manifests": ["compose.yaml"]},
             {"path": "web", "manifests": ["package.json"]},
             {"path": "worker", "manifests": ["go.mod"]},
         ],

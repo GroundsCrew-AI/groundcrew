@@ -123,7 +123,8 @@ class DeployEnvUpdated(BaseModel):
 class RepoService(BaseModel):
     # "." is the repository root.
     path: str
-    # The manifests that make it a service (package.json, go.mod, ...).
+    # What makes it a service: manifests (package.json, go.mod, ...), a Dockerfile, or the
+    # Compose file that builds it.
     manifests: list[str]
 
 
