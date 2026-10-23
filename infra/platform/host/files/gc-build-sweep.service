@@ -1,0 +1,6 @@
+[Unit]
+Description=Remove build sandboxes older than two hours
+
+[Service]
+Type=oneshot
+ExecStart=/opt/groundcrew/bin/gc-build-sweep

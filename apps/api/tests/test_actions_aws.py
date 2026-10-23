@@ -14,6 +14,7 @@ from app.connectors.aws import AWS_OPERATE_OPERATIONS, AWS_READ_OPERATIONS
 from app.db.models import Connection, Workspace
 from app.db.session import SessionFactory
 from app.policy.engine import PolicyViolationError
+from app.security.redact import summarize
 from tests.aws_fixture import ACCOUNT, REGION, fixture_session
 from tests.medic_fakes import approve_medic_action, medic_run
 
@@ -45,6 +46,12 @@ class World:
             "taskRoleArn": f"{ROLE}/checkout-worker-task",
         }
         self.pass_roles: list[str] | None = [f"{ROLE}/checkout-*"]
+        # Image per revision (none: the definition names no image), and the tags left in ECR.
+        self.images: dict[int, str] = {}
+        self.in_ecr: set[str] = set()
+        self.secrets: dict[int, str] = {}  # secret ARN a revision reads
+        self.live_secrets: set[str] = set()
+        self.denied: set[str] = set()
 
     def responses(self) -> dict[str, Any]:
         def service(_: dict[str, Any]) -> dict[str, Any]:
@@ -73,13 +80,34 @@ class World:
             }
             return {"ARN": SECRET, "Name": "checkout/database-url"}
 
-        return {
+        def task_definition(p: dict[str, Any]) -> dict[str, Any]:
+            arn = p["taskDefinition"]
+            image = self.images.get(int(arn.rsplit(":", 1)[1]))
+            secret = self.secrets.get(int(arn.rsplit(":", 1)[1]))
+            containers = [{"name": "worker", "image": image}] if image else []
+            if secret:
+                containers = [{"name": "worker", "secrets": [{"name": "DB", "valueFrom": secret}]}]
+            return {
+                "taskDefinition": {
+                    "taskDefinitionArn": arn,
+                    "containerDefinitions": containers,
+                    **self.roles,
+                }
+            }
+
+        def images(p: dict[str, Any]) -> dict[str, Any]:
+            tag = p["imageIds"][0].get("imageTag")
+            if tag in self.in_ecr:
+                return {"imageDetails": [{"imageTags": [tag]}]}
+            return {"Error": {"Code": "ImageNotFoundException", "Message": "not found"}}
+
+        denied = {"Error": {"Code": "AccessDeniedException", "Message": "User: arn:... is not"}}
+        responses: dict[str, Any] = {
             "ecs:DescribeServices": service,
             "ecs:ListTaskDefinitions": {"taskDefinitionArns": [f"{TD}:42", f"{TD}:41", f"{TD}:40"]},
             "ecs:UpdateService": update,
-            "ecs:DescribeTaskDefinition": lambda p: {
-                "taskDefinition": {"taskDefinitionArn": p["taskDefinition"], **self.roles}
-            },
+            "ecs:DescribeTaskDefinition": task_definition,
+            "ecr:DescribeImages": images,
             "iam:GetRolePolicy": (
                 None
                 if self.pass_roles is None
@@ -109,13 +137,18 @@ class World:
                     ),
                 }
             ),
-            "secretsmanager:DescribeSecret": lambda _: {
-                "ARN": SECRET,
-                "Name": "checkout/database-url",
-                "VersionIdsToStages": dict(self.stages),
-            },
+            "secretsmanager:DescribeSecret": lambda p: (
+                {"Error": {"Code": "ResourceNotFoundException", "Message": "gone"}}
+                if p["SecretId"] != SECRET and p["SecretId"] not in self.live_secrets
+                else {
+                    "ARN": SECRET,
+                    "Name": "checkout/database-url",
+                    "VersionIdsToStages": dict(self.stages),
+                }
+            ),
             "secretsmanager:UpdateSecretVersionStage": stage,
         }
+        return {k: (denied if k in self.denied else v) for k, v in responses.items()}
 
 
 async def _setup(
@@ -312,3 +345,80 @@ def test_groundcrew_roles_are_never_passed_even_under_a_wide_pattern() -> None:
     assert roles_outside([f"{ROLE}/checkout-api"], [f"{ROLE}/checkout-worker-*"]) == [
         f"{ROLE}/checkout-api"
     ]
+
+
+def _image(tag: str) -> str:
+    return f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/checkout-worker:{tag}"
+
+
+async def test_rollback_skips_revisions_whose_image_is_gone(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    world = World()
+    world.images = {42: _image("bootstrap"), 41: _image("deleted"), 40: _image("abc123")}
+    world.in_ecr = {"abc123"}
+    actions, cid = await _setup(session_factory, workspace, world)
+    plan = await actions.plan_ecs_rollback_service(cid, CLUSTER, "checkout-worker")
+    assert plan.desired == f"{TD}:40"
+
+
+async def test_rollback_is_not_offered_when_no_earlier_image_exists(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    world = World()
+    world.images = {41: _image("deleted"), 40: _image("older")}
+    actions, cid = await _setup(session_factory, workspace, world)
+    with pytest.raises(EmergencyActionError) as caught:
+        await actions.plan_ecs_rollback_service(cid, CLUSTER, "checkout-worker")
+    assert str(caught.value) == (
+        "No earlier revision of checkout-worker can start: what they use "
+        "(checkout-worker:deleted, checkout-worker:older) no longer exist (checked "
+        "checkout-worker:41, checkout-worker:40), as after an environment is rebuilt. A rollback "
+        "cannot help; push the image again, or deploy a fixed revision."
+    )
+
+
+async def test_a_refused_call_says_which_stack_parameter_to_change(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    world = World()
+    world.denied = {"ecs:DescribeServices"}
+    actions, cid = await _setup(session_factory, workspace, world)
+    with pytest.raises(EmergencyActionError) as caught:
+        await actions.plan_ecs_rollback_service(cid, CLUSTER, "checkout-worker")
+    assert str(caught.value) == (
+        "Groundcrew's emergency-fix role may not use ecs:DescribeServices on service "
+        "checkout/checkout-worker. Add it to OperateServiceArns on the groundcrew-read-only "
+        "stack (CloudFormation, Update, keep the current template), then run Medic again."
+    )
+
+
+async def test_a_refused_secret_names_it_and_the_value_that_survives_a_rebuild(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    world = World()
+    world.denied = {"secretsmanager:DescribeSecret"}
+    actions, cid = await _setup(session_factory, workspace, world)
+    with pytest.raises(EmergencyActionError) as caught:
+        await actions.plan_secret_rollback_version(cid, SECRET)
+    assert str(caught.value) == (
+        f"Groundcrew's emergency-fix role may not use secretsmanager:DescribeSecret on {SECRET}. "
+        f"Add it to OperateSecretArns as {SECRET.rsplit('-', 1)[0]}-* on the "
+        "groundcrew-read-only stack (CloudFormation, Update, keep the current template), then "
+        "run Medic again."
+    )
+    # What the timeline shows goes through redaction: the action name stays readable.
+    assert "secretsmanager:DescribeSecret" in (summarize(str(caught.value)) or "")
+
+
+async def test_rollback_skips_revisions_whose_secret_was_deleted(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    old = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT}:secret:checkout/database-url-Hk6C1T"
+    new = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT}:secret:checkout/database-url-EVGFOY"
+    world = World()
+    world.secrets = {41: old + ":url::", 40: new}
+    world.live_secrets = {new}
+    actions, cid = await _setup(session_factory, workspace, world)
+    plan = await actions.plan_ecs_rollback_service(cid, CLUSTER, "checkout-worker")
+    assert plan.desired == f"{TD}:40"

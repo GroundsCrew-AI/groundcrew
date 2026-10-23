@@ -188,7 +188,11 @@ class Settings(BaseSettings):
     # Build sandbox (app/sandbox). `docker` talks to the daemon in DOCKER_HOST (the dind service
     # in local dev); `nebius` is TODO(nebius-sandbox). A smoke-test container publishes its port
     # on the daemon's host, which the worker reaches as SANDBOX_SMOKE_HOST (dind in Compose).
-    sandbox_provider: Literal["docker", "nebius"] = "docker"
+    # `isolated`: the platform host's rootless, gVisor build daemon (app/sandbox/isolated.py).
+    sandbox_provider: Literal["docker", "isolated", "nebius"] = "docker"
+    # Images the isolated sandbox runs per build: BuildKit and the smoke probe.
+    sandbox_buildkit_image: str = "moby/buildkit:v0.25.1"
+    sandbox_probe_image: str = "curlimages/curl:8.17.0"
     sandbox_smoke_host: str = "localhost"
     sandbox_build_timeout_seconds: float = 900.0
     sandbox_smoke_timeout_seconds: float = 60.0
@@ -265,6 +269,20 @@ class Settings(BaseSettings):
     quota_max_build_seconds: int = 900
     quota_connections_per_workspace: int = 10
 
+    # Groundcrew agents (app/remote_agents). The address agents reach the API at (shown in the
+    # install commands); how long a join token works; how far a signed request's clock may be
+    # off; calls a minute per agent; and when an agent with no heartbeat counts as offline.
+    agent_api_url: str = "http://localhost:8000"
+    agent_join_token_minutes: int = 60
+    agent_request_skew_seconds: int = 300
+    agent_rate_limit_per_minute: int = 120
+    agent_offline_after_seconds: int = 180
+    # The Groundcrew registry for agent deploys (app/registry.py): the registry container on the
+    # internal network, and the public host agents pull from (nginx passes /v2/ there). Unset:
+    # agent deploys need the connection's own registry.
+    registry_internal_url: str | None = None
+    registry_public_host: str | None = None
+
     # Abuse limits in the API (nginx limits each client address in front of it). Per user: API
     # calls a minute, stream tokens a minute, and live streams open at once. Request bodies
     # larger than MAX_REQUEST_BYTES are refused (413).
@@ -322,6 +340,8 @@ class Settings(BaseSettings):
     job_lock_timeout_seconds: int = 600
     # On SIGTERM, how long the current job may keep running before it is put back in the queue
     worker_shutdown_grace_seconds: float = 20.0
+    # Touched every minute while the worker runs (the container's health check reads it).
+    worker_heartbeat_file: Path | None = None
     sse_poll_interval_ms: int = 500
 
     # Auth. The web app signs a short-lived HS256 JWT with this secret for every API call
@@ -403,6 +423,8 @@ class Settings(BaseSettings):
             problems.append("INTERNAL_JWT_SECRET is shorter than 32 characters")
         if "localhost" in self.web_origin or "127.0.0.1" in self.web_origin:
             problems.append("WEB_ORIGIN still points at localhost")
+        if "localhost" in self.agent_api_url or "127.0.0.1" in self.agent_api_url:
+            problems.append("AGENT_API_URL still points at localhost")
         # Dev-only switches must not be set at all on a hosted instance (each is also refused
         # at the place it is used).
         for name in ("live_script_self_approve", "pipeline_fake", "k8s_allow_private_servers"):

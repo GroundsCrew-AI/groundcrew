@@ -21,7 +21,9 @@ The loop (docs/prompts/phase4-rizwan.md, M4):
 
 import asyncio
 import difflib
+import json
 import re
+import shlex
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -111,9 +113,31 @@ class BuildOutcome:
     attempts: list[BuildAttempt] = field(default_factory=list)
     # A build passed after Builder changed the Dockerfile because of a failure.
     automatic_fix: bool = False
-    stop_reason: Literal["no_progress", "max_attempts"] | None = None
+    stop_reason: Literal["no_progress", "max_attempts", "unavailable"] | None = None
     error: str | None = None
     port: int = 8000
+    # The smoke test of the image, when Builder ran it (build(check=...)).
+    smoke: SmokeResult | None = None
+
+
+# A smoke test failure is fed back to Builder like a failed build step.
+SMOKE_STEP = "smoke test (the image built; the app was started and probed on its port)"
+
+
+def smoke_failure(smoke: SmokeResult, built: BuildResult) -> BuildResult:
+    """A passed build whose smoke test failed, as a failed build Builder can fix: the reason,
+    then the app's last lines (a crash, a missing module, a bad argument)."""
+    checks = ", ".join(f"{c.path} {c.status_code or c.detail}" for c in smoke.checks)
+    reason = smoke.detail or checks or "the app did not answer"
+    output = [line.strip() for line in (smoke.logs_tail or "").splitlines() if line.strip()]
+    return BuildResult(
+        ok=False,
+        log_tail=smoke.logs_tail or "(the app wrote nothing)",
+        image_ref=None,
+        duration_ms=built.duration_ms,
+        failing_step=SMOKE_STEP,
+        error_lines=[f"The smoke test failed: {reason}", *output[-8:]],
+    )
 
 
 def app_port(spec: AppSpec, dockerfile: str | None = None) -> int:
@@ -150,12 +174,89 @@ _FENCE = re.compile(r"^\s*```[\w-]*\s*\n|\n\s*```\s*$")
 
 def clean_dockerfile(text: str) -> str:
     """The Dockerfile as the model meant it: no Markdown fences, real newlines (some replies
-    put the whole file on one line with literal \\n), and a trailing newline."""
+    put the whole file on one line with literal \\n), exec-form commands that use variables in
+    shell form, and a trailing newline."""
     text = text.strip()
     if "\n" not in text and "\\n" in text:
         text = text.replace("\\n", "\n").replace('\\"', '"')
     text = _FENCE.sub("", text).strip()
-    return text + "\n"
+    return expand_exec_variables(text) + "\n"
+
+
+_EXEC_FORM = re.compile(r"(?im)^(\s*)(CMD|ENTRYPOINT)\s+(\[.*\])\s*$")
+_SHELL_SAFE = re.compile(r"^[\w@%+=:,./-]+$")
+
+
+def _shell_word(arg: str) -> str:
+    if _SHELL_SAFE.match(arg):
+        return arg
+    if "$" in arg:
+        # Double quotes keep ${VAR:-default} expanding.
+        return '"' + re.sub(r'(["\\`])', r"\\\1", arg) + '"'
+    return shlex.quote(arg)
+
+
+_ENV_LINE = re.compile(r"(?im)^(\s*)ENV\s+(.+?)\s*$")
+# Names that are a service's address or a credential: they come from the deploy, never the image.
+_RUNTIME_ONLY = re.compile(r"(?i)(_URL|_URI|_DSN|PASSWORD|SECRET|TOKEN|_KEY)$|^DATABASE")
+# The app's env vars an image may still set: how it serves, not what it connects to.
+_GONE = "\x00"
+_IMAGE_ENV = {"PORT", "HOST", "PATH", "PYTHONPATH", "PYTHONUNBUFFERED", "NODE_ENV", "TZ", "LANG"}
+
+
+def drop_runtime_env(dockerfile: str, app_env: set[str]) -> tuple[str, list[str]]:
+    """Remove ENV settings for the app's own env vars (Scout's list) and for anything that
+    names a service or a credential. A placeholder baked into the image (DATABASE_URL to make
+    the smoke test pass) would reach production; these values come from the deploy."""
+    removed: list[str] = []
+
+    def keep(name: str) -> bool:
+        if name.upper() in _IMAGE_ENV:
+            return True
+        if name in app_env or _RUNTIME_ONLY.search(name):
+            removed.append(name)
+            return False
+        return True
+
+    def rewrite(m: re.Match[str]) -> str:
+        body = m.group(2)
+        if body.endswith("\\"):
+            return m.group(0)  # continued on the next line: left as written
+        try:
+            words = shlex.split(body, posix=False)
+        except ValueError:
+            return m.group(0)
+        if not words:
+            return m.group(0)
+        if "=" not in words[0]:
+            # ENV NAME value (the legacy form): one variable.
+            return m.group(0) if keep(words[0]) else _GONE
+        kept = [w for w in words if keep(w.split("=", 1)[0])]
+        if len(kept) == len(words):
+            return m.group(0)
+        return f"{m.group(1)}ENV {' '.join(kept)}" if kept else _GONE
+
+    lines = _ENV_LINE.sub(rewrite, dockerfile).split("\n")
+    return "\n".join(line for line in lines if line != _GONE), removed
+
+
+def expand_exec_variables(dockerfile: str) -> str:
+    """Docker runs exec-form CMD and ENTRYPOINT (["uvicorn", "--port", "${PORT:-8080}"])
+    without a shell, so a variable there reaches the app as the literal text. Such a line
+    becomes shell form with exec (the app stays PID 1 and gets signals)."""
+
+    def rewrite(m: re.Match[str]) -> str:
+        try:
+            args = json.loads(m.group(3))
+        except ValueError:
+            return m.group(0)
+        if not (isinstance(args, list) and args and all(isinstance(a, str) for a in args)):
+            return m.group(0)
+        if not any("$" in a for a in args) or args[0] in ("sh", "/bin/sh", "bash", "/bin/bash"):
+            return m.group(0)
+        return f"{m.group(1)}{m.group(2)} exec " + " ".join(_shell_word(a) for a in args)
+
+    return _EXEC_FORM.sub(rewrite, dockerfile)
 
 
 def error_summary(result: BuildResult) -> str | None:
@@ -277,8 +378,12 @@ class Builder:
         recorder: CallRecorder,
         on_attempt: Callable[[BuildAttempt], Awaitable[None]],
         on_note: Callable[[str], Awaitable[None]],
+        check: Callable[[BuildOutcome], Awaitable[SmokeResult]] | None = None,
     ) -> BuildOutcome:
-        repo_dockerfile = root / "Dockerfile"
+        """Write (or take the repo's) Dockerfile, build, and fix it until it builds. With
+        `check`, each built image is smoke-tested too, and a failed smoke test is fixed like a
+        failed build (the last attempt keeps its result in outcome.smoke)."""
+        repo_dockerfile = root / (spec.dockerfile or "Dockerfile")
         use_repo = spec.has_dockerfile and repo_dockerfile.is_file()
         source: Literal["repo", "generated", "fixed"]
         model_call: AttemptModelCall | None = None
@@ -298,7 +403,7 @@ class Builder:
             draft: DockerfileDraft = result.parsed
             source, current, rationale = (
                 "generated",
-                clean_dockerfile(draft.dockerfile),
+                await self._without_runtime_env(clean_dockerfile(draft.dockerfile), spec, on_note),
                 draft.rationale,
             )
             model_call = _model_call(result, recorder, "write_dockerfile")
@@ -315,6 +420,25 @@ class Builder:
             built = await self._build_once(
                 root, path, f"gc-build/{app}:{tag}-a{number}", run_id, on_note
             )
+            outcome: BuildOutcome | None = None
+            if built.ok and built.image_ref:
+                outcome = BuildOutcome(
+                    ok=True,
+                    image_ref=built.image_ref,
+                    image_id=await self.sandbox.image_id(built.image_ref),
+                    dockerfile=current,
+                    attempts=attempts,
+                    automatic_fix=fixed,
+                    port=app_port(spec, current),
+                )
+                if check is not None:
+                    outcome.smoke = await check(outcome)
+                    # An app that answers HTTP runs; a 5xx from its health check is about
+                    # what it connects to (a database the sandbox cannot reach), which no
+                    # Dockerfile change fixes. A crash or silence goes back to Builder.
+                    smoke = outcome.smoke
+                    if not smoke.ok and not smoke.answered and number < self.max_attempts:
+                        built = smoke_failure(smoke, built)
             attempt = BuildAttempt(
                 attempt=number,
                 max_attempts=self.max_attempts,
@@ -331,17 +455,19 @@ class Builder:
             )
             attempts.append(attempt)
             await on_attempt(attempt)
-            if built.ok and built.image_ref:
-                return BuildOutcome(
-                    ok=True,
-                    image_ref=built.image_ref,
-                    image_id=await self.sandbox.image_id(built.image_ref),
-                    dockerfile=current,
-                    attempts=attempts,
-                    automatic_fix=fixed,
-                    port=app_port(spec, current),
-                )
+            if built.ok and outcome is not None:
+                return outcome
 
+            if built.unavailable:
+                return self._stopped(
+                    attempts,
+                    current,
+                    "unavailable",
+                    spec,
+                    built.error_lines[0]
+                    if built.error_lines
+                    else "Groundcrew's build service is not available.",
+                )
             signatures.append(signature(built))
             earlier.append(
                 f"attempt {number} ({fix_kinds[-1] or source}): failed at "
@@ -389,7 +515,9 @@ class Builder:
                 escalate=number + 1 >= ESCALATE_FROM_ATTEMPT,
             )
             fix: DockerfileFix = result.parsed
-            fixed_text = clean_dockerfile(fix.dockerfile)
+            fixed_text = await self._without_runtime_env(
+                clean_dockerfile(fix.dockerfile), spec, on_note
+            )
             if fixed_text.strip() == current.strip():
                 return self._stopped(
                     attempts, current, "no_progress", spec, "The fix returned the same Dockerfile."
@@ -402,10 +530,22 @@ class Builder:
         raise AssertionError("unreachable")  # pragma: no cover
 
     @staticmethod
+    async def _without_runtime_env(
+        dockerfile: str, spec: AppSpec, on_note: Callable[[str], Awaitable[None]]
+    ) -> str:
+        text, removed = drop_runtime_env(dockerfile, {e.name for e in spec.env_vars})
+        if removed:
+            await on_note(
+                f"Removed ENV {', '.join(removed)} from the Dockerfile: the app's settings and "
+                "credentials come from the deploy at run time, never from the image."
+            )
+        return text
+
+    @staticmethod
     def _stopped(
         attempts: list[BuildAttempt],
         dockerfile: str,
-        reason: Literal["no_progress", "max_attempts"],
+        reason: Literal["no_progress", "max_attempts", "unavailable"],
         spec: AppSpec,
         error: str,
     ) -> BuildOutcome:

@@ -129,6 +129,49 @@ def test_medic_weights_slow_minutes_but_not_health() -> None:
     assert score(item(marked), set()) >= 3
 
 
+def test_medic_weights_failing_health_and_what_a_deploy_changed() -> None:
+    from app.agents.medic.evidence import score
+
+    def item(text: str) -> EvidenceItem:
+        return EvidenceItem(id="ev-1", source="s", timestamp="t", resource_id=None, line=text)
+
+    target = "load balancer target group web: 0/1 targets healthy (health check HTTP /health)"
+    task = "task 1a2b running for 3 min, health UNHEALTHY; container app health UNHEALTHY"
+    diff = "task definition web:3 vs web:2 (same images and commands: ...): container app: ..."
+    assert score(item(target), set()) >= 3.5
+    assert score(item(task), set()) >= 3.5
+    assert score(item(diff), set()) >= 3
+
+
+def test_no_fix_text_reads_as_sentences_with_the_manual_fix() -> None:
+    from app.agents.medic.agent import _by_hand, _sentences
+    from app.agents.medic.schemas import FixOption, RootCause
+
+    rc = RootCause(
+        summary="s",
+        root_cause="r",
+        confidence="medium",
+        fix_options=[
+            FixOption(kind="ecs_rollback_service", description="Roll back."),
+            FixOption(kind="other", description="Run gunicorn with gthread workers."),
+        ],
+    )
+    text = _sentences(
+        [
+            "No fix Medic can apply",
+            "No emergency action: push the image again, or deploy a fixed revision.",
+            "No fix PR: the deploy is not linked to a commit",
+            *_by_hand(rc),
+        ]
+    )
+    assert text == (
+        "No fix Medic can apply. No emergency action: push the image again, or deploy a fixed "
+        "revision. No fix PR: the deploy is not linked to a commit. To fix it by hand: Run "
+        "gunicorn with gthread workers."
+    )
+    assert _by_hand(rc.model_copy(update={"false_alarm": True})) == []
+
+
 # --- 4. secret versions -----------------------------------------------------------------------
 
 

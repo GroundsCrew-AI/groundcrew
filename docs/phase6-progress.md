@@ -8,11 +8,11 @@ Brief: `docs/prompts/phase6.md`. Plan: `docs/phase6-plan.md`. Re-read both after
 |---|---|---|
 | P6.1 Plan | done 2026-10-21 | draft PR #56 (`phase6-plan`) |
 | P6.2 Code hardening | done 2026-10-21 | draft PR #57 (`phase6-hardening`, stacked on #56) |
-| P6.3 Email sign-in, production GitHub App, AWS connect by upload | done 2026-10-22, waiting for review | draft PR (`phase6-email-github`, stacked on #57) |
-| P6.4 Terraform | not started | |
-| P6.5 Host setup | not started (starts with the build isolation spike, plan section 6.5) | |
-| P6.6 Release pipeline | not started | |
-| P6.7 First production deploy | not started | |
+| P6.3 Email sign-in, production GitHub App, AWS connect by upload | done 2026-10-22 | draft PR #58 (`phase6-email-github`, stacked on #57) |
+| P6.4 Terraform | applied 2026-10-22 | draft PR #60 (`phase6-terraform`, stacked on #58) |
+| P6.5 Host setup | done 2026-10-22 | draft PR #61 (`phase6-host`, stacked on #60) |
+| P6.6 Release pipeline | skipped on 2026-10-22 (no GitHub Actions or GHCR for now): manual deploy from source instead | |
+| P6.7 First production deploy | done 2026-10-22: https://groundkrew.com live | draft PR (`phase6-deploy`, stacked on #61) |
 | P6.8 End-to-end on production | not started | |
 | P6.9 Runbook, final report | not started | |
 
@@ -146,12 +146,194 @@ Open issues for you:
 - Pick the email provider (Resend recommended; Gmail cannot sign mail as groundkrew.com).
 - Create the production GitHub App with the settings in `docs/self-hosting.md` when the server exists.
 
+## P6.4 Terraform (2026-10-22)
+
+Done:
+- `infra/platform/` (see its README). Read-only checks before the plan: account 881050425883 through
+  the `groundcrew-demo` profile, no existing `groundcrew-platform` role or instance profile, no state at
+  the key, no Elastic IPs, t3.large in every zone.
+- Plan reviewed (10 to add, 0 change, 0 destroy), applied after the OK in chat on 2026-10-22:
+
+| | |
+| --- | --- |
+| Instance | `i-0c134cf1e7025c3a8`, t3.large, us-east-2a, Ubuntu 24.04 (`ami-02ad619be5bc165df`) |
+| Elastic IP | **3.19.1.100** (`eipalloc-033ed459504e18ff3`) |
+| Security group | `sg-0ac60553eac39b18b`: 80, 443 from anywhere; 22 from 119.73.108.213/32 |
+| Role | `arn:aws:iam::881050425883:role/groundcrew-platform` (instance profile of the same name) |
+| State | `s3://groundcrew-checkout-tfstate-881050425883/groundcrew/platform.tfstate` |
+
+- `infra/aws-connect.yaml` defaults `GroundcrewPrincipalArn` to the role; `docs/self-hosting.md` says how
+  existing stacks move over. `tests/test_platform_terraform.py` pins the security settings.
+
+Checked on the host after first boot (SSH with ~/.ssh/groundkrew): Ubuntu 24.04.5, ufw active
+(80, 443 anywhere; 22 from 119.73.108.213 only), sshd key-only with no root login and
+`AllowUsers ubuntu`, fail2ban's sshd jail on, unattended-upgrades on with 04:00 reboots, 4 GiB swap,
+77 GB root, only sshd listening publicly; IMDSv1 refused (401), IMDSv2 gives the
+`groundcrew-platform` role. From outside only 22 answers.
+
+DNS records to add at the registrar (TTL 300): `groundkrew.com A 3.19.1.100`,
+`www.groundkrew.com A 3.19.1.100`, `api.groundkrew.com A 3.19.1.100`, and recommended
+`groundkrew.com CAA 0 issue "letsencrypt.org"`.
+
+## P6.5 Host setup (2026-10-22)
+
+Done:
+- **Spike on the host** (results in plan section 6.3a): gVisor under the rootless daemon works with
+  `--ignore-cgroups`; per-container limits are replaced by limits on the build user's slice (memory bomb
+  and fork bomb held, host unaffected); BuildKit builds inside gVisor, unprivileged; the owner-match
+  firewall blocks the metadata service and every internal address while the internet works.
+- **`infra/platform/host/`**: `install.sh` with steps 10 to 50, `push.sh`, the production `compose.yml`,
+  nginx configs, the `gc-*` commands. Ran on the host twice (the second run changed nothing). Checked:
+  30 GB XFS build filesystem, slice limits, gcbuild uid/gid 1500, firewall chains, nginx dropping bare-IP
+  requests and serving only ACME challenges until the certificate, fail2ban (sshd, nginx-limit-req),
+  timers (certbot, build sweeper), journald retention, only 22 and 80 listening publicly.
+- **`gc-isolation-check` on the host: all pass** (metadata service, host private and public addresses,
+  loopback, Docker bridge, a stand-in internal service: unreachable from a build; internet reachable;
+  gVisor kernel; a non-API container on the main daemon cannot reach the metadata service). The run
+  against the real Postgres and API comes in P6.7.
+- **Code**: `SANDBOX_PROVIDER=isolated` (`app/sandbox/isolated.py`), the worker heartbeat for its health
+  check. Tests: `tests/test_sandbox_isolated.py`, `tests/test_platform_host.py`.
+- Tests: API 1157 passed, 6 skipped (a token test that expired during the now longer suite was made
+  to build its tokens when it runs).
+- Hardening beyond the plan: `api.groundkrew.com` serves only the run stream, the GitHub webhook,
+  `/health` and `/ready`; all other API calls go through the web app's proxy inside the host.
+
+Open issues:
+- The Compose services start in P6.6/P6.7, once the release pipeline publishes the images.
+- `gc-certs issue` accepts the Let's Encrypt Subscriber Agreement only with `--agree-tos`, which needs
+  your OK in P6.7.
+
+## Change of plan (2026-10-22): manual deploys from source, then P6.7
+
+P6.6 (GitHub Actions, GHCR, pull-based updater) is skipped for now. Instead:
+- `infra/platform/bin/deploy <ref>` / `rollback` (our wrappers in `ops/bin/`, git-ignored): `git archive`
+  over SSH, `gc-release` builds the images on the host, migrates, rolls out worker, api, web with health
+  checks, checks HTTPS, and rolls back on failure; 3 releases kept; going back runs no migrations.
+- Production web image (`apps/web/Dockerfile`, standalone, uid 10001) and `/api/health`.
+- SSH is a list of admin addresses (Terraform `admin_cidrs`, ufw follows through `push.sh`).
+
+## P6.7 First production deploy (2026-10-22)
+
+Steps, each OK'd in chat:
+1. Security group: SSH also from the new admin address (Terraform, 1 added, 1 changed in place). ufw on
+   the host still allowed only the old one; recovered by stop, a one-line `bootcmd` user data, start
+   (the host came back with everything running). The original user data is saved; put it back at the
+   next planned stop.
+2. Secrets on the host: `SMTP_PASSWORD` (set by you), `TOKEN_FACTORY_API_KEY` and `TAVILY_API_KEY` (piped
+   from the local `.env`, never printed).
+3. Certificates: `gc-certs issue` for groundkrew.com, www, api (Let's Encrypt, expires 2027-01-19,
+   renewed by certbot's timer, weekly dry run). Fixed on the way: Ubuntu's own `ssl_protocols` made the
+   site a duplicate; TLS settings now live at http level, so TLS 1.1 is refused on every server; a
+   default HTTPS server refuses the handshake for other names; `/signin` no longer redirects; no duplicate
+   HSTS. OCSP stapling: the certificate has no OCSP URL (Let's Encrypt dropped OCSP), so there is nothing
+   to staple; the setting stays for a certificate that has one.
+4. Deploy `13196e0a74bc`: all migrations on a fresh database, worker, api, web healthy, HTTPS checks
+   passed.
+
+Checks over HTTPS from outside: landing, sign-in, Terms 200; `/aws-connect.yaml` 200; private pages
+redirect to sign-in; `/api/gc/*` 401 without a session, 403 for a cross-origin write; on
+api.groundkrew.com only `/ready`, `/health`, the run stream (401 with a bad token) and the webhook (503
+until its secret is set) answer, everything else 404; HTTP and www redirect to https://groundkrew.com;
+TLS 1.2 and 1.3 only; CSP with nonce, HSTS, X-Frame-Options DENY, nosniff, Referrer-Policy,
+Permissions-Policy, COOP; cookies `__Host-`/`__Secure-`, HttpOnly, Secure, SameSite=Lax.
+
+On the host: `gc-isolation-check` passes against the real Postgres (172.30.0.2:5432) and API
+(172.30.0.4:8000) as well as the metadata service, host addresses, loopback, and the Docker bridge; the
+internet works from builds; builds run on gVisor's kernel. The worker's AWS identity is
+`assumed-role/groundcrew-platform` (no keys); the web container cannot reach the metadata service. All
+app containers run as uid 10001, Postgres as 999; Postgres has no published port.
+
+Later the same day:
+- Production GitHub App `groundcrew-app` (GroundsCrew-AI) created by you with the documented settings;
+  its id, client id and secret, webhook secret, and private key set with `gc-secrets`. The server
+  authenticates as the app (checked: permissions actions read, contents write, emails read, metadata
+  read, pull requests write). "Continue with GitHub" is on the sign-in page; unsigned webhook
+  deliveries get 401.
+- Release `14423f78caf4` (Groundcrew favicon, SVG icon, Apple touch icon) deployed; `13196e0a74bc` kept
+  for rollback.
+
+UI pass (2026-10-22, on `phase6-deploy`): release `57f18be6afa5` live, `14423f78caf4` kept for rollback.
+All public pages and docs return 200 on https://groundkrew.com, no console errors, no horizontal scroll at 375 px.
+- Landing page rebuilt: hero with an illustrated incident and approval, works-with strip, four
+  feature sections with drawn mockups, safety grid, steps, agents, FAQ, closing call to action.
+  Sticky public header with a phone menu; footer with Product, Docs, Trust links.
+- Docs: sidebar layout, "On this page", Previous/Next; new pages getting-started, discovery, deploys,
+  incidents, notifications, roles, approvals, limits, data, faq; connect guides expanded with
+  troubleshooting. Kubernetes guide now links the RBAC files in the repository (those links work once
+  the repository is public).
+- App: connection actions wrap on phones (were clipped), two-column overview stats on phones,
+  operator wording removed from the Kubernetes and GitHub connect dialogs.
+- Checked: tsc, eslint, vitest (252), Playwright e2e (5) plus signed-in screenshots at 1440 and 390 px
+  with no horizontal scroll, public pages at 360 px, production web image serves every public page.
+- Unconfirmed in the docs: Slack error names in notifications troubleshooting, and the limits page
+  pointing people to the Security page contact to ask for higher limits.
+
+Deploy fix (2026-10-22): release `5aa49f3d7482` live, `57f18be6afa5` kept for rollback.
+- Deploys failed at the first clone with EACCES on /scratch: a named volume Docker created owned by
+  root, while the worker runs as uid 10001 on a read-only root filesystem.
+- /scratch is now a tmpfs owned by the service uid (worker 512m, api 64m), TMPDIR and HOME point at
+  it, worker mem_limit 1280m. API and worker refuse to start when TMPDIR is not writable.
+- Checked on the server: worker /scratch is tmpfs 10001:10001 0700, a clone of
+  GroundsCrew-AI/legacy-flask-app lands there. A deploy from the Deploy page still to be run.
+- The unused `groundcrew_worker-scratch` volume is still on the server (remove later).
+
+Build, Medic, and setup fixes (2026-10-22): release `e111b5269f33` live, `57f18be6afa5` kept.
+- Builds: the rootless daemon's socket had a sub-gid group (300987) the worker is not in; daemon.json
+  sets "group": "root" (gcbuild 1500 on the host). Step 20 restarts the worker after the daemon, since
+  its bind mount pins the old socket. gc-isolation-check now checks the worker reaches the daemon (ok).
+- Builder stops at once when the build service is down. Medic rolls back only to revisions whose ECR
+  images and secrets still exist, names the stack parameter on AccessDenied, shows giving up once.
+- Emergency-fix setup: values from discovery (GET /connections/{id}/aws/operate-values), Verify refuses
+  a role that reaches no discovered service. Connect dialogs restyled as titled steps.
+- Limits raised in ops/production.env (Tavily 50/day, builds 30/day, 4 runs at once, 25 connections,
+  $5 per workspace a day, $30 platform a day, $0.60 a run). LLM_TOTAL_USD_CAP still $25.
+- Checkout environment (outside Groundcrew): rebuilt by Terraform with empty ECR repositories and DB;
+  images for af3758a pushed, migrations run, services back on revision 31. The checkout-demo repository
+  variables ECS_SUBNETS and ECS_TASK_SECURITY_GROUP still name the old VPC.
+
+Medic diagnosis grounding (2026-10-22): release `c4c492349fda` live, `e111b5269f33` kept for rollback.
+From the legacy-flask-app incident,
+where Medic blamed task definition :3 with high confidence for gunicorn "no URI read" worker
+timeouts although the worker settings had not changed, and never read why the service was unhealthy.
+- ECS reader (`app/telemetry/ecs.py`) now also reads the running tasks' health, the service's
+  load balancer target groups (health check path, port, matcher, and why each target fails),
+  and compares each deploy's task definition with the one before it: image, command,
+  environment and secret names (never values), limits. A deploy with the same images and
+  commands is marked as shipping no new application code. No new permissions: the connect
+  template already allows DescribeTaskDefinition, DescribeTargetGroups, DescribeTargetHealth.
+- Diagnosis rules: a deploy before the errors is not proof; timing alone or contradicted
+  evidence caps confidence at medium; failing health checks name the symptom; idle-connection
+  worker timeouts are not "every request hangs". New ranking weights for health and deploy diffs.
+- When Medic cannot fix it, the outcome adds the diagnosis's manual fix ("To fix it by hand:
+  ..."), and notes read as sentences (no more "revision.; No fix PR"). "no longer exist" for
+  several missing items.
+- Teammate code touched (Phase 5, for review): app/agents/medic/agent.py*, diagnose.py*,
+  evidence.py*, app/telemetry/ecs.py*.
+
+Medic, broken-env follow-up (2026-10-22): release `516fa029aa8e` live, `c4c492349fda` kept for rollback.
+- The deploy comparison invented "DATABASE_URL now from another secret": a forced redeploy
+  reused revision :31, ECS no longer listed the old deployment, and :31 was compared with :30
+  from before the environment was rebuilt. A revision registered more than 15 minutes before
+  its deploy is now reported as reused (no task definition change; tasks re-read secrets);
+  the diagnosis rules point at the secret change before such a deploy.
+- A refused secret now names the secret and the stack value that survives a rebuild
+  (`...:secret:<name>-*`); `secretsmanager:DescribeSecret` is no longer redacted in summaries.
+- Live: the checkout stack's OperateSecretArns does not cover the recreated
+  checkout/database-url secret, so the secret rollback was refused. Update the stack with the
+  value from the Emergency-fix dialog.
+
+Open issues:
+- The automatic rollback path has unit-level logic only; it has not been exercised live (a deploy of a
+  commit that fails its health check would show it).
+- Restore the instance's original user data at the next stop (saved in the session scratchpad and in
+  Terraform: `terraform apply -replace` would also rebuild it).
+
 ## Cost
 
 | Item | Monthly |
 |---|---|
 | Planned run rate (t3.large unlimited, 80 GiB gp3, Elastic IP) | about $71, up to about $81 with many builds |
-| Spent so far in Phase 6 | $0 |
+| Spent so far in Phase 6 | the platform host runs from 2026-10-22: about $2.35 a day (instance, volume, IPv4); model calls bounded by the caps |
 
 ## How to resume
 

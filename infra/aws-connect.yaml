@@ -17,8 +17,10 @@ Parameters:
   GroundcrewPrincipalArn:
     Type: String
     Description: >-
-      Groundcrew's platform identity, the only principal allowed to assume the role (prefilled
-      by the Connect AWS link).
+      Groundcrew's platform identity, the only principal allowed to assume the role: the
+      groundcrew-platform role of the Groundcrew service at groundkrew.com (the default). A
+      self-hosted Groundcrew shows its own on the Connections page.
+    Default: arn:aws:iam::881050425883:role/groundcrew-platform
     AllowedPattern: "^arn:aws:iam::[0-9]{12}:(root|user/.+|role/.+)$"
   ExternalId:
     Type: String

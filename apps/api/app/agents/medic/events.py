@@ -62,6 +62,7 @@ DetectorRule = Literal[
     "alb_5xx",  # a load balancer's 5xx share (its targets' and its own)
     "alb_unhealthy_targets",  # a target group's targets fail their health checks
     "alb_latency",  # a load balancer's p95 target response time
+    "agent_service_down",  # a service a Groundcrew agent watches stopped (exited, failed)
     "user_report",
     "other",
 ]

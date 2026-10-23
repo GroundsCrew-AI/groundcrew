@@ -325,6 +325,31 @@ IMDS (instance role credentials), other builds, or the host's files; and it must
   protocol, same `BuildResult` parsing (BuildKit's plain output is the same), the per-run builder lifecycle,
   probe-container smoke check, and the cleanup above. Local dev keeps `docker` with dind.
 
+### 6.3a What the spike on the host found (2026-10-22), and what was built
+
+- gVisor runs as the default runtime of the rootless daemon only with `runsc --ignore-cgroups`: runsc
+  cannot place sandboxes in cgroups as an unprivileged user. Docker's per-container `--memory`,
+  `--pids-limit` and `--cpus` are then not enforced. **Limits are enforced on the build user's systemd
+  slice instead** (3.5 GB memory, 4096 tasks, 2 CPUs); with one build at a time that is the per-build
+  limit. Checked: a 6 GB memory bomb and a fork bomb were held at the slice ceilings and the host and
+  the main daemon were unaffected.
+- BuildKit runs inside gVisor with `--oci-worker-no-process-sandbox`; a pip-installing Python image
+  built in 30 to 46 s, and `RUN` steps see gVisor's kernel. The sandbox starts the BuildKit container
+  itself and drives it with buildx's `remote` driver.
+- **Changed 2026-10-23:** the rootless BuildKit image lost every file owner (an image's `appuser` got a
+  root-owned home with mode 700, so apps that write or read their home failed: asyncpg's
+  `PermissionError` on `~/.postgresql`). A check in the build daemon (`useradd` plus `chown`, three
+  ways) showed only BuildKit's standard image, as the container's root, **privileged**, with the
+  `native` snapshotter keeps owners (`/home/appuser` 1000:1000). Without `--privileged` it cannot
+  mount its snapshots. Privileged here means inside the rootless daemon (gcbuild's sub-uids) and inside
+  gVisor (its kernel), never the host's; no host mounts, ports, or host network. `gc-isolation-check`
+  must pass after the change.
+- Docker's embedded DNS does not work under gVisor on user-defined networks, so build and smoke
+  containers use the daemon's default bridge with public resolvers, and the probe reaches the app by
+  address. Builds run one at a time, so no other run shares that network.
+- All traffic from the rootless daemon leaves through `slirp4netns` as `gcbuild`, so the owner-match
+  rules cover it; DNS for the daemon's own pulls goes to the local resolver, which is allowed.
+
 ### 6.4 Tests and live checks
 
 - Unit (CI): the exact `docker` arguments for each step (runtime runsc, no `--privileged`, no `-v`/`--mount`

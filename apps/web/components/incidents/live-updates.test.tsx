@@ -51,6 +51,27 @@ describe("Medic verify rounds", () => {
     ]);
   });
 
+  it("shows Medic giving up once, not as a status change and a failure", () => {
+    const reason = "No fix Medic can apply. No emergency action: not allowed.";
+    const updated = (seq: number, why: string) =>
+      dstep(seq, {
+        type: "incident_updated",
+        incident_id: "i",
+        status: "failed",
+        previous_status: "investigating",
+        reason: why,
+        merged_into: null,
+        followups: null,
+        at: "2026-10-22T00:00:00Z",
+      });
+    const steps = [
+      updated(1, reason),
+      dstep(2, { type: "incident_failed", incident_id: "i", reason, still_failing: [], cost_usd: null }),
+      updated(3, "something else"),
+    ];
+    expect([...collapseVerifySteps(steps).hidden]).toEqual([1]);
+  });
+
   it("says waiting, not Failed, before the deadline, and lists a repeated check once", () => {
     const { rerender } = render(
       <DeployStep step={round(3, { waiting: "checkout-api rollout IN_PROGRESS" })} rounds={3} />,

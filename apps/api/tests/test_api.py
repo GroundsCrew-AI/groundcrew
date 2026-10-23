@@ -559,3 +559,80 @@ async def test_cors_allows_only_the_web_origin(client: httpx.AsyncClient) -> Non
         headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"},
     )
     assert "access-control-allow-origin" not in other.headers
+
+
+async def test_activity_has_every_day_and_counts_by_agent(
+    client: httpx.AsyncClient, alice: Member, bob: Member, session_factory: SessionFactory
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.db.models import Incident
+
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        for agent, status in [
+            ("deploy", RunStatus.succeeded),
+            ("deploy", RunStatus.failed),
+            ("medic", RunStatus.stopped),
+            ("discovery", RunStatus.running),
+        ]:
+            session.add(
+                Run(
+                    workspace_id=alice.workspace_id,
+                    agent=agent,
+                    goal="g",
+                    status=status,
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                    started_at=now - timedelta(seconds=30),
+                    finished_at=now,
+                )
+            )
+        # Older than the window: not counted.
+        session.add(
+            Run(
+                workspace_id=alice.workspace_id,
+                agent="deploy",
+                goal="old",
+                status=RunStatus.succeeded,
+                created_at=now - timedelta(days=30),
+            )
+        )
+        session.add(Incident(workspace_id=alice.workspace_id, title="down", severity="high"))
+        session.add(
+            Incident(
+                workspace_id=alice.workspace_id,
+                title="fixed",
+                status="resolved",
+                created_at=now - timedelta(hours=2),
+                resolved_at=now,
+            )
+        )
+        await session.commit()
+    await PgUsageStore(session_factory, alice.workspace_id).add(Decimal("0.25"), 400)
+
+    url = f"/workspaces/{alice.workspace_id}/activity"
+    data = (await client.get(url, params={"days": 7}, headers=alice.headers)).json()
+    assert len(data["days"]) == 7
+    today = data["days"][-1]
+    assert today["runs"] == {"deploy": 2, "medic": 1, "discovery": 1}
+    assert (today["succeeded"], today["failed"]) == (1, 2)
+    assert (today["usd"], today["tokens"]) == (0.25, 400)
+    # One opened two hours ago (yesterday, just after midnight UTC), one now.
+    assert sum(d["incidents_opened"] for d in data["days"]) == 2
+    assert today["incidents_resolved"] == 1
+    assert all(d["runs"] == {} for d in data["days"][:-1])  # the 30-day-old run is outside
+    deploy = next(a for a in data["agents"] if a["agent"] == "deploy")
+    assert deploy == {
+        "agent": "deploy",
+        "runs": 2,
+        "succeeded": 1,
+        "failed": 1,
+        "tokens": 30,
+        "median_seconds": 30.0,
+    }
+    assert data["agents"][0]["agent"] == "deploy"  # most runs first
+    assert data["open_by_severity"] == {"high": 1}
+    assert data["median_resolve_seconds"] == pytest.approx(7200, abs=5)
+    assert (await client.get(url, headers=bob.headers)).status_code == 404
+    assert (await client.get(url, params={"days": 2}, headers=alice.headers)).status_code == 422

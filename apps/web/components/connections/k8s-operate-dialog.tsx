@@ -9,6 +9,7 @@ import { useWorkspace } from "@/lib/workspace";
 
 import { isOperate } from "./aws-operate-dialog";
 import { CopyField } from "./copy-field";
+import { SetupStep, SetupSteps } from "./setup-steps";
 
 export const K8S_OPERATE_ALLOWS = [
   "Roll a Deployment or StatefulSet back to its previous revision (kubectl rollout undo)",
@@ -19,7 +20,7 @@ export const K8S_OPERATE_ALLOWS = [
 /**
  * Turn approved emergency fixes on or off for a connected cluster. Turning them on means
  * granting the kubeconfig's identity patch on Deployments and StatefulSets
- * (infra/k8s-operate-rbac.yaml);
+ * (k8s-operate-rbac.yaml, served at /k8s-operate-rbac.yaml);
  * Groundcrew checks that with access reviews before it uses it.
  */
 export function K8sOperateDialog({
@@ -34,6 +35,8 @@ export function K8sOperateDialog({
   const { workspace } = useWorkspace();
   const setOperate = useK8sSetOperate(workspace?.id);
   const enabling = !isOperate(connection);
+  // The RBAC file is served by this Groundcrew site, so the command works from any machine.
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
 
   function close(next: boolean) {
     onOpenChange(next);
@@ -67,22 +70,25 @@ export function K8sOperateDialog({
         </DialogHeader>
         {enabling && (
           <>
-            <ol className="list-decimal space-y-2 pl-5 text-[13px] leading-relaxed">
-              <li className="space-y-2">
+            <SetupSteps>
+              <SetupStep n={1} title="Give the service account the rights to roll back and restart">
+                <p>Apply this with your own kubectl, as someone who may create RBAC objects in the cluster:</p>
+                <CopyField label="Command" value={`kubectl apply -f ${origin}/k8s-operate-rbac.yaml`} />
                 <p>
-                  Give the service account in this kubeconfig the rights below. For the read-only account from{" "}
-                  <span className="font-mono">infra/k8s-readonly-rbac.yaml</span>, apply:
+                  It binds a ClusterRole to the read-only service account from{" "}
+                  <a href="/k8s-readonly-rbac.yaml" className="font-mono text-foreground underline underline-offset-2">
+                    k8s-readonly-rbac.yaml
+                  </a>
+                  . To limit it to your app&apos;s namespaces, bind the same ClusterRole with a RoleBinding in each one.
                 </p>
-                <CopyField label="Command" value="kubectl apply -f infra/k8s-operate-rbac.yaml" />
-                <p className="text-muted-foreground">
-                  To limit it to your app&apos;s namespaces, bind the same ClusterRole with a RoleBinding in each one.
+              </SetupStep>
+              <SetupStep n={2} title="Click Verify">
+                <p>
+                  Groundcrew asks the cluster whether this kubeconfig may patch Deployments or StatefulSets in the
+                  namespaces of your discovered workloads.
                 </p>
-              </li>
-              <li>
-                Click <span className="font-medium">Verify</span>: Groundcrew asks the cluster whether this kubeconfig may
-                patch Deployments or StatefulSets in the namespaces of your discovered workloads.
-              </li>
-            </ol>
+              </SetupStep>
+            </SetupSteps>
             <ul className="space-y-1 rounded-md border px-3 py-2 text-[12.5px] text-muted-foreground">
               {K8S_OPERATE_ALLOWS.map((line) => (
                 <li key={line}>{line}</li>

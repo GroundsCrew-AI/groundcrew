@@ -1,3 +1,8 @@
 node_modules
 .next
 .env*
+e2e
+test-results
+playwright-report
+*.test.ts
+*.test.tsx

@@ -36,6 +36,7 @@ def _prod(**overrides: Any) -> Settings:
         "internal_jwt_secret": SecretStr("test-internal-jwt-secret-0123456789abcdef"),
         "approval_token_key": SecretStr(SECRET),
         "web_origin": "https://groundkrew.com",
+        "agent_api_url": "https://api.groundkrew.com",
         "smtp_host": "smtp.resend.com",
         # conftest turns it on for the fake API servers on 127.0.0.1.
         "k8s_allow_private_servers": None,
@@ -196,3 +197,12 @@ async def test_password_and_google_can_be_turned_back_on(client: httpx.AsyncClie
     )
     options = (await client.get("/auth/options", headers=service_headers())).json()
     assert options["password"] is True and options["google"] is True
+
+
+async def test_test_runs_are_not_found(client: httpx.AsyncClient, alice: Member) -> None:
+    r = await client.post(
+        "/runs",
+        json={"agent": "echo_ops", "goal": "x", "workspace_id": str(alice.workspace_id)},
+        headers=alice.headers,
+    )
+    assert r.status_code == 404 and "local development" in r.json()["detail"]

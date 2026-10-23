@@ -41,6 +41,171 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/v1/commands/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll Commands
+         * @description Approved commands for this agent, waiting up to POLL_SECONDS for one. Expired commands
+         *     are marked so; a command is handed out once (status sent).
+         */
+        post: operations["poll_commands_agent_v1_commands_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/commands/{command_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Command Result
+         * @description What the agent did with a command (ran it, or refused it and why).
+         */
+        post: operations["command_result_agent_v1_commands__command_id__result_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/commands/{command_id}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Command Secrets
+         * @description A deploy's registry login and env values, for the agent running it: once, while the
+         *     command is handed out, and then wiped.
+         */
+        post: operations["command_secrets_agent_v1_commands__command_id__secrets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enroll
+         * @description Trade a one-time join token for this agent's place in the workspace. A new token for an
+         *     enrolled agent (a reinstall) replaces its key.
+         */
+        post: operations["enroll_agent_v1_enroll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Events
+         * @description The services' live state and what happened since the last report. A detector rule that
+         *     starts firing for a service opens (or joins) an incident on it.
+         */
+        post: operations["events_agent_v1_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Heartbeat */
+        post: operations["heartbeat_agent_v1_heartbeat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inventory
+         * @description The services the agent watches. A change is stored and starts a discovery of this
+         *     connection, which puts them on the Map (and marks services no longer listed as stale).
+         */
+        post: operations["inventory_agent_v1_inventory_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agent/v1/registry-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Registry Login
+         * @description A fresh pull login for the images Groundcrew deploys through this agent (None: a public
+         *     repository needs none). Kubernetes and
+         *     ECS pull again whenever a pod or task starts, long after a deploy's own login expired, so
+         *     the agent refreshes its pull secrets with this (every few minutes).
+         */
+        post: operations["registry_login_agent_v1_registry_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/approvals/{approval_id}/decide": {
         parameters: {
             query?: never;
@@ -272,6 +437,27 @@ export interface paths {
         get: operations["list_connections_connections_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent Connect
+         * @description Add a Groundcrew agent: a connection that waits for the agent to enroll with the one-time
+         *     join token returned here (shown once; only its hash is kept).
+         */
+        post: operations["agent_connect_connections_agent_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -530,6 +716,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/{connection_id}/agent/registry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Agent Set Registry
+         * @description Deploys to this agent keep their images in this registry instead of the Groundcrew
+         *     registry: a username and token (stored encrypted, never returned; the agent gets them only
+         *     while it runs a deploy), or Amazon ECR through an AWS connection with the deploy
+         *     capability (a fresh login per deploy).
+         */
+        put: operations["agent_set_registry_connections__connection_id__agent_registry_put"];
+        post?: never;
+        /**
+         * Agent Clear Registry
+         * @description Back to the Groundcrew registry (the saved token is deleted).
+         */
+        delete: operations["agent_clear_registry_connections__connection_id__agent_registry_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connection_id}/agent/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent New Token
+         * @description A new join token (the old one stops working): to finish a setup whose token expired, or
+         *     to reinstall the agent, whose new key then replaces the old one.
+         */
+        post: operations["agent_new_token_connections__connection_id__agent_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connection_id}/aws/operate": {
         parameters: {
             query?: never;
@@ -547,6 +781,28 @@ export interface paths {
          *     still needs a person's approval.
          */
         post: operations["aws_set_operate_connections__connection_id__aws_operate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{connection_id}/aws/operate-values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Aws Operate Values
+         * @description The Operate* stack parameters for this account, from what discovery found: one
+         *     wildcard per ECS cluster, the services' roles, Lambda functions, secrets, and instances.
+         *     Groundcrew's own resources are left out.
+         */
+        get: operations["aws_operate_values_connections__connection_id__aws_operate_values_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -720,6 +976,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deploys/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Repo Services
+         * @description The folders of a repository that deploy on their own (api/, web/, services/billing/),
+         *     read from GitHub without cloning. The deploy form asks which one when there are several.
+         */
+        get: operations["repo_services_deploys_services_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deploys/{deploy_id}": {
         parameters: {
             query?: never;
@@ -756,6 +1033,33 @@ export interface paths {
          *     (no rebuild). Values are handled like POST /deploys: encrypted in the job, never echoed.
          */
         post: operations["update_env_deploys__deploy_id__env_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deploys/{deploy_id}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deploy Settings
+         * @description The env names this deploy runs with (never values), and whether they can be changed.
+         */
+        get: operations["deploy_settings_deploys__deploy_id__settings_get"];
+        put?: never;
+        /**
+         * Change Settings
+         * @description Change a live deploy's env vars without a rebuild: a new deploy run that skips Scout,
+         *     Build, and Smoke, plans the running image with the new values, and waits for approval
+         *     like any deploy. Values are handled like POST /deploys: encrypted in the job, never
+         *     echoed, never stored. Names not set or removed keep their values on the target.
+         */
+        post: operations["change_settings_deploys__deploy_id__settings_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1151,6 +1455,26 @@ export interface paths {
         patch: operations["update_workspace_workspaces__workspace_id__patch"];
         trace?: never;
     };
+    "/workspaces/{workspace_id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Activity
+         * @description Daily runs, outcomes, spend, and incidents for the overview, oldest day first.
+         */
+        get: operations["activity_workspaces__workspace_id__activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspace_id}/approvals": {
         parameters: {
             query?: never;
@@ -1354,6 +1678,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspace_id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tokens */
+        get: operations["list_tokens_workspaces__workspace_id__tokens_get"];
+        put?: never;
+        /**
+         * Create Token
+         * @description A new token, shown once. It acts as you, in this workspace only.
+         */
+        post: operations["create_token_workspaces__workspace_id__tokens_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspace_id}/tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Token
+         * @description Stops the token at once.
+         */
+        delete: operations["revoke_token_workspaces__workspace_id__tokens__token_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspace_id}/usage": {
         parameters: {
             query?: never;
@@ -1409,7 +1774,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "agent_rollback_service";
             /**
              * Connection Id
              * Format: uuid
@@ -1442,7 +1807,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart";
+            action: "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "agent_rollback_service";
             /** Details */
             details?: {
                 [key: string]: string;
@@ -1466,6 +1831,159 @@ export interface components {
             started_at: string;
             /** Summary */
             summary: string;
+        };
+        /** ActivityDay */
+        ActivityDay: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Failed */
+            failed: number;
+            /** Incidents Opened */
+            incidents_opened: number;
+            /** Incidents Resolved */
+            incidents_resolved: number;
+            /** Runs */
+            runs: {
+                [key: string]: number;
+            };
+            /** Succeeded */
+            succeeded: number;
+            /** Tokens */
+            tokens: number;
+            /** Usd */
+            usd: number;
+        };
+        /** AgentActivity */
+        AgentActivity: {
+            /** Agent */
+            agent: string;
+            /** Failed */
+            failed: number;
+            /** Median Seconds */
+            median_seconds: number | null;
+            /** Runs */
+            runs: number;
+            /** Succeeded */
+            succeeded: number;
+            /** Tokens */
+            tokens: number;
+        };
+        /** AgentConnectIn */
+        AgentConnectIn: {
+            /**
+             * Name
+             * @example web-1 (Hetzner)
+             */
+            name: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /**
+         * AgentJoinOut
+         * @description A new agent connection (or a new token for one). The token is shown only here.
+         */
+        AgentJoinOut: {
+            /** Api Url */
+            api_url: string;
+            connection: components["schemas"]["ConnectionOut"];
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Token */
+            token: string;
+        };
+        /**
+         * AgentOut
+         * @description A Groundcrew agent's state (connection kind `agent`).
+         */
+        AgentOut: {
+            /** Arch */
+            arch?: string | null;
+            /** Deploy Services */
+            deploy_services?: string[];
+            /** Enrolled */
+            enrolled: boolean;
+            /** Enrolled At */
+            enrolled_at?: string | null;
+            /** Hostname */
+            hostname?: string | null;
+            /** Join Expires At */
+            join_expires_at?: string | null;
+            /** Last Seen At */
+            last_seen_at?: string | null;
+            /**
+             * Latest Version
+             * @default 0.6.1
+             */
+            latest_version: string;
+            /** Online */
+            online: boolean;
+            /** Os */
+            os?: string | null;
+            /**
+             * Registry
+             * @default groundcrew
+             */
+            registry: string;
+            /**
+             * Registry Auth
+             * @default groundcrew
+             * @enum {string}
+             */
+            registry_auth: "groundcrew" | "token" | "ecr";
+            /** Registry Aws Connection Id */
+            registry_aws_connection_id?: string | null;
+            /**
+             * Registry Token Saved
+             * @default false
+             */
+            registry_token_saved: boolean;
+            /** Registry Username */
+            registry_username?: string | null;
+            /**
+             * Services
+             * @default 0
+             */
+            services: number;
+            /**
+             * Update Available
+             * @default false
+             */
+            update_available: boolean;
+            /** Version */
+            version?: string | null;
+        };
+        /**
+         * AgentRegistryIn
+         * @description The agent's own registry for deploys (instead of the Groundcrew registry): the same
+         *     choices as a Kubernetes cluster's (K8sDeploySettingsIn), without the cluster settings.
+         */
+        AgentRegistryIn: {
+            /** Aws Connection Id */
+            aws_connection_id?: string | null;
+            /**
+             * Registry
+             * @example ghcr.io/acme
+             */
+            registry: string;
+            /**
+             * Registry Auth
+             * @default token
+             * @enum {string}
+             */
+            registry_auth: "token" | "ecr";
+            /** Token */
+            token?: string | null;
+            /** Username */
+            username?: string | null;
         };
         /** ApprovalOut */
         ApprovalOut: {
@@ -1630,6 +2148,29 @@ export interface components {
         AwsOperateIn: {
             /** Enabled */
             enabled: boolean;
+        };
+        /**
+         * AwsOperateValuesOut
+         * @description What to put in the groundcrew-read-only stack's Operate* parameters, from the
+         *     resources Groundcrew discovered in this account. An empty list: leave that parameter at its
+         *     default (it matches nothing). Groundcrew's own resources are never suggested.
+         */
+        AwsOperateValuesOut: {
+            /**
+             * Discovered
+             * @description False until a discovery of this account has run.
+             */
+            discovered: boolean;
+            /** Functions */
+            functions: string[];
+            /** Instances */
+            instances: string[];
+            /** Pass Roles */
+            pass_roles: string[];
+            /** Secrets */
+            secrets: string[];
+            /** Services */
+            services: string[];
         };
         /**
          * AwsRegionsIn
@@ -1842,6 +2383,38 @@ export interface components {
             /** Text */
             text: string;
         };
+        /**
+         * CommandOut
+         * @description A command to run: `payload` is the exact signed JSON text, `signature` its base64
+         *     Ed25519 signature by Groundcrew's command key.
+         */
+        CommandOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Payload */
+            payload: string;
+            /** Signature */
+            signature: string;
+        };
+        /** CommandResultIn */
+        CommandResultIn: {
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
+        };
+        /**
+         * CommandSecretsOut
+         * @description What a deploy needs and the payload does not carry. Returned once.
+         */
+        CommandSecretsOut: {
+            /** Env */
+            env?: components["schemas"]["EnvOut"][];
+            registry?: components["schemas"]["RegistryLoginOut"] | null;
+        };
         /** ConnectionCleanup */
         ConnectionCleanup: {
             /** Connection */
@@ -1867,13 +2440,14 @@ export interface components {
          * ConnectionKind
          * @enum {string}
          */
-        ConnectionKind: "aws" | "github" | "vercel" | "azure" | "k8s";
+        ConnectionKind: "aws" | "github" | "vercel" | "azure" | "k8s" | "agent";
         /** ConnectionOut */
         ConnectionOut: {
             /** Access */
             access?: string[];
             /** Account */
             account?: string | null;
+            agent?: components["schemas"]["AgentOut"] | null;
             /** Capabilities */
             capabilities?: ("observe" | "deploy" | "operate")[] | null;
             /** Configmap Changes */
@@ -1963,6 +2537,8 @@ export interface components {
              * Format: uuid
              */
             target_connection_id: string;
+            /** Target Service */
+            target_service?: string | null;
             /**
              * Workspace Id
              * Format: uuid
@@ -2015,6 +2591,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Kind
+             * @default deploy
+             * @enum {string}
+             */
+            kind: "deploy" | "settings";
             /** Live Url */
             live_url: string | null;
             plan: components["schemas"]["DeployPlan"] | null;
@@ -2161,7 +2743,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "k8s" | "aws_ecs";
+            target: "k8s" | "aws_ecs" | "agent";
             /**
              * Target Connection Id
              * Format: uuid
@@ -2218,7 +2800,30 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "k8s" | "aws_ecs";
+            target: "k8s" | "aws_ecs" | "agent";
+        };
+        /**
+         * DeploySettings
+         * @description GET /deploys/{id}/settings: the env names a live deploy runs with. Groundcrew never
+         *     stores values, so none come back; a change sends only what it sets or removes.
+         */
+        DeploySettings: {
+            /** Blocked */
+            blocked?: string | null;
+            /** Env */
+            env: components["schemas"]["SettingVar"][];
+        };
+        /**
+         * DeploySettingsChange
+         * @description POST /deploys/{id}/settings: a settings change. Nothing is rebuilt: the running image
+         *     runs again with these env values, after the same plan approval as a deploy. Every name
+         *     not set or removed keeps its value on the target.
+         */
+        DeploySettingsChange: {
+            /** Env */
+            env?: components["schemas"]["EnvVarIn"][];
+            /** Remove */
+            remove?: string[];
         };
         /** DeploySourceOut */
         DeploySourceOut: {
@@ -2231,6 +2836,8 @@ export interface components {
              * @enum {string}
              */
             kind: "github" | "fixture";
+            /** Path */
+            path?: string | null;
             /** Ref */
             ref: string | null;
             /** Repo */
@@ -2267,6 +2874,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Kind
+             * @default deploy
+             * @enum {string}
+             */
+            kind: "deploy" | "settings";
             /** Live Url */
             live_url: string | null;
             /**
@@ -2306,7 +2919,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "k8s" | "aws_ecs";
+            kind: "k8s" | "aws_ecs" | "agent";
             /** Name */
             name: string;
         };
@@ -2358,6 +2971,56 @@ export interface components {
              */
             email: string;
         };
+        /** EnrollIn */
+        EnrollIn: {
+            /** Arch */
+            arch: string;
+            /** Hostname */
+            hostname: string;
+            /** Os */
+            os: string;
+            /**
+             * Public Key
+             * @description Base64 of the raw Ed25519 public key
+             */
+            public_key: string;
+            /** Token */
+            token: string;
+            /** Version */
+            version: string;
+        };
+        /** EnrollOut */
+        EnrollOut: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /**
+             * Heartbeat Seconds
+             * @default 30
+             */
+            heartbeat_seconds: number;
+            /**
+             * Inventory Seconds
+             * @default 60
+             */
+            inventory_seconds: number;
+            /** Name */
+            name: string;
+        };
+        /** EnvOut */
+        EnvOut: {
+            /** Name */
+            name: string;
+            /** Value */
+            value: string;
+        };
         /** EnvVarIn */
         EnvVarIn: {
             /**
@@ -2382,6 +3045,11 @@ export interface components {
          *     never shown; `value` is null for secrets and for missing values.
          */
         EnvVarView: {
+            /**
+             * Change
+             * @default null
+             */
+            change: ("add" | "update" | "keep" | "remove") | null;
             /** Name */
             name: string;
             /** Provided */
@@ -2395,6 +3063,35 @@ export interface components {
              * @default null
              */
             value: string | null;
+        };
+        /** EventIn */
+        EventIn: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "state" | "health" | "restart" | "log" | "deploy" | "command";
+            /** Message */
+            message: string;
+            /** Service */
+            service: string;
+        };
+        /** EventsIn */
+        EventsIn: {
+            /** Events */
+            events?: components["schemas"]["EventIn"][];
+            /** States */
+            states?: components["schemas"]["ServiceState"][];
+        };
+        /** EventsOut */
+        EventsOut: {
+            /** Stored */
+            stored: number;
         };
         /** EvidenceCollected */
         EvidenceCollected: {
@@ -2517,7 +3214,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "other";
+            kind: "pull_request" | "ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "agent_rollback_service" | "other";
             /**
              * Target
              * @default null
@@ -2562,6 +3259,8 @@ export interface components {
              * @example py-build-trap
              */
             fixture: string;
+            /** Path */
+            path?: string | null;
         };
         /**
          * FollowUp
@@ -2738,6 +3437,11 @@ export interface components {
              */
             connection_id: string;
             /**
+             * Path
+             * @example api
+             */
+            path?: string | null;
+            /**
              * Ref
              * @example main
              */
@@ -2775,6 +3479,54 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /** HeartbeatIn */
+        HeartbeatIn: {
+            /** Config Hash */
+            config_hash?: string | null;
+            /** Uptime Seconds */
+            uptime_seconds: number;
+            /** Version */
+            version: string;
+        };
+        /** HeartbeatOut */
+        HeartbeatOut: {
+            /** Command Key */
+            command_key?: string | null;
+            /**
+             * Events Seconds
+             * @default 10
+             */
+            events_seconds: number;
+            /**
+             * Heartbeat Seconds
+             * @default 30
+             */
+            heartbeat_seconds: number;
+            /** Inventory Hash */
+            inventory_hash?: string | null;
+        };
+        /** HostFacts */
+        HostFacts: {
+            /**
+             * Arch
+             * @example amd64
+             */
+            arch: string;
+            /**
+             * Distribution
+             * @example Ubuntu 24.04
+             */
+            distribution?: string | null;
+            /** Hostname */
+            hostname: string;
+            /** Kernel */
+            kernel?: string | null;
+            /**
+             * Os
+             * @example linux
+             */
+            os: string;
         };
         /**
          * IncidentCreate
@@ -2841,7 +3593,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "agent_service_down" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
@@ -2965,7 +3717,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "agent_service_down" | "user_report" | "other";
             /**
              * Incident Id
              * Format: uuid
@@ -3060,7 +3812,7 @@ export interface components {
              * Detector Rule
              * @enum {string}
              */
-            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
+            detector_rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "agent_service_down" | "user_report" | "other";
             /** Duration Ms */
             duration_ms: number | null;
             /** First Signal At */
@@ -3173,6 +3925,19 @@ export interface components {
              * @enum {string}
              */
             type: "incident_updated";
+        };
+        /** Inventory */
+        Inventory: {
+            host: components["schemas"]["HostFacts"];
+            /** Services */
+            services?: components["schemas"]["ServiceFacts"][];
+        };
+        /** InventoryOut */
+        InventoryOut: {
+            /** Changed */
+            changed: boolean;
+            /** Discovery Run Id */
+            discovery_run_id?: string | null;
         };
         /** InviteOut */
         InviteOut: {
@@ -3346,7 +4111,7 @@ export interface components {
              * Target
              * @enum {string}
              */
-            target: "k8s" | "aws_ecs";
+            target: "k8s" | "aws_ecs" | "agent";
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3626,6 +4391,11 @@ export interface components {
             /** Users */
             users: number;
         };
+        /** PollOut */
+        PollOut: {
+            /** Commands */
+            commands?: components["schemas"]["CommandOut"][];
+        };
         /** PreflightCheck */
         PreflightCheck: {
             /** Detail */
@@ -3657,7 +4427,7 @@ export interface components {
              * Action
              * @default null
              */
-            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart") | null;
+            action: ("ecs_rollback_service" | "secret_rollback_version" | "force_redeploy" | "lambda_rollback_alias" | "ec2_reboot_instance" | "k8s_rollout_undo" | "k8s_rollout_restart" | "agent_restart_service" | "agent_rollback_service") | null;
             /**
              * Approval Id
              * @default null
@@ -3758,6 +4528,32 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /** RegistryLoginOut */
+        RegistryLoginOut: {
+            /** Password */
+            password: string;
+            /** Server */
+            server: string;
+            /** Username */
+            username: string;
+        };
+        /** RepoService */
+        RepoService: {
+            /** Manifests */
+            manifests: string[];
+            /** Path */
+            path: string;
+        };
+        /**
+         * RepoServices
+         * @description GET /deploys/services: the folders of a repository that can be deployed on their own.
+         */
+        RepoServices: {
+            /** Choose */
+            choose: boolean;
+            /** Services */
+            services: components["schemas"]["RepoService"][];
         };
         /** ResearchDone */
         ResearchDone: {
@@ -4200,6 +4996,94 @@ export interface components {
             /** Ultra Equiv Usd */
             ultra_equiv_usd?: number | null;
         };
+        /** ServiceFacts */
+        ServiceFacts: {
+            /** Allow */
+            allow?: ("restart" | "rollback" | "deploy")[];
+            /** Deploy Image */
+            deploy_image?: string | null;
+            /**
+             * Found
+             * @default true
+             */
+            found: boolean;
+            /** Health Url */
+            health_url?: string | null;
+            /** Image */
+            image?: string | null;
+            /** Image Digest */
+            image_digest?: string | null;
+            /** Logs */
+            logs?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Ports
+             * @example [
+             *       "8000/tcp"
+             *     ]
+             */
+            ports?: string[];
+            /** Problem */
+            problem?: string | null;
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "docker" | "compose" | "systemd" | "kubernetes" | "ecs";
+            /** Target */
+            target: string;
+        };
+        /** ServiceState */
+        ServiceState: {
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Found */
+            found: boolean;
+            /** Health Detail */
+            health_detail?: string | null;
+            /**
+             * Health Failures
+             * @default 0
+             */
+            health_failures: number;
+            /** Image */
+            image?: string | null;
+            /** Image Digest */
+            image_digest?: string | null;
+            /** Image Id */
+            image_id?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Oom Killed
+             * @default false
+             */
+            oom_killed: boolean;
+            /** Previous Image */
+            previous_image?: string | null;
+            /** Previous Image Id */
+            previous_image_id?: string | null;
+            /**
+             * Restarts
+             * @default 0
+             */
+            restarts: number;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * State
+             * @default
+             */
+            state: string;
+        };
+        /** SettingVar */
+        SettingVar: {
+            /** Name */
+            name: string;
+            /** Secret */
+            secret: boolean;
+        };
         /** SignIn */
         SignIn: {
             /**
@@ -4256,7 +5140,7 @@ export interface components {
              * Rule
              * @enum {string}
              */
-            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "user_report" | "other";
+            rule: "health_check" | "ecs_deployment_failed" | "ecs_tasks_stopped" | "log_error_spike" | "rds_cpu_latency" | "k8s_rollout_failed" | "k8s_pods_crashing" | "lambda_errors" | "lambda_throttles" | "ec2_status_check" | "alb_5xx" | "alb_unhealthy_targets" | "alb_latency" | "agent_service_down" | "user_report" | "other";
         };
         /** SignupsIn */
         SignupsIn: {
@@ -4430,6 +5314,83 @@ export interface components {
              */
             start: string;
         };
+        /** TokenCreated */
+        TokenCreated: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Name */
+            name: string;
+            /** Prefix */
+            prefix: string;
+            /** Revoked */
+            revoked: boolean;
+            /** Role */
+            role: string;
+            /** Token */
+            token: string;
+        };
+        /** TokenIn */
+        TokenIn: {
+            /**
+             * Days
+             * @default 90
+             */
+            days: number;
+            /**
+             * Name
+             * @example Claude Code on my laptop
+             */
+            name: string;
+            /**
+             * Role
+             * @default viewer
+             * @enum {string}
+             */
+            role: "viewer" | "approver";
+        };
+        /** TokenOut */
+        TokenOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Name */
+            name: string;
+            /** Prefix */
+            prefix: string;
+            /** Revoked */
+            revoked: boolean;
+            /** Role */
+            role: string;
+        };
         /**
          * ToolPolicy
          * @enum {string}
@@ -4602,6 +5563,22 @@ export interface components {
             detail: string;
             /** Handled */
             handled: boolean;
+        };
+        /**
+         * WorkspaceActivity
+         * @description GET /workspaces/{id}/activity: the overview's charts, every day of the window present.
+         */
+        WorkspaceActivity: {
+            /** Agents */
+            agents: components["schemas"]["AgentActivity"][];
+            /** Days */
+            days: components["schemas"]["ActivityDay"][];
+            /** Median Resolve Seconds */
+            median_resolve_seconds: number | null;
+            /** Open By Severity */
+            open_by_severity: {
+                [key: string]: number;
+            };
         };
         /** WorkspaceConfig */
         WorkspaceConfig: {
@@ -4800,6 +5777,244 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    poll_commands_agent_v1_commands_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PollOut"];
+                };
+            };
+        };
+    };
+    command_result_agent_v1_commands__command_id__result_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandResultIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    command_secrets_agent_v1_commands__command_id__secrets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                command_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandSecretsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enroll_agent_v1_enroll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnrollIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    events_agent_v1_events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EventsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    heartbeat_agent_v1_heartbeat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HeartbeatIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeartbeatOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inventory_agent_v1_inventory_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Inventory"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    registry_login_agent_v1_registry_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistryLoginOut"] | null;
                 };
             };
         };
@@ -5229,6 +6444,41 @@ export interface operations {
             };
         };
     };
+    agent_connect_connections_agent_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentConnectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJoinOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     aws_complete_connections_aws_complete_post: {
         parameters: {
             query?: never;
@@ -5635,6 +6885,109 @@ export interface operations {
             };
         };
     };
+    agent_set_registry_connections__connection_id__agent_registry_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRegistryIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_clear_registry_connections__connection_id__agent_registry_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_new_token_connections__connection_id__agent_token_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJoinOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     aws_set_operate_connections__connection_id__aws_operate_post: {
         parameters: {
             query?: never;
@@ -5659,6 +7012,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aws_operate_values_connections__connection_id__aws_operate_values_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AwsOperateValuesOut"];
                 };
             };
             /** @description Validation Error */
@@ -6000,6 +7386,49 @@ export interface operations {
             };
         };
     };
+    repo_services_deploys_services_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+                connection_id: string;
+                repo: string;
+                ref: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoServices"];
+                };
+            };
+            /** @description The connection is not GitHub, or GitHub refused. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_deploy_deploys__deploy_id__get: {
         parameters: {
             query?: never;
@@ -6060,6 +7489,83 @@ export interface operations {
                 };
             };
             /** @description The approval is not this deploy's pending plan. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deploy_settings_deploys__deploy_id__settings_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deploy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploySettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_settings_deploys__deploy_id__settings_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deploy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeploySettingsChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployCreated"];
+                };
+            };
+            /** @description The deploy is not live, or a newer one replaced it. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6888,6 +8394,41 @@ export interface operations {
             };
         };
     };
+    activity_workspaces__workspace_id__activity_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceActivity"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_approvals_workspaces__workspace_id__approvals_get: {
         parameters: {
             query?: {
@@ -7297,6 +8838,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tokens_workspaces__workspace_id__tokens_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_token_workspaces__workspace_id__tokens_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TokenIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_token_workspaces__workspace_id__tokens__token_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenOut"];
                 };
             };
             /** @description Validation Error */

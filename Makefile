@@ -12,7 +12,7 @@ CONNECT_TEMPLATE_ACCOUNT ?= 881050425883
 CONNECT_TEMPLATE_REGION ?= us-east-2
 CONNECT_TEMPLATE_BUCKET ?= groundcrew-templates-$(CONNECT_TEMPLATE_ACCOUNT)
 
-.PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template \
+.PHONY: help install dev up down db migrate seed worker keygen test lint format models api-types publish-connect-template agent agent-test \
 	kind-up kind-down kind-kubeconfig kind-check kind-register plan-target plan-emergency live-evidence live-ecs-target live-builder dind-check smoke-ecs cleanup-deploys
 
 # KIND=1 joins api and worker to the kind network (make kind-up first).
@@ -32,6 +32,8 @@ help:
 	@echo "make format   Auto-format Python code"
 	@echo "make models   Smoke test Nemotron models on Token Factory (uses credits)"
 	@echo "make api-types  Regenerate the web app's typed API client from FastAPI's OpenAPI schema"
+	@echo "make agent    Build the Groundcrew agent for this machine into apps/agent/bin (in the golang image)"
+	@echo "make agent-test  Vet and test the Groundcrew agent (in the golang image)"
 	@echo "make publish-connect-template  Upload infra/aws-connect.yaml to S3 (your AWS CLI credentials)"
 	@echo "make kind-up  Local kind cluster, registry localhost:5001, ingress, deployer RBAC (METRICS=1 adds metrics-server)"
 	@echo "make kind-down  Delete the kind cluster and its registry"
@@ -75,6 +77,12 @@ keygen:
 test: $(WEB)/node_modules
 	cd $(API) && $(UV) run pytest
 	cd $(WEB) && npm test
+
+agent:
+	cd apps/agent && ./go.sh build -trimpath -ldflags "-X main.version=dev" -o bin/groundcrew-agent ./cmd/groundcrew-agent
+
+agent-test:
+	cd apps/agent && ./go.sh vet ./... && ./go.sh test ./...
 
 api-types: $(WEB)/node_modules
 	cd $(API) && PYTHONPATH=. $(UV) run python ../../scripts/export_openapi.py ../web/lib/api/openapi.json

@@ -235,6 +235,13 @@ class ScriptedSandbox:
         self.pushed.append(target.image)
         return PushResult(target.image, "sha256:" + "f" * 64, 30)
 
+    async def push_to_groundcrew(
+        self, image_ref: str, registry_url: str, repository: str, tag: str
+    ) -> PushResult:
+        image = f"{registry_url}/{repository}:{tag}"
+        self.pushed.append(image)
+        return PushResult(image, "sha256:" + "e" * 64, 30)
+
     async def image_id(self, image_ref: str) -> str:
         return "sha256:" + uuid.uuid5(uuid.NAMESPACE_URL, image_ref).hex * 2
 

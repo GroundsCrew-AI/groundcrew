@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { AgentConnectDialog } from "@/components/connections/agent-connect-dialog";
 import { AwsConnectDialog } from "@/components/connections/aws-connect-dialog";
 import { ConnectionRow, OWNER_ONLY_REASON } from "@/components/connections/connection-row";
 import { GitHubConnectDialog } from "@/components/connections/github-connect-dialog";
@@ -22,7 +23,7 @@ import { type AwsTier, type Connection, type ConnectionKind, useConnections, use
 import { useWorkspace } from "@/lib/workspace";
 
 type Provider = {
-  kind: ConnectionKind | "vm";
+  kind: ConnectionKind;
   name: string;
   access: string;
   action: string;
@@ -36,7 +37,7 @@ const PROVIDERS: Provider[] = [
   { kind: "vercel", name: "Vercel", access: "A team token, stored encrypted. Env var names, not values.", action: "Add token" },
   { kind: "azure", name: "Azure", access: "Reader on one resource group, through a service principal.", action: "Connect", preview: true },
   { kind: "k8s", name: "Kubernetes", access: "A service account's kubeconfig, checked before saving. Groundcrew never lists Secrets.", action: "Upload kubeconfig" },
-  { kind: "vm", name: "VM", access: "SSH key, encrypted at rest. Read commands only.", action: "Connect", later: true },
+  { kind: "agent", name: "Agent", access: "For servers and VMs: a small agent you install reports the services you list. It connects out; nothing connects in.", action: "Install an agent" },
 ];
 
 const OWNER_ONLY_ID = "connections-owner-only";
@@ -180,7 +181,7 @@ export default function ConnectionsPage() {
                       variant="outline"
                       className="mt-3"
                       {...ownerOnly}
-                      onClick={() => openDialog(provider.kind as ConnectionKind)}
+                      onClick={() => openDialog(provider.kind)}
                     >
                       {provider.action}
                     </Button>
@@ -196,6 +197,7 @@ export default function ConnectionsPage() {
       <VercelConnectDialog {...dialog("vercel")} />
       <AzureConnectDialog {...dialog("azure")} />
       <KubernetesConnectDialog {...dialog("k8s")} />
+      <AgentConnectDialog {...dialog("agent")} />
     </>
   );
 }

@@ -8,7 +8,7 @@ ARN, the ExternalId, and the account ID.
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote, urlencode
@@ -22,9 +22,11 @@ from app import deletion, quotas
 from app.accounts import NotFoundError, member_workspace, require_owner
 from app.audit import record
 from app.config import Settings, get_settings
-from app.connectors import github_claims
+from app.connectors import aws_operate, github_claims
 from app.connectors import kubernetes as kube
 from app.connectors.aws import (
+    AWS_OPERATE_OPERATIONS,
+    OPERATE_SESSION_NAME,
     AwsError,
     connection_regions,
     get_sessions,
@@ -35,13 +37,26 @@ from app.connectors.deploy_infra import deploy_role_arn, operate_role_arn
 from app.connectors.github import GitHubApp, GitHubError, check_repo_name, get_github_app
 from app.connectors.kubernetes import kubeconfig_summary
 from app.connectors.vercel import VercelClient, VercelError
-from app.db.models import Connection, Resource, RunStatus, User, Workspace, WorkspaceRole
+from app.db.models import (
+    Agent,
+    Connection,
+    Resource,
+    RunStatus,
+    User,
+    Workspace,
+    WorkspaceRole,
+)
 from app.discovery.engine import start_discovery
 from app.discovery.types import ConnectorError
+from app.remote_agents.signing import new_join_token
 from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.discovery_schemas import (
+    AgentConnectIn,
+    AgentJoinOut,
+    AgentRegistryIn,
     AwsCompleteIn,
     AwsOperateIn,
+    AwsOperateValuesOut,
     AwsRegionsIn,
     AwsStartIn,
     AwsStartOut,
@@ -69,6 +84,7 @@ from app.security.crypto import SecretsKeyError, encrypt
 from app.targets.k8s_deploy import CONFIG_KEY as DEPLOY_SETTINGS_KEY
 from app.targets.k8s_deploy import (
     DeploySettingsError,
+    K8sDeploySettings,
     build_settings,
     check_ecr_connection,
     deploy_settings,
@@ -154,9 +170,17 @@ async def _counts(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID
     return {cid: int(n) for cid, n in rows if cid is not None}
 
 
+async def _agents(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, Agent]:
+    if not ids:
+        return {}
+    found = await session.scalars(select(Agent).where(Agent.connection_id.in_(ids)))
+    return {a.connection_id: a for a in found}
+
+
 async def _out(session: AsyncSession, conn: Connection) -> ConnectionOut:
     counts = await _counts(session, [conn.id])
-    return ConnectionOut.build(conn, counts.get(conn.id, 0))
+    agents = await _agents(session, [conn.id])
+    return ConnectionOut.build(conn, counts.get(conn.id, 0), agents.get(conn.id))
 
 
 def _encrypt(secret: str) -> str:
@@ -179,7 +203,8 @@ async def list_connections(
         )
     )
     counts = await _counts(session, [c.id for c in conns])
-    return [ConnectionOut.build(c, counts.get(c.id, 0)) for c in conns]
+    agents = await _agents(session, [c.id for c in conns if c.kind == "agent"])
+    return [ConnectionOut.build(c, counts.get(c.id, 0), agents.get(c.id)) for c in conns]
 
 
 # ------------------------------------------------------------------------------- AWS
@@ -408,6 +433,19 @@ async def aws_set_tier(
     return await _out(session, conn)
 
 
+def _operate_coverage(
+    account: str, external_id: str, targets: list[Resource]
+) -> tuple[list[str], list[str]]:
+    """Which discovered services and functions the operate role can reach (read calls only)."""
+    session = get_sessions().assume(
+        operate_role_arn(account),
+        external_id,
+        operations=AWS_OPERATE_OPERATIONS,
+        session_name=OPERATE_SESSION_NAME,
+    )
+    return aws_operate.unreachable(session, targets)
+
+
 def _verify_operate_role(account: str, external_id: str) -> str:
     """The groundcrew-operate role, verified like the read-only one (ExternalId required)."""
     role_arn = operate_role_arn(account)
@@ -459,13 +497,27 @@ async def aws_set_operate(
     if conn.kind != "aws" or conn.status != "connected":
         raise _unprocessable("Only a connected AWS account can run emergency fixes.")
     account, external_id = str(conn.config["account_id"]), str(conn.config["external_id"])
+    targets = aws_operate.probe_targets(await _aws_resources(session, conn))
     await session.commit()  # no transaction open during the STS calls
     role = None
     if body.enabled:
         try:
             role = await asyncio.to_thread(_verify_operate_role, account, external_id)
+            reachable, refused = (
+                await asyncio.to_thread(_operate_coverage, account, external_id, targets)
+                if targets
+                else ([], [])
+            )
         except AwsError as exc:
             raise _unprocessable(str(exc)) from None
+        if refused and not reachable:
+            # The stack's lists name nothing Groundcrew found: usually the placeholders.
+            raise _unprocessable(
+                "The emergency-fix role works, but it may not act on any service Groundcrew "
+                f"found ({', '.join(refused[:6])}). Update the groundcrew-read-only stack with "
+                "the values shown in this dialog (OperateServiceArns, OperatePassRoleArns), "
+                "then click Verify again."
+            )
     else:
         get_sessions().forget(operate_role_arn(account), external_id)
     conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
@@ -473,6 +525,39 @@ async def aws_set_operate(
     await _audit(session, user, conn, "operate_changed", ip)
     await session.commit()
     return await _out(session, conn)
+
+
+async def _aws_resources(session: AsyncSession, conn: Connection) -> list[Resource]:
+    return list(
+        await session.scalars(
+            select(Resource).where(
+                Resource.connection_id == conn.id,
+                Resource.type.in_(aws_operate.TYPES),
+                Resource.stale.is_(False),
+            )
+        )
+    )
+
+
+@router.get("/{connection_id}/aws/operate-values")
+async def aws_operate_values(
+    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> AwsOperateValuesOut:
+    """The Operate* stack parameters for this account, from what discovery found: one
+    wildcard per ECS cluster, the services' roles, Lambda functions, secrets, and instances.
+    Groundcrew's own resources are left out."""
+    conn = await member_connection(session, user, connection_id)
+    if conn.kind != "aws":
+        raise _unprocessable("Only an AWS connection has emergency-fix settings.")
+    values = aws_operate.suggested_values(await _aws_resources(session, conn))
+    return AwsOperateValuesOut(
+        services=values.services,
+        pass_roles=values.pass_roles,
+        functions=values.functions,
+        secrets=values.secrets,
+        instances=values.instances,
+        discovered=bool(conn.last_discovery),
+    )
 
 
 async def _k8s_workload_namespaces(session: AsyncSession, conn: Connection) -> list[str]:
@@ -883,6 +968,141 @@ async def github_link(
     conn.config = {"installation_id": body.installation_id, "account": owner, "repos": wanted}
     conn.status = "connected"
     await _audit(session, user, conn, "created", ip)
+    await session.commit()
+    return await _out(session, conn)
+
+
+# ----------------------------------------------------------------------------- Agent
+
+
+async def _join(session: AsyncSession, agent: Agent, settings: Settings) -> tuple[str, datetime]:
+    token, hashed = new_join_token()
+    agent.join_token_hash = hashed
+    agent.join_expires_at = datetime.now(UTC) + timedelta(minutes=settings.agent_join_token_minutes)
+    await session.flush()
+    return token, agent.join_expires_at
+
+
+@router.post("/agent")
+async def agent_connect(
+    body: AgentConnectIn,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
+) -> AgentJoinOut:
+    """Add a Groundcrew agent: a connection that waits for the agent to enroll with the one-time
+    join token returned here (shown once; only its hash is kept)."""
+    await _check_owner(session, user, body.workspace_id)
+    await quotas.check_can_add_connection(session, body.workspace_id, settings)
+    conn = Connection(
+        workspace_id=body.workspace_id, kind="agent", name=body.name, status="pending", config={}
+    )
+    session.add(conn)
+    await session.flush()
+    agent = Agent(workspace_id=body.workspace_id, connection_id=conn.id)
+    session.add(agent)
+    token, expires = await _join(session, agent, settings)
+    await _audit(session, user, conn, "created", ip)
+    await session.commit()
+    return AgentJoinOut(
+        connection=await _out(session, conn),
+        token=token,
+        expires_at=expires,
+        api_url=settings.agent_api_url,
+    )
+
+
+@router.post("/{connection_id}/agent/token")
+async def agent_new_token(
+    connection_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
+) -> AgentJoinOut:
+    """A new join token (the old one stops working): to finish a setup whose token expired, or
+    to reinstall the agent, whose new key then replaces the old one."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    agent = await session.scalar(select(Agent).where(Agent.connection_id == conn.id))
+    if conn.kind != "agent" or agent is None:
+        raise _unprocessable("Only an agent connection has join tokens.")
+    token, expires = await _join(session, agent, settings)
+    await _audit(session, user, conn, "agent_token_created", ip)
+    await session.commit()
+    return AgentJoinOut(
+        connection=await _out(session, conn),
+        token=token,
+        expires_at=expires,
+        api_url=settings.agent_api_url,
+    )
+
+
+@router.put("/{connection_id}/agent/registry")
+async def agent_set_registry(
+    connection_id: uuid.UUID,
+    body: AgentRegistryIn,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+    ip: ClientIp,
+) -> ConnectionOut:
+    """Deploys to this agent keep their images in this registry instead of the Groundcrew
+    registry: a username and token (stored encrypted, never returned; the agent gets them only
+    while it runs a deploy), or Amazon ECR through an AWS connection with the deploy
+    capability (a fresh login per deploy)."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "agent":
+        raise _unprocessable("Only an agent connection has this registry setting.")
+    try:
+        aws_connection_id: str | None = None
+        if body.registry_auth == "ecr":
+            aws = (
+                await session.get(Connection, body.aws_connection_id)
+                if body.aws_connection_id
+                else None
+            )
+            regions = (
+                [str(aws.config["region"])]
+                if aws is not None and aws.config.get("region")
+                else connection_regions(aws.config if aws else None, settings)
+            )
+            aws_connection_id = check_ecr_connection(body.registry, aws, conn.workspace_id, regions)
+        new = build_settings(
+            registry_auth=body.registry_auth,
+            aws_connection_id=aws_connection_id,
+            registry=body.registry,
+            username=body.username,
+            token=body.token,
+            previous=K8sDeploySettings.from_config(conn.config),
+            pull_secret=False,
+            ingress_class="nginx",
+            app_domain=None,
+            tls=False,
+            tls_cluster_issuer=None,
+            public_url_base=None,
+            allow_private=_allow_private(settings),
+            is_private=kube.is_private_host,
+            encrypt=_encrypt,
+        )
+    except DeploySettingsError as exc:
+        raise _unprocessable(str(exc)) from None
+    conn.config = {**conn.config, DEPLOY_SETTINGS_KEY: new.to_config()}
+    await _audit(session, user, conn, "agent_registry_changed", ip)
+    await session.commit()
+    return await _out(session, conn)
+
+
+@router.delete("/{connection_id}/agent/registry")
+async def agent_clear_registry(
+    connection_id: uuid.UUID, user: CurrentUser, session: SessionDep, ip: ClientIp
+) -> ConnectionOut:
+    """Back to the Groundcrew registry (the saved token is deleted)."""
+    conn = await member_connection(session, user, connection_id, for_update=True, owner=True)
+    if conn.kind != "agent":
+        raise _unprocessable("Only an agent connection has this registry setting.")
+    conn.config = {k: v for k, v in conn.config.items() if k != DEPLOY_SETTINGS_KEY}
+    await _audit(session, user, conn, "agent_registry_cleared", ip)
     await session.commit()
     return await _out(session, conn)
 

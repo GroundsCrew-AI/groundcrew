@@ -112,10 +112,6 @@ function MapView() {
                 </Link>
               )}
               {data.stale_count > 0 && !includeStale && <span>{data.stale_count} not seen in the last discovery (hidden)</span>}
-              <span className="ml-auto hidden items-center gap-3 sm:flex">
-                <Legend dashed={false} label="High or medium confidence" />
-                <Legend dashed label="Low confidence" />
-              </span>
             </p>
           </div>
           <div className="relative mt-3 min-h-[640px] flex-1 border-t">
@@ -130,13 +126,3 @@ function MapView() {
   );
 }
 
-function Legend({ dashed, label }: { dashed: boolean; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <svg aria-hidden="true" width="22" height="6">
-        <line x1="0" y1="3" x2="22" y2="3" stroke="var(--subtle)" strokeWidth="1.5" strokeDasharray={dashed ? "4 4" : undefined} />
-      </svg>
-      {label}
-    </span>
-  );
-}

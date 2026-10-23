@@ -29,6 +29,7 @@ def _prod(**overrides: Any) -> Settings:
         "internal_jwt_secret": SecretStr(SECRET),
         "approval_token_key": SecretStr(SECRET),
         "web_origin": "https://app.example.com",
+        "agent_api_url": "https://api.example.com",
         "smtp_host": "smtp.example.com",
         # conftest turns it on for the fake API servers on 127.0.0.1.
         "k8s_allow_private_servers": None,
@@ -40,11 +41,13 @@ def _prod(**overrides: Any) -> Settings:
 def test_production_needs_its_secrets_and_a_real_origin() -> None:
     assert _prod().production_problems() == []
     bad = _prod(secrets_key=None, internal_jwt_secret=SecretStr("short"),
-                web_origin="http://localhost:3000")  # fmt: skip
+                web_origin="http://localhost:3000",
+                agent_api_url="http://localhost:8000")  # fmt: skip
     assert bad.production_problems() == [
         "SECRETS_KEY is not set",
         "INTERNAL_JWT_SECRET is shorter than 32 characters",
         "WEB_ORIGIN still points at localhost",
+        "AGENT_API_URL still points at localhost",
     ]
     with pytest.raises(RuntimeError, match="APP_ENV=production cannot start"):
         bad.require_production_ready()
@@ -100,3 +103,13 @@ async def test_maintenance_rearms_the_watcher(
             select(func.count(Job.id)).where(Job.kind == WATCH_JOB, Job.status == JobStatus.queued)
         )
     assert count == 1
+
+
+def test_the_worker_heartbeat_file(tmp_path: Any) -> None:
+    from app.worker import touch_heartbeat
+
+    beat = tmp_path / "beat"
+    touch_heartbeat(None)
+    touch_heartbeat(beat)
+    assert beat.exists()
+    touch_heartbeat(tmp_path / "missing-dir" / "beat")  # never raises

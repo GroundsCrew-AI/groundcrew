@@ -17,11 +17,13 @@ from app.sandbox.base import (
     SmokeResult,
 )
 from app.sandbox.docker import DockerSandbox
+from app.sandbox.isolated import IsolatedSandbox
 from app.sandbox.nebius import NebiusSandbox
 
 __all__ = [
     "BuildResult",
     "DockerSandbox",
+    "IsolatedSandbox",
     "NebiusSandbox",
     "PushResult",
     "PushTarget",
@@ -38,4 +40,6 @@ __all__ = [
 def get_sandbox(settings: Settings) -> Sandbox:
     if settings.sandbox_provider == "nebius":
         return NebiusSandbox(settings)
+    if settings.sandbox_provider == "isolated":
+        return IsolatedSandbox(settings)
     return DockerSandbox(settings)

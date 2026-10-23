@@ -49,13 +49,15 @@ from app.agents.medic.events import (
     ResearchResult,
     Signal,
 )
+from app.agents.medic.schemas import RootCause
 from app.agents.medic.state import FixRecord, MedicState, MemoryUsed, Outcome
-from app.agents.medic.verify import k8s_checks, run_checks
+from app.agents.medic.verify import agent_checks, k8s_checks, run_checks
 from app.config import Settings, get_settings
 from app.connectors.aws import AwsReader
-from app.connectors.github import GitHubApp, get_github_app
+from app.connectors.github import GitHubApp, GitHubError, get_github_app
 from app.db.models import (
     TERMINAL_RUN_STATUSES,
+    Agent,
     Approval,
     ApprovalStatus,
     Connection,
@@ -192,6 +194,28 @@ def _round_ids(records: list[FixRecord], round_: int) -> list[FixRecord]:
             }
         )
     return records
+
+
+def _sentences(parts: list[str]) -> str:
+    """Fix titles and notes as one text: each part ends with a period ("revision.; No fix PR"
+    came from joining sentences with "; ")."""
+    return " ".join(p if p.endswith((".", "?", "!")) else f"{p}." for p in parts if p)
+
+
+# The diagnosis's suggestions Medic has no action for, shown when it cannot fix the incident.
+MANUAL_KINDS = frozenset({"pull_request", "other"})
+MAX_MANUAL = 2
+
+
+def _by_hand(root_cause: RootCause | None) -> list[str]:
+    if root_cause is None or root_cause.false_alarm:
+        return []
+    found = [
+        " ".join(o.description.split())[:300]
+        for o in root_cause.fix_options
+        if o.kind in MANUAL_KINDS and o.description.strip()
+    ]
+    return [f"To fix it by hand: {d}" for d in found[:MAX_MANUAL]]
 
 
 def _save(incident: Incident, state: MedicState) -> None:
@@ -562,19 +586,24 @@ class MedicRunner:
         emergency = await fx.emergency(
             root_cause, signals, graph, evidence.changes, deps.actions, memory=reused
         )
-        pr = await fx.pull_request(
-            incident.id,
-            root_cause,
-            signals,
-            graph,
-            evidence.changes,
-            deps.github,
-            llm,
-            budget,
-            order=len(emergency.records) + 1,
-            on_call=recorder,
-            research=follow_up,
-        )
+        try:
+            pr = await fx.pull_request(
+                incident.id,
+                root_cause,
+                signals,
+                graph,
+                evidence.changes,
+                deps.github,
+                llm,
+                budget,
+                order=len(emergency.records) + 1,
+                on_call=recorder,
+                research=follow_up,
+            )
+        except GitHubError as exc:
+            # The emergency fixes stand on their own; GitHub refusing a lookup must not lose them.
+            logger.warning("medic: fix PR skipped", exc_info=True)
+            pr = fx.Proposal(notes=[f"No fix PR: GitHub refused a lookup ({str(exc)[:200]})."])
         proposed = emergency.records + pr.records
         if state.superseded and _same_fixes(state.superseded, proposed):
             await self._keep_superseded(session, incident, run, state, evidence.notes)
@@ -587,7 +616,7 @@ class MedicRunner:
             session,
             run,
             kind="fix_proposed",
-            output_summary="; ".join([f.fix.title for f in state.fixes] + state.notes) or "No fix",
+            output_summary=_sentences([f.fix.title for f in state.fixes] + state.notes) or "No fix",
             data=FixProposed(fixes=[f.fix for f in state.fixes]),
         )
         if not state.fixes:
@@ -691,7 +720,7 @@ class MedicRunner:
             incident,
             run,
             state,
-            "No fix Medic can apply. " + " ".join(state.notes),
+            _sentences(["No fix Medic can apply", *state.notes, *_by_hand(state.root_cause)]),
             run_status=RunStatus.succeeded,
             stop=StopReason.completed,
         )
@@ -1007,7 +1036,7 @@ class MedicRunner:
             reason = (
                 "Every fix was rejected."
                 if rejected == len(state.fixes)
-                else "No fix could be applied."
+                else _sentences(["No fix could be applied", *state.notes])
             )
             await self._fail(
                 session,
@@ -1187,7 +1216,21 @@ class MedicRunner:
                 close = getattr(kube, "close", None)
                 if close is not None:
                     close()
-        if not readers and not k8s_out:
+        agent_waits: list[str] = []
+        for svc in [
+            r
+            for r in graph.resources.values()
+            if r.type == "agent:service" and r.id in set(graph.affected)
+        ]:
+            host = await session.scalar(
+                select(Agent).where(Agent.connection_id == svc.connection_id)
+            )
+            if host is not None:
+                k8s_out += agent_checks(
+                    svc, host.states or {}, host.states_at, since=since, waits=agent_waits
+                )
+        k8s_waits += agent_waits
+        if not readers and not k8s_out and not agent_waits:
             return None
         aws = (
             await asyncio.to_thread(
@@ -1208,7 +1251,7 @@ class MedicRunner:
             if readers
             else None
         )
-        if not k8s_out:
+        if not k8s_out and not k8s_waits:
             return aws
         checks = [*(aws.checks if aws else []), *k8s_out]
         waits = [w for w in [aws.waiting if aws else "; ".join(waiting or []), *k8s_waits] if w]

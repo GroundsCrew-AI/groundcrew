@@ -65,6 +65,7 @@ _SEVERITY: dict[str, Severity] = {
     "alb_unhealthy_targets": "high",
     "alb_latency": "medium",
     "k8s_pods_crashing": "high",
+    "agent_service_down": "critical",
     "user_report": "high",
     "other": "medium",
 }

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import jwt
@@ -252,6 +253,31 @@ class GitHubApp:
             )
             out.append((path, str(text)))
         return out
+
+    async def tree_paths(
+        self, installation_id: int, full_name: str, ref: str
+    ) -> tuple[list[str], bool]:
+        """Every file path at `ref` through the git trees API (GET only), and whether GitHub
+        cut the listing short (very large repositories)."""
+        name = check_repo_name(full_name)
+        data = await self.get(
+            installation_id, f"/repos/{name}/git/trees/{quote(ref, safe='')}", {"recursive": "1"}
+        )
+        paths = [str(i["path"]) for i in data.get("tree", []) if i.get("type") == "blob"]
+        return paths, bool(data.get("truncated"))
+
+    async def file_text(self, installation_id: int, full_name: str, path: str, ref: str) -> str:
+        """One file's text at `ref` through the contents API (GET only)."""
+        name = check_repo_name(full_name)
+        token = await self.installation_token(installation_id)
+        text = await self._request(
+            "GET",
+            f"/repos/{name}/contents/{quote(path)}",
+            bearer=token,
+            params={"ref": ref},
+            accept="application/vnd.github.raw",
+        )
+        return str(text)
 
     async def repo(self, installation_id: int, full_name: str) -> dict[str, Any]:
         data: dict[str, Any] = await self.get(

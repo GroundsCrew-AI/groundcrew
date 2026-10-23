@@ -148,6 +148,17 @@ class FakeEmergencyActions:
     ) -> ActionPlan:
         return await self._kube().plan_k8s_rollout_restart(connection_id, namespace, name, kind)
 
+    async def plan_agent_restart_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        """No agent services here (tests of agent restarts use AgentEmergencyActions)."""
+        raise EmergencyActionError(f"No Groundcrew agent reports {service} here.")
+
+    async def plan_agent_rollback_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        raise EmergencyActionError(f"No Groundcrew agent reports {service} here.")
+
     def _service(self, cluster: str, service: str) -> FakeService:
         try:
             return self.services[f"{cluster}/{service}"]

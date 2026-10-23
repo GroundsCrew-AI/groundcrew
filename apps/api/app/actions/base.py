@@ -20,6 +20,9 @@ that holds AWSPREVIOUS (UpdateSecretVersionStage) by version id only.
 Kubernetes Deployments and StatefulSets (app/actions/k8s.py) get `k8s_rollout_undo` and
 `k8s_rollout_restart` through the cluster's kubeconfig, on connections with the operate
 capability (`kind` "deployment" or "statefulset", see `k8s_params`).
+Services a Groundcrew agent watches (app/actions/agent.py) get `agent_restart_service` and
+`agent_rollback_service` (recreate the container from the image it ran before): signed commands
+the agent runs on its host, only if the service `allow`s them there.
 `EmergencyActionRouter` sends each plan to the implementation for its action.
 """
 
@@ -40,6 +43,8 @@ LAMBDA_ROLLBACK_ALIAS: Final = "lambda_rollback_alias"
 EC2_REBOOT_INSTANCE: Final = "ec2_reboot_instance"
 K8S_ROLLOUT_UNDO: Final = "k8s_rollout_undo"
 K8S_ROLLOUT_RESTART: Final = "k8s_rollout_restart"
+AGENT_RESTART_SERVICE: Final = "agent_restart_service"
+AGENT_ROLLBACK_SERVICE: Final = "agent_rollback_service"
 
 EmergencyActionName = Literal[
     "ecs_rollback_service",
@@ -49,6 +54,8 @@ EmergencyActionName = Literal[
     "ec2_reboot_instance",
     "k8s_rollout_undo",
     "k8s_rollout_restart",
+    "agent_restart_service",
+    "agent_rollback_service",
 ]
 EMERGENCY_ACTION_NAMES: tuple[EmergencyActionName, ...] = (
     ECS_ROLLBACK_SERVICE,
@@ -58,8 +65,11 @@ EMERGENCY_ACTION_NAMES: tuple[EmergencyActionName, ...] = (
     EC2_REBOOT_INSTANCE,
     K8S_ROLLOUT_UNDO,
     K8S_ROLLOUT_RESTART,
+    AGENT_RESTART_SERVICE,
+    AGENT_ROLLBACK_SERVICE,
 )
 K8S_ACTIONS: frozenset[str] = frozenset({K8S_ROLLOUT_UNDO, K8S_ROLLOUT_RESTART})
+AGENT_ACTIONS: frozenset[str] = frozenset({AGENT_RESTART_SERVICE, AGENT_ROLLBACK_SERVICE})
 # The workload kinds the Kubernetes actions take (`kind`); deployment is the default.
 K8S_WORKLOAD_KINDS: frozenset[str] = frozenset({"deployment", "statefulset"})
 
@@ -104,6 +114,8 @@ class ActionPlan(BaseModel):
     #   ec2_reboot_instance: "<id> running, system ..., instance ..." -> null (a reboot)
     #   k8s_rollout_undo: "<ns>/<name> revision <n>" now -> the previous revision
     #   k8s_rollout_restart: "<ns>/<name> revision <n>" -> null (new pods, same template)
+    #   agent_restart_service: "<service> <state>" as the agent reported it -> null (a restart)
+    #   agent_rollback_service: "<image ref>@<short id>" it runs -> the one it ran before
     current: str | None
     desired: str | None
     # One line for the approval card, for example
@@ -192,6 +204,18 @@ class EmergencyActions(Protocol):
         """Replace every pod with the same template (kubectl rollout restart)."""
         ...
 
+    async def plan_agent_restart_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        """Restart a service a Groundcrew agent watches (its configuration must allow it)."""
+        ...
+
+    async def plan_agent_rollback_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        """Recreate a Docker or Compose service from the image it ran before (still on its host)."""
+        ...
+
     async def execute(
         self, plan: ActionPlan, token: ApprovedAction, *, run_id: uuid.UUID
     ) -> ActionResult:
@@ -244,12 +268,30 @@ class K8sActions(Protocol):
     ) -> ActionResult: ...
 
 
-class EmergencyActionRouter:
-    """`EmergencyActions` from an AWS and a Kubernetes implementation: each plan and each
-    execute goes to the one for its action. A missing half refuses with a plain reason."""
+class AgentActions(Protocol):
+    """Services on hosts with a Groundcrew agent (app.actions.agent.AgentEmergencyActions)."""
 
-    def __init__(self, aws: AwsActions | None, k8s: K8sActions | None) -> None:
-        self.aws, self.k8s = aws, k8s
+    async def plan_agent_restart_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan: ...
+
+    async def plan_agent_rollback_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan: ...
+
+    async def execute(
+        self, plan: ActionPlan, token: ApprovedAction, *, run_id: uuid.UUID
+    ) -> ActionResult: ...
+
+
+class EmergencyActionRouter:
+    """`EmergencyActions` from AWS, Kubernetes, and agent implementations: each plan and each
+    execute goes to the one for its action. A missing one refuses with a plain reason."""
+
+    def __init__(
+        self, aws: AwsActions | None, k8s: K8sActions | None, agent: AgentActions | None = None
+    ) -> None:
+        self.aws, self.k8s, self.agent = aws, k8s, agent
 
     def _aws(self) -> AwsActions:
         if self.aws is None:
@@ -260,6 +302,11 @@ class EmergencyActionRouter:
         if self.k8s is None:
             raise EmergencyActionError("No Kubernetes emergency actions here.")
         return self.k8s
+
+    def _agent(self) -> AgentActions:
+        if self.agent is None:
+            raise EmergencyActionError("No agent emergency actions here.")
+        return self.agent
 
     async def plan_ecs_rollback_service(
         self, connection_id: uuid.UUID, cluster: str, service: str
@@ -296,10 +343,26 @@ class EmergencyActionRouter:
     ) -> ActionPlan:
         return await self._k8s().plan_k8s_rollout_restart(connection_id, namespace, name, kind)
 
+    async def plan_agent_restart_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        return await self._agent().plan_agent_restart_service(connection_id, service)
+
+    async def plan_agent_rollback_service(
+        self, connection_id: uuid.UUID, service: str
+    ) -> ActionPlan:
+        return await self._agent().plan_agent_rollback_service(connection_id, service)
+
     async def execute(
         self, plan: ActionPlan, token: ApprovedAction, *, run_id: uuid.UUID
     ) -> ActionResult:
-        half: AwsActions | K8sActions = self._k8s() if plan.action in K8S_ACTIONS else self._aws()
+        half: AwsActions | K8sActions | AgentActions = (
+            self._k8s()
+            if plan.action in K8S_ACTIONS
+            else self._agent()
+            if plan.action in AGENT_ACTIONS
+            else self._aws()
+        )
         return await half.execute(plan, token, run_id=run_id)
 
 
@@ -307,6 +370,10 @@ async def plan_again(actions: EmergencyActions, plan: ActionPlan) -> ActionPlan:
     """The same action on the same target, planned from the state now (a retry after a failed
     run gets a fresh plan and a fresh approval, never the old ones)."""
     p = plan.params
+    if plan.action == AGENT_RESTART_SERVICE:
+        return await actions.plan_agent_restart_service(plan.connection_id, p["service"])
+    if plan.action == AGENT_ROLLBACK_SERVICE:
+        return await actions.plan_agent_rollback_service(plan.connection_id, p["service"])
     if plan.action == K8S_ROLLOUT_UNDO:
         kind, namespace, name = k8s_workload(p)
         return await actions.plan_k8s_rollout_undo(plan.connection_id, namespace, name, kind)

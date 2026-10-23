@@ -5,7 +5,7 @@ sessions, invites by email, and SSE stream tokens."""
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote
@@ -117,22 +117,26 @@ def test_valid_internal_token() -> None:
     assert identity == WebIdentity(user_id=uid, auth_time=1700000000)
 
 
+# Made when the test runs, not at collection: a long suite would otherwise see them expire.
 @pytest.mark.parametrize(
-    ("token", "message"),
+    ("make", "message"),
     [
-        (web_token(uuid.uuid4(), secret="another-secret-that-is-long-enough!!"), "Invalid token"),  # noqa: S106
-        (web_token(uuid.uuid4(), issued_at=int(time.time()) - 3600), "expired"),
-        (web_token(uuid.uuid4(), ttl=3600), "lifetime too long"),
-        (web_token(uuid.uuid4(), aud="something-else"), "Invalid token"),
-        (web_token(uuid.uuid4(), iss="someone-else"), "Invalid token"),
-        (web_token("42"), "Invalid token claims"),
-        (web_token(uuid.uuid4(), auth_time=-1), "Invalid token claims"),
-        ("not.a.jwt", "Invalid token"),
+        (
+            lambda: web_token(uuid.uuid4(), secret="another-secret-that-is-long-enough!!"),  # noqa: S106
+            "Invalid token",
+        ),
+        (lambda: web_token(uuid.uuid4(), issued_at=int(time.time()) - 3600), "expired"),
+        (lambda: web_token(uuid.uuid4(), ttl=3600), "lifetime too long"),
+        (lambda: web_token(uuid.uuid4(), aud="something-else"), "Invalid token"),
+        (lambda: web_token(uuid.uuid4(), iss="someone-else"), "Invalid token"),
+        (lambda: web_token("42"), "Invalid token claims"),
+        (lambda: web_token(uuid.uuid4(), auth_time=-1), "Invalid token claims"),
+        (lambda: "not.a.jwt", "Invalid token"),
     ],
 )
-def test_bad_internal_tokens(token: str, message: str) -> None:
+def test_bad_internal_tokens(make: Callable[[], str], message: str) -> None:
     with pytest.raises(AuthError, match=message):
-        verify_internal_token(token, _settings())
+        verify_internal_token(make(), _settings())
 
 
 def test_alg_none_is_rejected() -> None:

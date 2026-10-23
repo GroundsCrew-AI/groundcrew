@@ -2,13 +2,15 @@
 
 import { BaseEdge, type Edge, EdgeLabelRenderer, type EdgeProps, getSmoothStepPath } from "@xyflow/react";
 import { cn } from "cn";
-import { memo } from "react";
+import { type CSSProperties, memo } from "react";
 
 import type { EdgeRoute, Point } from "@/lib/graph";
 
 export type RoutedEdgeData = {
   route: EdgeRoute | null;
   label: string;
+  /** The kind's hue (EDGE_COLORS). */
+  color: string;
   active: boolean;
   faded: boolean;
   dashed: boolean;
@@ -43,7 +45,7 @@ function RoutedEdgeView(props: EdgeProps<RoutedFlowEdge>) {
   const [fallbackPath, fallbackX, fallbackY] = getSmoothStepPath(props);
   const path = route ? roundedPath(route.points) : fallbackPath;
   const at = route?.label ?? { x: fallbackX, y: fallbackY };
-  const color = data?.active ? "var(--primary)" : "var(--subtle)";
+  const color = data?.color ?? "var(--subtle)";
   return (
     <>
       <BaseEdge
@@ -52,17 +54,23 @@ function RoutedEdgeView(props: EdgeProps<RoutedFlowEdge>) {
         markerEnd={markerEnd}
         style={{
           stroke: color,
-          strokeWidth: data?.active ? 2 : 1.5,
+          strokeWidth: data?.active ? 2.5 : 1.5,
           strokeDasharray: data?.dashed ? "5 5" : undefined,
           opacity: data?.faded ? 0.18 : 1,
         }}
       />
       <EdgeLabelRenderer>
         <span
-          style={{ transform: `translate(-50%, -50%) translate(${at.x}px, ${at.y}px)` }}
+          style={
+            {
+              transform: `translate(-50%, -50%) translate(${at.x}px, ${at.y}px)`,
+              "--edge": color,
+              color,
+            } as CSSProperties
+          }
           className={cn(
-            "nodrag nopan pointer-events-none absolute whitespace-nowrap rounded bg-background/95 px-1.5 py-px text-[12px] leading-4",
-            data?.active ? "font-medium text-foreground" : "text-muted-foreground",
+            "nodrag nopan pointer-events-none absolute whitespace-nowrap rounded bg-background/95 px-1.5 py-px text-[12px] leading-4 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--edge)_30%,transparent)]",
+            data?.active && "font-medium",
             data?.faded && "opacity-30",
           )}
         >

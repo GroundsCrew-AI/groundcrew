@@ -11,6 +11,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   k8s: "Kubernetes",
   vercel: "Vercel",
   vm: "VM",
+  agent: "Agent",
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -25,6 +26,8 @@ const TYPE_LABELS: Record<string, string> = {
   "ec2:security-group": "Security group",
   "ec2:vpc": "VPC",
   "ec2:instance": "EC2 instance",
+  "agent:host": "Server",
+  "agent:service": "Service",
   "lambda:function": "Lambda function",
   "s3:bucket": "S3 bucket",
   "sqs:queue": "SQS queue",
@@ -61,6 +64,21 @@ export const EDGE_LABELS: Record<string, string> = {
   pulls_from: "pulls image",
   logs_to: "logs to",
 };
+
+/** Each kind of line has its own hue (the area tokens, contrast-checked on both themes). */
+export const EDGE_COLORS: Record<string, string> = {
+  calls: "var(--area-runs)",
+  reads: "var(--area-map)",
+  uses: "var(--area-approvals)",
+  pulls_from: "var(--area-docs)",
+  deployed_by: "var(--area-deploy)",
+  logs_to: "var(--area-settings)",
+  defined_in: "var(--subtle)",
+};
+
+export function edgeColor(kind: string): string {
+  return EDGE_COLORS[kind] ?? "var(--subtle)";
+}
 
 export function edgeLabel(kind: string): string {
   return EDGE_LABELS[kind] ?? kind.replaceAll("_", " ");

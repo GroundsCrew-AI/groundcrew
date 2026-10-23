@@ -93,6 +93,11 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         lambda t: f"/workspaces/{t.workspace}/summary",
         _none,
     ),
+    ("GET", "/workspaces/{workspace_id}/activity"): (
+        "GET",
+        lambda t: f"/workspaces/{t.workspace}/activity",
+        _none,
+    ),
     ("GET", "/workspaces/{workspace_id}/usage"): (
         "GET",
         lambda t: f"/workspaces/{t.workspace}/usage",
@@ -192,6 +197,11 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         lambda t: f"/connections/{t.aws}/aws/regions",
         lambda t: {"regions": ["us-east-2"]},
     ),
+    ("GET", "/connections/{connection_id}/aws/operate-values"): (
+        "GET",
+        lambda t: f"/connections/{t.aws}/aws/operate-values",
+        _none,
+    ),
     ("POST", "/connections/{connection_id}/aws/operate"): (
         "POST",
         lambda t: f"/connections/{t.aws}/aws/operate",
@@ -272,6 +282,14 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         },
     ),
     ("GET", "/deploys"): ("GET", lambda t: f"/deploys?workspace_id={t.workspace}", _none),
+    ("GET", "/deploys/services"): (
+        "GET",
+        lambda t: (
+            f"/deploys/services?workspace_id={t.workspace}&connection_id={t.vercel}"
+            "&repo=a/b&ref=main"
+        ),
+        _none,
+    ),
     ("POST", "/deploys"): (
         "POST",
         lambda t: "/deploys",
@@ -287,11 +305,56 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         lambda t: f"/deploys/{t.deploy}/env",
         lambda t: {"approval_id": str(t.approval)},
     ),
+    ("GET", "/deploys/{deploy_id}/settings"): (
+        "GET",
+        lambda t: f"/deploys/{t.deploy}/settings",
+        _none,
+    ),
+    ("POST", "/deploys/{deploy_id}/settings"): (
+        "POST",
+        lambda t: f"/deploys/{t.deploy}/settings",
+        lambda t: {"env": [{"name": "A", "value": "1"}]},
+    ),
+    ("GET", "/workspaces/{workspace_id}/tokens"): (
+        "GET",
+        lambda t: f"/workspaces/{t.workspace}/tokens",
+        _none,
+    ),
+    ("POST", "/workspaces/{workspace_id}/tokens"): (
+        "POST",
+        lambda t: f"/workspaces/{t.workspace}/tokens",
+        lambda t: {"name": "intruder"},
+    ),
+    ("DELETE", "/workspaces/{workspace_id}/tokens/{token_id}"): (
+        "DELETE",
+        lambda t: f"/workspaces/{t.workspace}/tokens/{uuid.uuid4()}",
+        _none,
+    ),
     ("GET", "/incidents"): ("GET", lambda t: f"/incidents?workspace_id={t.workspace}", _none),
     ("POST", "/incidents"): (
         "POST",
         lambda t: "/incidents",
         lambda t: {"workspace_id": str(t.workspace), "resource_ids": [str(t.resource)]},
+    ),
+    ("POST", "/connections/agent"): (
+        "POST",
+        lambda t: "/connections/agent",
+        lambda t: {"workspace_id": str(t.workspace), "name": "intruder"},
+    ),
+    ("PUT", "/connections/{connection_id}/agent/registry"): (
+        "PUT",
+        lambda t: f"/connections/{t.k8s}/agent/registry",
+        lambda t: {"registry": "ghcr.io/intruder", "username": "x", "token": "y"},
+    ),
+    ("DELETE", "/connections/{connection_id}/agent/registry"): (
+        "DELETE",
+        lambda t: f"/connections/{t.k8s}/agent/registry",
+        _none,
+    ),
+    ("POST", "/connections/{connection_id}/agent/token"): (
+        "POST",
+        lambda t: f"/connections/{t.k8s}/agent/token",
+        _none,
     ),
     ("GET", "/incidents/{incident_id}"): ("GET", lambda t: f"/incidents/{t.incident}", _none),
     ("POST", "/incidents/{incident_id}/fixes/{fix_id}/retry"): (
@@ -319,6 +382,14 @@ NOT_WORKSPACE_SCOPED = {
     ("POST", "/github/webhook"): "signed by GitHub, no user (test_github_claims.py)",
     ("GET", "/connections/aws/template"): "the public connect template",
     ("GET", "/connections/aws/template-url"): "the public connect template URL",
+    ("POST", "/agent/v1/enroll"): "a one-time join token, no user (test_remote_agents.py)",
+    ("POST", "/agent/v1/heartbeat"): "signed by the agent's key, no user (test_remote_agents.py)",
+    ("POST", "/agent/v1/inventory"): "signed by the agent's key, no user (test_remote_agents.py)",
+    ("POST", "/agent/v1/events"): "signed by the agent's key, no user (test_agent_signals.py)",
+    ("POST", "/agent/v1/commands/poll"): "signed by the agent's key; its own commands only",
+    ("POST", "/agent/v1/commands/{command_id}/result"): "signed; 404 for another agent's command",
+    ("POST", "/agent/v1/commands/{command_id}/secrets"): "signed; 404 for another agent's command",
+    ("POST", "/agent/v1/registry-login"): "signed; a pull login for the agent's own workspace only",
     ("GET", "/admin/platform"): "platform operators only, 404 for others (test_abuse.py)",
     ("PUT", "/admin/platform/signups"): "platform operators only, 404 for others (test_abuse.py)",
 }

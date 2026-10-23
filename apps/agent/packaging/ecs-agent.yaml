@@ -1,0 +1,250 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  The Groundcrew agent as an ECS service (Fargate) in your account: it watches the ECS services
+  you list and, if you allow it, restarts, rolls back, and deploys them after a person approves
+  each action in Groundcrew. It only connects out. docs: https://groundkrew.com/docs/connect/agent
+
+Parameters:
+  JoinToken:
+    Type: String
+    NoEcho: true
+    Description: The one-time join token from Groundcrew (Connections, Install an agent).
+    AllowedPattern: "gcj_[A-Za-z0-9_-]+"
+  GroundcrewApiUrl:
+    Type: String
+    Default: https://api.groundkrew.com
+  AgentImage:
+    Type: String
+    Default: groundkrew.com/public/groundcrew-agent:0.6.1
+    Description: The agent's image (the install dialog fills in the current version).
+  ClusterName:
+    Type: String
+    Description: The ECS cluster the agent runs in (the services it watches can be in any cluster of this account and Region).
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  Subnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: A subnet with outbound internet access (a NAT gateway, or a public subnet with AssignPublicIp ENABLED).
+  AssignPublicIp:
+    Type: String
+    AllowedValues: [ENABLED, DISABLED]
+    Default: DISABLED
+  Services:
+    Type: String
+    Default: "[]"
+    Description: >-
+      The services to watch, as a YAML list, for example
+      [{name: api, runtime: ecs, ecs: {cluster: checkout, service: api}, allow: [restart, rollback, deploy]}]
+  AllowActions:
+    Type: String
+    AllowedValues: ["no", "yes"]
+    Default: "no"
+    Description: >-
+      yes lets the agent restart, roll back, and deploy ECS services tagged groundcrew:managed=true
+      (each action still needs an approval in Groundcrew). no: it only reads.
+
+Conditions:
+  Act: !Equals [!Ref AllowActions, "yes"]
+
+Resources:
+  AgentSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Groundcrew agent (outbound only)
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - {IpProtocol: "-1", CidrIp: 0.0.0.0/0, Description: "Groundcrew API, AWS APIs, image pulls"}
+
+  StateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Groundcrew agent state (NFS from the agent only)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref AgentSecurityGroup}
+
+  # The agent's key and enrollment survive task restarts (a join token works once).
+  StateFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      FileSystemTags:
+        - {Key: Name, Value: groundcrew-agent-state}
+        - {Key: "groundcrew:managed", Value: "true"}
+
+  StateMountTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref StateFileSystem
+      SubnetId: !Ref Subnet
+      SecurityGroups: [!Ref StateSecurityGroup]
+
+  StateAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref StateFileSystem
+      PosixUser: {Uid: "65532", Gid: "65532"}
+      RootDirectory:
+        Path: /groundcrew-agent
+        CreationInfo: {OwnerUid: "65532", OwnerGid: "65532", Permissions: "0700"}
+
+  JoinTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Groundcrew agent join token (used once, on the agent's first start)
+      SecretString: !Ref JoinToken
+      Tags:
+        - {Key: "groundcrew:managed", Value: "true"}
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /groundcrew/agent/${AWS::StackName}
+      RetentionInDays: 14
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: sts:AssumeRole}
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: join-token
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - {Effect: Allow, Action: secretsmanager:GetSecretValue, Resource: !Ref JoinTokenSecret}
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: sts:AssumeRole}
+      Policies:
+        - PolicyName: read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:DescribeTaskDefinition
+                  - ecs:ListTasks
+                  - ecs:DescribeTasks
+                  - logs:FilterLogEvents
+                  - logs:GetLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+                Resource: !GetAtt StateFileSystem.Arn
+                Condition:
+                  StringEquals: {"elasticfilesystem:AccessPointArn": !GetAtt StateAccessPoint.Arn}
+
+  ActPolicy:
+    Type: AWS::IAM::Policy
+    Condition: Act
+    Properties:
+      PolicyName: act
+      Roles: [!Ref TaskRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: ecs:UpdateService
+            Resource: "*"
+            Condition:
+              StringEquals: {"aws:ResourceTag/groundcrew:managed": "true"}
+          - {Effect: Allow, Action: ecs:RegisterTaskDefinition, Resource: "*"}
+          - Effect: Allow
+            Action: iam:PassRole
+            Resource: "*"
+            Condition:
+              StringEquals: {"iam:PassedToService": ecs-tasks.amazonaws.com}
+          - Effect: Allow
+            Action:
+              - secretsmanager:CreateSecret
+              - secretsmanager:PutSecretValue
+              - secretsmanager:DescribeSecret
+              - secretsmanager:TagResource
+            Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:groundcrew/pull/*
+
+  # Attach to the task execution role of each service the agent deploys from the Groundcrew
+  # registry (not needed for images in ECR): it reads the pull login the agent keeps fresh.
+  PullLoginReadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Read the Groundcrew agent's image pull logins (attach to task execution roles)
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:groundcrew/pull/*
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: state
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref StateFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig: {AccessPointId: !Ref StateAccessPoint, IAM: ENABLED}
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Ref AgentImage
+          Essential: true
+          User: "65532:65532"
+          ReadonlyRootFilesystem: true
+          Environment:
+            - Name: GROUNDCREW_AGENT_CONFIG
+              Value: !Sub |
+                groundcrew: {url: "${GroundcrewApiUrl}"}
+                state_dir: /var/lib/groundcrew-agent
+                services: ${Services}
+          Secrets:
+            - {Name: GROUNDCREW_JOIN_TOKEN, ValueFrom: !Ref JoinTokenSecret}
+          MountPoints:
+            - {SourceVolume: state, ContainerPath: /var/lib/groundcrew-agent}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: agent
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: StateMountTarget
+    Properties:
+      ServiceName: !Sub ${AWS::StackName}
+      Cluster: !Ref ClusterName
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref TaskDefinition
+      # One agent at a time: the old task stops before the new one starts.
+      DeploymentConfiguration: {MaximumPercent: 100, MinimumHealthyPercent: 0}
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: [!Ref Subnet]
+          SecurityGroups: [!Ref AgentSecurityGroup]
+          AssignPublicIp: !Ref AssignPublicIp
+
+Outputs:
+  PullLoginReadPolicyArn:
+    Description: Attach to the task execution role of each service the agent deploys from the Groundcrew registry.
+    Value: !Ref PullLoginReadPolicy
+  LogGroup:
+    Value: !Ref LogGroup

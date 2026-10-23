@@ -73,6 +73,7 @@ export function DeployList({ deploys, now = Date.now() }: { deploys: DeploySumma
               >
                 {d.source.repo}
                 {d.source.ref && <span className="text-muted-foreground">@{d.source.ref}</span>}
+                {d.source.path && d.source.path !== "." && <span className="text-muted-foreground"> {d.source.path}/</span>}
               </span>
               <span className="hidden min-w-0 truncate text-muted-foreground lg:block">
                 {d.target.name} <span className="text-subtle">({targetLabel(d.target.kind)})</span>

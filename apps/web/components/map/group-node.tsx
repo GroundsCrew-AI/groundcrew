@@ -2,9 +2,9 @@
 
 import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
-import { memo } from "react";
+import { type CSSProperties, memo } from "react";
 
-import { PROVIDER_MARKS } from "./resource-meta";
+import { PROVIDER_MARKS, providerColor } from "./resource-meta";
 
 export type GroupNodeData = {
   label: string;
@@ -17,12 +17,15 @@ export type GroupFlowNode = Node<GroupNodeData, "group-box">;
 
 function GroupNodeView({ data }: NodeProps<GroupFlowNode>) {
   return (
-    <div className="pointer-events-none h-full w-full rounded-xl border border-dashed bg-[color-mix(in_oklab,var(--muted)_55%,transparent)]">
+    <div
+      style={{ "--tint": providerColor(data.provider) } as CSSProperties}
+      className="pointer-events-none h-full w-full rounded-xl border border-[color-mix(in_oklab,var(--tint)_30%,transparent)] bg-[color-mix(in_oklab,var(--tint)_5%,transparent)]"
+    >
       <div className="flex items-center gap-2 px-3.5 pt-3 text-[13px] text-muted-foreground">
-        <span className="rounded border bg-card px-1.5 font-mono text-[11px]">
+        <span className="tint rounded px-1.5 font-mono text-[11px] font-medium">
           {PROVIDER_MARKS[data.provider] ?? data.provider}
         </span>
-        <span className="truncate font-medium">{data.label}</span>
+        <span className="truncate font-medium text-foreground">{data.label}</span>
         <span className="tabular text-subtle">{data.count}</span>
         {data.onCollapse && (
           <button

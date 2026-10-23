@@ -8,7 +8,13 @@ import pytest
 
 from app.agents.scout.accuracy import field_matches, load_golden
 from app.agents.scout.appspec import Evidence, ScoutDraft
-from app.agents.scout.detectors import detect, find_subpath, is_secret_name
+from app.agents.scout.detectors import (
+    detect,
+    find_subpath,
+    is_secret_name,
+    service_dirs,
+    service_markers,
+)
 from app.agents.scout.repo_view import RepoView
 from app.agents.scout.scout import PROMPT_TOKEN_CAP, build_prompt, merge, scout
 from app.agents.scout.summary import ResourceSummary, summarize_system
@@ -360,3 +366,123 @@ async def test_summarize_system() -> None:
     user = llm.calls[0]["messages"][1]["content"]
     assert user.index('"aws"') < user.index('"azure"')  # sorted, deterministic
     assert await summarize_system(llm, _budget(), []) == "No resources found yet."
+
+
+def test_service_dirs_across_languages() -> None:
+    files = [
+        "Makefile",
+        "api/pyproject.toml",
+        "web/package.json",
+        "web/scripts/package.json",  # inside web: part of it
+        "worker/go.mod",
+        "services/billing/api/pom.xml",
+        "services/ledger/Ledger.csproj",
+        "api/tests/fixtures/requirements.txt",
+        "examples/demo/package.json",
+        "node_modules/x/package.json",
+        "a/b/c/d/Cargo.toml",  # too deep
+        "infra/aws/lambda/handler.py",  # no manifest: not a service
+    ]
+    assert service_dirs(files) == [
+        "api",
+        "services/billing/api",
+        "services/ledger",
+        "web",
+        "worker",
+    ]
+    assert service_dirs(["package.json", "apps/api/go.mod"]) == [".", "apps/api"]
+
+
+def test_dockerfile_only_folders_are_services() -> None:
+    files = [
+        "api/go.mod",
+        "site/Dockerfile",  # a static site: no manifest, its own image
+        "site/index.html",
+        "docker/Dockerfile",  # builds another folder: not a service by itself
+        "api/Dockerfile",
+    ]
+    assert service_markers(files) == {
+        "api": ["Dockerfile", "go.mod"],
+        "site": ["Dockerfile"],
+    }
+
+
+def test_compose_names_its_build_folders() -> None:
+    compose = """
+services:
+  api: {build: ./backend/services/api/server}  # deeper than manifests are looked for
+  web:
+    build: {context: frontend, dockerfile: Dockerfile.prod}
+  db: {image: postgres:16}
+  remote: {build: "https://github.com/acme/x.git"}
+  escape: {build: ../outside}
+  worker: {build: ./frontend/worker}  # inside web, but Compose builds it on its own
+"""
+    files = ["docker-compose.yml", "frontend/package.json", "README.md"]
+    read = {"docker-compose.yml": compose}.get
+    assert service_markers(files, read) == {
+        "backend/services/api/server": ["docker-compose.yml"],
+        "frontend": ["docker-compose.yml", "package.json"],
+        "frontend/worker": ["docker-compose.yml"],
+    }
+    # Without the file's text the manifest is all there is.
+    assert service_dirs(files) == ["frontend"]
+    # A broken Compose file is ignored.
+    assert service_dirs(files, {"docker-compose.yml": "services: [:"}.get) == ["frontend"]
+
+
+def test_compose_building_the_root_makes_it_the_app(tmp_path: Path) -> None:
+    _write(tmp_path, "compose.yaml", "services:\n  app:\n    build: .\n")
+    _write(tmp_path, "worker/requirements.txt", "celery\n")
+    _write(tmp_path, "admin/package.json", "{}")
+    # The root is the app: no service has to be chosen.
+    assert find_subpath(RepoView(tmp_path)) == (None, [])
+
+
+def test_a_dockerfile_only_service_is_described_from_its_dockerfile(tmp_path: Path) -> None:
+    _write(tmp_path, "Dockerfile", "FROM nginx:1.27\nCOPY . /usr/share/nginx/html\nEXPOSE 80\n")
+    found = detect(RepoView(tmp_path))
+    assert found.has_dockerfile is not None
+    assert found.value("port") == 80
+
+
+def test_compose_names_the_dockerfile_to_build(tmp_path: Path) -> None:
+    from app.agents.scout.detectors import use_compose_dockerfile
+
+    _write(
+        tmp_path,
+        "docker-compose.yml",
+        "services:\n"
+        "  api:\n    build: {context: ./api, dockerfile: docker/prod.Dockerfile}\n"
+        "  web: {build: ./web}\n",
+    )
+    _write(tmp_path, "api/requirements.txt", "fastapi\n")
+    _write(tmp_path, "api/Dockerfile", "FROM python:3.12\n")
+    _write(tmp_path, "api/docker/prod.Dockerfile", "FROM python:3.12-slim\nEXPOSE 9000\n")
+    _write(tmp_path, "web/package.json", "{}")
+    view = RepoView(tmp_path / "api")
+    found = detect(view)
+    use_compose_dockerfile(RepoView(tmp_path), view, found, "api")
+    assert found.dockerfile == "docker/prod.Dockerfile"
+    assert found.has_dockerfile is not None and "docker-compose.yml" in found.has_dockerfile.reason
+    # The web service has no dockerfile of its own: its plain Dockerfile (none here) is used.
+    web = RepoView(tmp_path / "web")
+    found = detect(web)
+    use_compose_dockerfile(RepoView(tmp_path), web, found, "web")
+    assert found.dockerfile is None and found.has_dockerfile is None
+
+
+def test_a_compose_dockerfile_outside_the_app_folder_is_not_used(tmp_path: Path) -> None:
+    from app.agents.scout.detectors import use_compose_dockerfile
+
+    _write(
+        tmp_path,
+        "compose.yaml",
+        "services:\n  api: {build: {context: api, dockerfile: ../x.Dockerfile}}\n",
+    )
+    _write(tmp_path, "api/go.mod", "module x\n")
+    _write(tmp_path, "x.Dockerfile", "FROM golang\n")
+    view = RepoView(tmp_path / "api")
+    found = detect(view)
+    use_compose_dockerfile(RepoView(tmp_path), view, found, "api")
+    assert found.dockerfile is None and any("not a file inside" in n for n in found.notes)

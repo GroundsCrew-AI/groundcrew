@@ -1,0 +1,8 @@
+# Ubuntu 24.04 restricts unprivileged user namespaces; rootless Docker's rootlesskit needs one.
+abi <abi/4.0>,
+include <tunables/global>
+
+/usr/bin/rootlesskit flags=(unconfined) {
+  userns,
+  include if exists <local/usr.bin.rootlesskit>
+}

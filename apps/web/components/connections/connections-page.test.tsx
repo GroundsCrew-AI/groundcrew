@@ -25,6 +25,7 @@ vi.mock("@/components/shell/page-header", () => ({
 }));
 vi.mock("@/components/connections/aws-connect-dialog", () => ({ AwsConnectDialog: () => null, openPendingTab: () => null }));
 vi.mock("@/components/connections/github-connect-dialog", () => ({ GitHubConnectDialog: () => null }));
+vi.mock("@/components/connections/agent-connect-dialog", () => ({ AgentConnectDialog: () => null }));
 vi.mock("@/components/connections/token-connect-dialogs", () => ({
   AzureConnectDialog: () => null,
   KubernetesConnectDialog: () => null,
@@ -43,13 +44,14 @@ describe("ConnectionsPage", () => {
     expect(screen.queryByText(new RegExp(REASON))).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect AWS" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Pick repositories" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Install an agent" })).toBeEnabled();
   });
 
   it("shows members why connection actions are disabled", () => {
     role.value = "approver";
     render(<ConnectionsPage />);
     expect(screen.getByText(new RegExp(REASON))).toBeInTheDocument();
-    for (const name of ["Connect AWS", "Pick repositories", "Add token", "Upload kubeconfig", "Enable deploys"]) {
+    for (const name of ["Connect AWS", "Pick repositories", "Add token", "Upload kubeconfig", "Install an agent", "Enable deploys"]) {
       const button = screen.getByRole("button", { name });
       expect(button).toBeDisabled();
       expect(button).toHaveAccessibleDescription(new RegExp(REASON));

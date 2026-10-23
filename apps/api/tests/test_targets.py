@@ -608,3 +608,66 @@ async def test_ecs_step_labels_survive_display_redaction() -> None:
     plan = await target.plan(spec(uuid.uuid4(), CONNECTION))
     shown = redact_json([s.model_dump() for s in plan.steps])
     assert [s["kind"] for s in shown] == [s.kind for s in plan.steps]
+
+
+async def test_ecs_settings_change_registers_a_revision_without_a_push(
+    session_factory: SessionFactory, workspace: Workspace
+) -> None:
+    """A settings change: no ECR push; the kept secret stays referenced, the kept plain value
+    comes from the running revision, the removed one is gone, the new values are in."""
+    events: list[str] = []
+    target, aws = ecs(events)
+    run, _, _ = await approved_action(
+        session_factory, workspace, action=TARGET_APPLY, plan_hash="0" * 64
+    )
+    first = spec(
+        run.id,
+        CONNECTION,
+        env=[
+            EnvValue(name="DATABASE_URL", value=SECRET_VALUE, secret=True),
+            EnvValue(name="MODE", value="production"),
+            EnvValue(name="FEATURE", value="on"),
+        ],
+    )
+    plan = await target.plan(first)
+    _, _, token = await approved_action(
+        session_factory, workspace, action=TARGET_APPLY, plan_hash=plan.plan_hash(), run=run
+    )
+    await target.apply(plan, first, token, FakeSandbox(events))  # type: ignore[arg-type]
+
+    run2, _, _ = await approved_action(
+        session_factory, workspace, action=TARGET_APPLY, plan_hash="0" * 64
+    )
+    change = spec(
+        run2.id,
+        CONNECTION,
+        env=[EnvValue(name="LOG_LEVEL", value="debug")],
+        config_change=True,
+        keep_env=["DATABASE_URL", "MODE"],
+        keep_secret=["DATABASE_URL"],
+        remove_env=["FEATURE"],
+        previous_env=["DATABASE_URL", "FEATURE", "MODE"],
+    )
+    plan2 = await target.plan(change)
+    assert any(s.kind == "image" and s.action == "unchanged" for s in plan2.steps)
+    assert {v.name: v.change for v in plan2.env} == {
+        "DATABASE_URL": "keep",
+        "FEATURE": "remove",
+        "LOG_LEVEL": "add",
+        "MODE": "keep",
+    }
+    _, _, token2 = await approved_action(
+        session_factory, workspace, action=TARGET_APPLY, plan_hash=plan2.plan_hash(), run=run2
+    )
+    before = len(events)
+    sandbox = FakeSandbox(events)
+    await target.apply(plan2, change, token2, sandbox)  # type: ignore[arg-type]
+    assert sandbox.pushed == [] and not any(e.startswith("push") for e in events[before:])
+    registered = list(aws.task_definitions.values())[-1]["containerDefinitions"][0]
+    env = {e["name"]: e["value"] for e in registered["environment"]}
+    assert env == {"LOG_LEVEL": "debug", "MODE": "production"}
+    secrets = {s["name"]: s["valueFrom"] for s in registered["secrets"]}
+    assert list(secrets) == ["DATABASE_URL"] and secrets["DATABASE_URL"].startswith("arn:aws:")
+    # The kept secret was not written again.
+    assert aws.secrets["groundcrew/legacy-flask-app/DATABASE_URL"] == SECRET_VALUE
+    assert [o for o in aws.ops()[-12:] if o == "secretsmanager:put_secret_value"] == []

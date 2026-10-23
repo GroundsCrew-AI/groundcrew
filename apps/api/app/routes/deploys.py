@@ -16,7 +16,9 @@ from sqlalchemy import and_, or_, select
 
 from app import queue, quotas
 from app.accounts import NotFoundError, member_workspace
+from app.agents.scout.detectors import COMPOSE_FILES, service_markers
 from app.audit import record
+from app.connectors.github import GitHubError, get_github_app
 from app.db.models import (
     Approval,
     ApprovalStatus,
@@ -37,11 +39,16 @@ from app.routes.deploy_schemas import (
     DeployEnvUpdate,
     DeployEnvUpdated,
     DeployPage,
+    DeploySettings,
+    DeploySettingsChange,
     DeploySourceOut,
     DeployState,
     DeploySummary,
     DeployTargetOut,
     FixtureSource,
+    RepoService,
+    RepoServices,
+    SettingVar,
     StageOut,
 )
 from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
@@ -87,6 +94,43 @@ async def _deploy_run(
     return run
 
 
+@router.get(
+    "/services",
+    responses={409: {"description": "The connection is not GitHub, or GitHub refused."}},
+)
+async def repo_services(
+    user: CurrentUser,
+    session: SessionDep,
+    workspace_id: Annotated[uuid.UUID, Query()],
+    connection_id: Annotated[uuid.UUID, Query()],
+    repo: Annotated[str, Query(max_length=140)],
+    ref: Annotated[str, Query(min_length=1, max_length=255)],
+) -> RepoServices:
+    """The folders of a repository that deploy on their own (api/, web/, services/billing/),
+    read from GitHub without cloning. The deploy form asks which one when there are several."""
+    await _check_member(session, user, workspace_id)
+    conn = await _connection(session, workspace_id, connection_id)
+    if conn.kind != "github":
+        raise HTTPException(status.HTTP_409_CONFLICT, "The source connection is not GitHub.")
+    github = get_github_app()
+    installation = int(conn.config["installation_id"])
+    try:
+        paths, _ = await github.tree_paths(installation, repo, ref)
+        # Compose files at the root name their services' build folders outright.
+        compose = {
+            rel: await github.file_text(installation, repo, rel, ref)
+            for rel in paths
+            if rel in COMPOSE_FILES
+        }
+    except (GitHubError, ValueError) as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    markers = service_markers(paths, compose.get)
+    return RepoServices(
+        services=[RepoService(path=d, manifests=m) for d, m in markers.items()],
+        choose="." not in markers and len(markers) > 1,
+    )
+
+
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
@@ -112,6 +156,7 @@ async def create_deploy(
             "kind": "fixture",
             "repo": body.repo.fixture,
             "ref": None,
+            "path": body.repo.path,
             "connection_id": None,
         }
         label = f"fixture {body.repo.fixture}"
@@ -123,9 +168,12 @@ async def create_deploy(
             "kind": "github",
             "repo": body.repo.repo,
             "ref": body.repo.ref,
+            "path": body.repo.path,
             "connection_id": str(repo_conn.id),
         }
         label = f"{body.repo.repo}@{body.repo.ref}"
+    if body.repo.path not in (None, "."):
+        label += f" ({body.repo.path})"
     target = await _connection(session, body.workspace_id, body.target_connection_id)
     if target.kind == "aws":
         if (target.config.get("tier") or "observe") != "deploy":
@@ -137,6 +185,28 @@ async def create_deploy(
         kind = "aws_ecs"
     elif target.kind == "k8s":
         kind = "k8s"
+    elif target.kind == "agent":
+        from app import registry
+        from app.targets.agent import deployable_services, own_registry
+
+        kind = "agent"
+        allowed = deployable_services(target)
+        if body.target_service not in allowed:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Choose a service on {target.name} that allows deploy"
+                + (
+                    f": {', '.join(allowed)}."
+                    if allowed
+                    else ": none does yet. Add deploy to a "
+                    "service's `allow` list in /etc/groundcrew-agent/agent.yaml."
+                ),
+            )
+        if own_registry(target) is None and not registry.enabled(settings):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Add a registry for {target.name} on the Connections page first.",
+            )
     else:
         raise HTTPException(status.HTTP_409_CONFLICT, f"{target.name} is not a deploy target.")
 
@@ -144,7 +214,7 @@ async def create_deploy(
     request = {
         "source": source,
         "target_connection_id": str(target.id),
-        "target": {"kind": kind, "name": target.name},
+        "target": {"kind": kind, "name": target.name, "service": body.target_service},
         "env": [
             {"name": v.name, "secret": v.secret, "provided": bool(v.value.get_secret_value())}
             for v in body.env
@@ -230,6 +300,7 @@ def summary(run: Run) -> DeploySummary:
             kind=kind,
             repo=str(source.get("repo") or ""),
             ref=source.get("ref"),
+            path=source.get("path"),
             connection_id=uuid.UUID(conn) if conn else None,
             commit=state.get("commit"),
         ),
@@ -241,6 +312,7 @@ def summary(run: Run) -> DeploySummary:
         live_url=(state.get("final") or {}).get("live_url") or record.get("live_url"),
         build_attempts=int(build.get("attempts") or 0),
         automatic_fix=bool(build.get("automatic_fix")),
+        kind="settings" if request.get("settings") else "deploy",
         cost_usd=float(run.cost_usd) if run.cost_usd is not None else None,
         ultra_equiv_usd=float(run.ultra_equiv_usd) if run.ultra_equiv_usd is not None else None,
         error=run.error,
@@ -327,6 +399,11 @@ async def get_deploy(deploy_id: uuid.UUID, user: CurrentUser, session: SessionDe
         )
         for v in request.get("env", [])
     ]
+    planned = (state.get("target_plan") or {}).get("env")
+    if planned:
+        # Once planned, the plan's view: on a settings change it says what happens to each
+        # name (added, updated, kept, removed). Values stay on the approval card only.
+        env = [EnvVarView.model_validate({**v, "value": None}) for v in planned]
     stages = [StageOut(stage=name, **value) for name, value in (state.get("stages") or {}).items()]
     record = state.get("deploy")
     return DeployDetail(
@@ -340,6 +417,152 @@ async def get_deploy(deploy_id: uuid.UUID, user: CurrentUser, session: SessionDe
 
 
 # --- fixing env at the approval card ------------------------------------------------------
+
+
+def _live_env(state: dict[str, Any]) -> list[SettingVar]:
+    """The env names a finished deploy runs with: its approved plan's provided vars."""
+    plan = state.get("target_plan") or {}
+    return [
+        SettingVar(name=v["name"], secret=bool(v.get("secret")))
+        for v in plan.get("env", [])
+        if v.get("provided") and v.get("change") != "remove"
+    ]
+
+
+async def _settings_blocked(session: SessionDep, run: Run) -> str | None:
+    """Why this deploy's settings cannot be changed, or None."""
+    state: dict[str, Any] = dict(run.state or {})
+    if _deploy_state(run, state) != "live":
+        return "Only a live deploy's settings can be changed."
+    request = state.get("request") or {}
+    newer = await session.scalar(
+        select(Run.id)
+        .where(
+            Run.workspace_id == run.workspace_id,
+            Run.agent == "deploy",
+            Run.created_at > run.created_at,
+            Run.status.in_([RunStatus.succeeded, RunStatus.running, RunStatus.waiting_approval]),
+            Run.state["app"].astext == str(state.get("app") or ""),
+            Run.state["request"]["target_connection_id"].astext
+            == str(request.get("target_connection_id") or ""),
+        )
+        .limit(1)
+    )
+    if newer is not None:
+        return "A newer deploy of this app replaced this one; change its settings instead."
+    return None
+
+
+@router.get("/{deploy_id}/settings")
+async def deploy_settings(
+    deploy_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> DeploySettings:
+    """The env names this deploy runs with (never values), and whether they can be changed."""
+    run = await _deploy_run(session, user, deploy_id)
+    return DeploySettings(
+        env=_live_env(dict(run.state or {})), blocked=await _settings_blocked(session, run)
+    )
+
+
+@router.post(
+    "/{deploy_id}/settings",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={409: {"description": "The deploy is not live, or a newer one replaced it."}},
+)
+async def change_settings(
+    deploy_id: uuid.UUID,
+    body: DeploySettingsChange,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> DeployCreated:
+    """Change a live deploy's env vars without a rebuild: a new deploy run that skips Scout,
+    Build, and Smoke, plans the running image with the new values, and waits for approval
+    like any deploy. Values are handled like POST /deploys: encrypted in the job, never
+    echoed, never stored. Names not set or removed keep their values on the target."""
+    run = await _deploy_run(session, user, deploy_id, WorkspaceRole.approver)
+    blocked = await _settings_blocked(session, run)
+    if blocked:
+        raise HTTPException(status.HTTP_409_CONFLICT, blocked)
+    await quotas.check_can_start_run(session, run.workspace_id, settings)
+    state: dict[str, Any] = dict(run.state or {})
+    current = {v.name: v for v in _live_env(state)}
+    unknown = sorted(set(body.remove) - set(current))
+    if unknown:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"{', '.join(unknown)} is not set on this deploy, so it cannot be removed.",
+        )
+    changed = {v.name for v in body.env}
+    keep = sorted(set(current) - changed - set(body.remove))
+    source_request = dict(state.get("request") or {})
+    record_ = state.get("deployment") or {}
+    build = dict(state.get("build") or {})
+    # The image already in the registry: nothing is built or pushed (the sandbox one is gone).
+    build["image_ref"] = record_.get("image") or (state.get("target_plan") or {}).get("image")
+    # Nothing is built: the live deploy's attempts and fixes are not this run's.
+    build["attempts"], build["automatic_fix"] = 0, False
+    request = {
+        **source_request,
+        "env": [
+            *[{"name": n, "secret": current[n].secret, "provided": True} for n in keep],
+            *[{"name": v.name, "secret": v.secret, "provided": True} for v in body.env],
+        ],
+        "settings": {
+            "from_deploy": str(run.id),
+            "keep_env": keep,
+            "keep_secret": [n for n in keep if current[n].secret],
+            "remove_env": sorted(body.remove),
+            "previous_env": sorted(current),
+        },
+        "created_by": str(user.id),
+    }
+    new_id = uuid.uuid4()
+    app = str(state.get("app") or "app")
+    target_name = (source_request.get("target") or {}).get("name") or "its target"
+    new = Run(
+        id=new_id,
+        workspace_id=run.workspace_id,
+        agent="deploy",
+        goal=f"Change settings of {app} on {target_name}",
+        status=RunStatus.queued,
+        state={
+            "deploy_id": str(new_id),
+            "request": request,
+            "phase": "start",
+            "stages": {},
+            # What the live deploy built and planned with, reused as it was.
+            "spec": state.get("spec"),
+            "draft": state.get("draft"),
+            "app": state.get("app"),
+            "commit": state.get("commit"),
+            "build": build,
+        },
+    )
+    session.add(new)
+    await session.flush()
+    # Kept secrets carry no value: the target keeps the one it has.
+    env = [
+        {"name": v.name, "value": v.value.get_secret_value(), "secret": v.secret} for v in body.env
+    ]
+    await queue.enqueue(
+        session, DEPLOY_JOB, {"run_id": str(new_id), "env": seal_env(env)}, max_attempts=1
+    )
+    record(
+        session,
+        workspace_id=run.workspace_id,
+        actor=user,
+        action="deploy.settings",
+        target_type="run",
+        target_id=new_id,
+        detail={
+            "from_deploy": str(run.id),
+            "set": sorted(changed),
+            "removed": sorted(body.remove),
+        },
+    )
+    await session.commit()
+    return DeployCreated(deploy_id=new_id, run_id=new_id)
 
 
 @router.post(

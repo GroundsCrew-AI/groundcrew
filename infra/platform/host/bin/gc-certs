@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# TLS certificates from Let's Encrypt for the Groundcrew names (HTTP-01 through nginx's
+# webroot). certbot's own timer renews them; gc-certcheck.timer runs a weekly dry run.
+#
+#   gc-certs issue --email you@example.com --agree-tos
+#        First certificate, then switch nginx from the bootstrap site to the full one.
+#        --agree-tos accepts the Let's Encrypt Subscriber Agreement: the operator passes it.
+#   gc-certs status        names and expiry dates
+#   gc-certs dry-run       certbot renew --dry-run
+set -euo pipefail
+DOMAIN=${GC_DOMAIN:-groundkrew.com}
+API_DOMAIN=${GC_API_DOMAIN:-api.groundkrew.com}
+SRC=/opt/groundcrew/nginx
+
+site() { sed -e "s/__DOMAIN__/$DOMAIN/g" -e "s/__API_DOMAIN__/$API_DOMAIN/g" "$SRC/$1"; }
+[ "$(id -u)" = 0 ] || { echo "run as root: sudo gc-certs ..." >&2; exit 1; }
+
+issue() {
+  local email="" agreed=no
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --email) email=$2; shift 2 ;;
+      --agree-tos) agreed=yes; shift ;;
+      *) echo "unknown option $1" >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$email" ] || { echo "--email is required (Let's Encrypt expiry notices)" >&2; exit 2; }
+  [ "$agreed" = yes ] || { echo "pass --agree-tos to accept the Let's Encrypt Subscriber Agreement" >&2; exit 2; }
+  install -d -m 0755 /var/www/acme
+  certbot certonly --webroot -w /var/www/acme --cert-name "$DOMAIN" \
+    -d "$DOMAIN" -d "www.$DOMAIN" -d "$API_DOMAIN" \
+    --email "$email" --agree-tos --no-eff-email --non-interactive --key-type ecdsa
+  site groundcrew.conf >/etc/nginx/sites-available/groundcrew.conf
+  ln -sf /etc/nginx/sites-available/groundcrew.conf /etc/nginx/sites-enabled/groundcrew.conf
+  rm -f /etc/nginx/sites-enabled/groundcrew-bootstrap.conf
+  if ! nginx -t; then
+    # Keep serving what worked: back to the bootstrap site until the config is fixed.
+    rm -f /etc/nginx/sites-enabled/groundcrew.conf
+    ln -sf /etc/nginx/sites-available/groundcrew-bootstrap.conf /etc/nginx/sites-enabled/groundcrew-bootstrap.conf
+    echo "gc-certs: certificate issued, but nginx refused the HTTPS site; still on the bootstrap site" >&2
+    exit 1
+  fi
+  systemctl reload nginx
+  systemctl enable --now gc-certcheck.timer >/dev/null 2>&1
+  echo "gc-certs: certificate issued; nginx serves HTTPS for $DOMAIN, www.$DOMAIN, $API_DOMAIN"
+}
+
+case "${1:-}" in
+  issue) shift; issue "$@" ;;
+  status) certbot certificates 2>/dev/null | grep -E "Certificate Name|Domains|Expiry" ;;
+  dry-run) certbot renew --dry-run ;;
+  *) sed -n '2,11p' "$0"; exit 2 ;;
+esac

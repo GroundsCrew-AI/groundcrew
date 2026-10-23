@@ -9,12 +9,16 @@ A stronger finding replaces a weaker one; on a tie the first one stays.
 import json
 import re
 import tomllib
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
+import yaml
+
 from app.agents.scout.appspec import EnvVar, Evidence, FieldName
 from app.agents.scout.repo_view import RepoView
+from app.repos.files import SKIP_DIRS
 
 MANIFESTS = (
     "package.json",
@@ -48,6 +52,8 @@ class Detection:
     values: dict[str, Finding] = field(default_factory=dict)
     env_vars: dict[str, tuple[EnvVar, Evidence]] = field(default_factory=dict)
     has_dockerfile: Evidence | None = None
+    # A Dockerfile not named "Dockerfile" (from Compose), relative to the app folder.
+    dockerfile: str | None = None
     subpath: str | None = None
     notes: list[str] = field(default_factory=list)
     # Whether code reads each env var without a default. Code decides `required`; a name only
@@ -201,34 +207,147 @@ def detect(view: RepoView) -> Detection:
     return found
 
 
+# Folders that hold manifests but are not services to deploy.
+NOT_SERVICES = frozenset(
+    {"test", "tests", "__tests__", "spec", "fixtures", "testdata", "example", "examples", "docs"}
+)
+# Folders whose Dockerfile usually builds another folder (docker/Dockerfile with context ..):
+# a Dockerfile there alone does not make a service.
+DOCKERFILE_ONLY_SKIP = frozenset({"docker", "deploy", "deployment", "ci", "build", "scripts"})
+SERVICE_DEPTH = 3
+COMPOSE_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+
+
+def _compose_builds(rel: str, text: str) -> list[tuple[str, str | None]]:
+    """(build context, dockerfile) of a Compose file's services: the context as a repository
+    folder ("." for the root), the dockerfile as written (relative to the context; None when
+    it is the default). Contexts outside the repository, or remote ones (git URLs), are left
+    out."""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return []
+    services = data.get("services") if isinstance(data, dict) else None
+    out: list[tuple[str, str | None]] = []
+    for service in services.values() if isinstance(services, dict) else []:
+        build = service.get("build") if isinstance(service, dict) else None
+        context = build.get("context", ".") if isinstance(build, dict) else build
+        dockerfile = build.get("dockerfile") if isinstance(build, dict) else None
+        if not isinstance(context, str) or "://" in context or context.startswith(("git@", "/")):
+            continue
+        parts: list[str] = []
+        for part in (PurePosixPath(rel).parent / context).parts:
+            if part == "..":
+                if not parts:
+                    break
+                parts.pop()
+            elif part not in (".", "/"):
+                parts.append(part)
+        else:
+            named = dockerfile if isinstance(dockerfile, str) and dockerfile else None
+            out.append(("/".join(parts) or ".", None if named == "Dockerfile" else named))
+    return out
+
+
+def service_markers(
+    files: Iterable[str], read: Callable[[str], str | None] | None = None
+) -> dict[str, list[str]]:
+    """The deployable folders of a repository and what marks each one ("." is the root):
+    - a manifest (package.json, go.mod, pom.xml, ...) up to SERVICE_DEPTH folders deep;
+    - a Dockerfile, for services with no manifest (a static site, a prebuilt binary);
+    - a build context in a Compose file at the root (`read` gives its text), which names its
+      services outright, at any depth.
+    A folder inside another service is part of it, not a service. Test, example, and dependency
+    folders are skipped unless Compose names them."""
+    markers: dict[str, set[str]] = {}
+    named: set[str] = set()
+    for rel in files:
+        path = PurePosixPath(rel)
+        parent = path.parent
+        if read is not None and rel in COMPOSE_FILES:
+            for context, _ in _compose_builds(rel, read(rel) or ""):
+                markers.setdefault(context, set()).add(path.name)
+                named.add(context)
+            continue
+        manifest = is_manifest(path.name)
+        if not manifest and path.name != "Dockerfile":
+            continue
+        if len(parent.parts) > SERVICE_DEPTH:
+            continue
+        if any(p in SKIP_DIRS or p in NOT_SERVICES or p.startswith(".") for p in parent.parts):
+            continue
+        if not manifest and parent.parts and parent.parts[-1] in DOCKERFILE_ONLY_SKIP:
+            continue
+        markers.setdefault(parent.as_posix(), set()).add(path.name)
+    # A folder inside another service belongs to it, unless Compose builds it on its own.
+    nested = [d for d in sorted(markers) if d != "."]
+    keep = [d for d in nested if d in named or not any(d.startswith(f"{o}/") for o in nested)]
+    order = [".", *keep] if "." in markers else keep
+    return {d: sorted(markers[d]) for d in order}
+
+
+def service_dirs(
+    files: Iterable[str], read: Callable[[str], str | None] | None = None
+) -> list[str]:
+    """The deployable folders of a repository (see service_markers)."""
+    return list(service_markers(files, read))
+
+
 def find_subpath(view: RepoView) -> tuple[str | None, list[str]]:
     """For a monorepo with no manifest at the root: the one app directory, or the candidates."""
-    if any(is_manifest(f) for f in view.files if "/" not in f):
+    dirs = service_dirs(view.files, view.text)
+    if "." in dirs:
         return None, []
-    dirs = sorted(
-        {
-            str(PurePosixPath(f).parent)
-            for f in view.files
-            if is_manifest(PurePosixPath(f).name) and 1 <= len(PurePosixPath(f).parts) - 1 <= 2
-        }
-    )
     return (dirs[0], dirs) if len(dirs) == 1 else (None, dirs)
 
 
 # --- Dockerfile and Procfile ---------------------------------------------------------------
 
 
-def _dockerfile(view: RepoView, found: Detection) -> None:
-    if not view.exists("Dockerfile"):
+def _dockerfile(
+    view: RepoView, found: Detection, name: str = "Dockerfile", reason: str = ""
+) -> None:
+    if not view.exists(name):
         return
     found.has_dockerfile = Evidence(
-        field="has_dockerfile", file="Dockerfile", line=1, reason="Dockerfile at the app root"
+        field="has_dockerfile",
+        file=name,
+        line=1,
+        reason=reason or ("Dockerfile at the app root" if name == "Dockerfile" else name),
     )
-    for number, text in enumerate(view.lines("Dockerfile") or [], start=1):
+    found.dockerfile = None if name == "Dockerfile" else name
+    for number, text in enumerate(view.lines(name) or [], start=1):
         match = re.match(r"\s*EXPOSE\s+(\d+)", text, re.IGNORECASE)
         if match:
-            found.set("port", int(match.group(1)), EXPLICIT, "Dockerfile", number, "EXPOSE")
+            found.set("port", int(match.group(1)), EXPLICIT, name, number, "EXPOSE")
             break
+
+
+def use_compose_dockerfile(repo: RepoView, view: RepoView, found: Detection, app: str) -> None:
+    """A root Compose file that builds the app folder with its own `dockerfile:` names the
+    Dockerfile to build with. It wins over a plain Dockerfile; several different ones for the
+    same folder leave the choice to the plain one."""
+    names: set[tuple[str, str]] = set()
+    for rel in COMPOSE_FILES:
+        text = repo.text(rel)
+        if text is None:
+            continue
+        for context, dockerfile in _compose_builds(rel, text):
+            if context == app and dockerfile:
+                names.add((rel, dockerfile))
+    files = {dockerfile for _, dockerfile in names}
+    if len(files) != 1:
+        if len(files) > 1:
+            found.notes.append(
+                f"Compose builds this folder with several Dockerfiles: {sorted(files)}"
+            )
+        return
+    (rel, name), *_ = sorted(names)
+    clean = PurePosixPath(name)
+    if clean.is_absolute() or ".." in clean.parts or not view.exists(clean.as_posix()):
+        found.notes.append(f"{rel} names {name}, which is not a file inside the app folder")
+        return
+    _dockerfile(view, found, clean.as_posix(), f"{rel} builds this folder with {name}")
 
 
 def _procfile(view: RepoView, found: Detection) -> None:

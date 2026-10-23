@@ -18,12 +18,14 @@ import signal
 import socket
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from app import queue
 from app.config import get_settings
 from app.db.session import SessionFactory, get_engine, get_session_factory
 from app.log import job_id_var, setup_logging
+from app.writable import check_writable
 
 logger = logging.getLogger("groundcrew.worker")
 
@@ -229,8 +231,19 @@ async def maintenance_pass(session_factory: SessionFactory) -> None:
         )
 
 
+def touch_heartbeat(path: Path | None) -> None:
+    """Liveness for the container health check: this loop runs beside jobs, so a long build
+    does not make the worker look dead."""
+    if path is None:
+        return
+    with contextlib.suppress(OSError):
+        path.touch()
+
+
 async def maintain(session_factory: SessionFactory, stop: asyncio.Event) -> None:
+    heartbeat = get_settings().worker_heartbeat_file
     while not stop.is_set():
+        touch_heartbeat(heartbeat)
         try:
             await maintenance_pass(session_factory)
         except Exception:
@@ -255,6 +268,7 @@ async def main() -> None:
         shutdown_grace_seconds=settings.worker_shutdown_grace_seconds,
     )
     settings.require_production_ready()
+    check_writable(settings)
     housekeeping = asyncio.create_task(maintain(worker.session_factory, stop))
     try:
         await worker.run(stop)

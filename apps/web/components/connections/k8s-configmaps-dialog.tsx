@@ -83,7 +83,9 @@ export function K8sConfigMapsDialog({
                 Give the service account in this kubeconfig{" "}
                 <span className="font-mono">list</span> on ConfigMaps (the
                 optional block in{" "}
-                <span className="font-mono">infra/k8s-readonly-rbac.yaml</span>
+                <a href="/k8s-readonly-rbac.yaml" className="font-mono underline underline-offset-2">
+                  k8s-readonly-rbac.yaml
+                </a>
                 ):
               </p>
               {K8S_CONFIGMAPS_RBAC.map((command, i) => (

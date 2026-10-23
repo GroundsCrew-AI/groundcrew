@@ -81,6 +81,26 @@ def _decode(token: str, settings: Settings, *, audience: str, issuer: str) -> di
     return claims
 
 
+def create_internal_token(
+    user_id: uuid.UUID, settings: Settings, *, seconds: int = 60, now: datetime | None = None
+) -> str:
+    """An internal token for a user, as the web app makes them. The MCP server signs one per
+    tool call so the call goes through the same routes and checks as the web app's."""
+    issued = now or datetime.now(UTC)
+    return jwt.encode(
+        {
+            "iss": WEB_ISSUER,
+            "aud": API_AUDIENCE,
+            "sub": str(user_id),
+            "iat": int(issued.timestamp()),
+            "exp": int((issued + timedelta(seconds=seconds)).timestamp()),
+            "auth_time": int(issued.timestamp()),
+        },
+        _secret(settings),
+        algorithm=ALGORITHM,
+    )
+
+
 def verify_internal_token(token: str, settings: Settings) -> WebIdentity:
     claims = _decode(token, settings, audience=API_AUDIENCE, issuer=WEB_ISSUER)
     try:

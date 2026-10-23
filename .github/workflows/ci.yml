@@ -62,9 +62,10 @@ jobs:
           fi
       - name: Run migrations
         run: uv run alembic upgrade head
-      - name: Infra checks (compose and dind, kind manifests, connect template, cleanup)
+      - name: Infra checks (compose and dind, kind manifests, connect template, cleanup, read-only image)
         run: >-
           uv run pytest -q tests/test_compose_dind.py tests/test_docker_infra.py
+          tests/test_readonly_container.py tests/test_platform_host.py
           tests/test_kind_manifests.py tests/test_aws_connect_template.py
           tests/test_deploy_cleanup.py tests/test_migrations_head.py
       - run: uv run pytest

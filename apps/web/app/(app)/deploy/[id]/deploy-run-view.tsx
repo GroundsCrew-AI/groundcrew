@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { toast } from "sonner";
 
 import { DeployStatePill } from "@/components/deploy/deploy-list";
+import { ChangeSettingsButton } from "@/components/deploy/settings-dialog";
 import { StageStrip } from "@/components/deploy/stage-strip";
 import { Timeline } from "@/components/runs/timeline";
 import { statusLabel } from "@/components/runs/badges";
@@ -172,6 +173,7 @@ export function DeployRunView({ deployId }: { deployId: string }) {
         actions={
           <>
             <StreamNote state={stream} />
+            {status === "live" && <ChangeSettingsButton deployId={d.id} />}
             <Link href={`/runs/${run.id}`} className="text-[12.5px] text-muted-foreground hover:text-foreground">
               Open as run
             </Link>
@@ -189,19 +191,24 @@ export function DeployRunView({ deployId }: { deployId: string }) {
             <Fact label="Source" title={`${d.source.repo}${d.source.ref ? `@${d.source.ref}` : ""}`}>
               {d.source.repo}
               {d.source.ref && <span className="text-muted-foreground">@{d.source.ref}</span>}
+                {d.source.path && d.source.path !== "." && <span className="text-muted-foreground"> {d.source.path}/</span>}
             </Fact>
             <Fact label="Target">{targetLabel(d.target.kind)}</Fact>
-            <Fact label="Build attempts">
-              {view.attempts.length}
-              {view.automaticFix && <span className="text-muted-foreground">, fixed</span>}
-            </Fact>
+            {d.kind === "settings" ? (
+              <Fact label="Change">Settings only, nothing built</Fact>
+            ) : (
+              <Fact label="Build attempts">
+                {view.attempts.length}
+                {view.automaticFix && <span className="text-muted-foreground">, fixed</span>}
+              </Fact>
+            )}
             <Fact label="Tokens / cost">
               <span className="font-mono">{formatTokens(totalTokens(run))}</span>
               {cost && <span className="text-muted-foreground"> / {cost}</span>}
             </Fact>
             <Fact label={run.finished_at ? "Duration" : "Elapsed"}>{formatDuration(elapsed)}</Fact>
           </dl>
-          {view.liveUrl && (
+          {view.liveUrl?.url && (
             <p className="flex items-center gap-2 text-[13px]">
               <span className="text-muted-foreground">Live at</span>
               <a href={view.liveUrl.url} target="_blank" rel="noreferrer"

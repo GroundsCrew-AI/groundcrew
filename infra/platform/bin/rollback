@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Go back to the previous release on the platform host (or a given one), from your machine:
+#
+#   GC_HOST=<server> infra/platform/bin/rollback          # the release before the current one
+#   GC_HOST=<server> infra/platform/bin/rollback <sha>    # one of the last 3 releases
+#   GC_HOST=<server> infra/platform/bin/rollback --list   # what is there
+#
+# No migrations run going back (they are additive; the older code runs on the newer schema).
+set -euo pipefail
+host=${GC_HOST:?set GC_HOST}
+user=${GC_SSH_USER:-ubuntu}
+key=${GC_SSH_KEY:-$HOME/.ssh/id_ed25519}
+ssh_=(ssh -i "$key" -o BatchMode=yes "$user@$host")
+case "${1:-}" in
+  --list) "${ssh_[@]}" "sudo /opt/groundcrew/bin/gc-release list" ;;
+  *) "${ssh_[@]}" "sudo /opt/groundcrew/bin/gc-release rollback ${1:-}" ;;
+esac

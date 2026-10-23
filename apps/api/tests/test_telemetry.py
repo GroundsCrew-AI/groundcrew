@@ -30,6 +30,7 @@ from tests.telemetry_fixtures import (
     SECRET_ARN,
     SINCE,
     T0,
+    TD,
     UNTIL,
     at,
     env_aws,
@@ -75,6 +76,174 @@ def test_ecs_reader_shows_retirement_then_failed_health_checks() -> None:
     stopped = [x.message for x in out.lines if " stopped: " in x.message]
     assert "Simulated Fargate task retirement" in stopped[0]
     assert all("failed container health checks" in s for s in stopped[1:])
+
+
+def _flask_definition(rev: int, secret_suffix: str, image: str = "flask:af37") -> dict[str, Any]:
+    return {
+        "taskDefinitionArn": f"{TD}/legacy-flask-app:{rev}",
+        "cpu": "256",
+        "memory": "512",
+        "containerDefinitions": [
+            {
+                "name": "app",
+                "image": image,
+                "command": ["gunicorn", "-b", "0.0.0.0:8000", "app:app"],
+                "environment": [{"name": "FLASK_ENV", "value": "production"}],
+                "secrets": [
+                    {
+                        "name": "DATABASE_URL",
+                        "valueFrom": f"{SECRET_ARN.rsplit('-', 1)[0]}-{secret_suffix}",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _flask_aws(denied: bool = False) -> dict[str, Any]:
+    """An environment rebuilt by Terraform: revision 3 moves DATABASE_URL to a new secret, keeps
+    the image and command; one task runs while its load balancer target times out."""
+    group = f"arn:aws:elasticloadbalancing:{REGION}:{ACCOUNT}:targetgroup/flask/abc"
+    service = {
+        "serviceArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:service/checkout/legacy-flask-app",
+        "serviceName": "legacy-flask-app",
+        "status": "ACTIVE",
+        "runningCount": 1,
+        "desiredCount": 1,
+        "events": [],
+        "loadBalancers": [{"targetGroupArn": group, "containerName": "app", "containerPort": 8000}],
+        "deployments": [
+            {
+                "id": "ecs-svc/3",
+                "status": "PRIMARY",
+                "taskDefinition": f"{TD}/legacy-flask-app:3",
+                "desiredCount": 1,
+                "runningCount": 1,
+                "rolloutState": "COMPLETED",
+                "createdAt": at(-20),
+                "updatedAt": at(-19),
+            }
+        ],
+    }
+    running = {
+        "taskArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:task/checkout/run111",
+        "taskDefinitionArn": f"{TD}/legacy-flask-app:3",
+        "lastStatus": "RUNNING",
+        "startedAt": at(-19),
+        "healthStatus": "UNKNOWN",
+        "containers": [{"name": "app"}],
+    }
+    definitions = {
+        f"{TD}/legacy-flask-app:3": _flask_definition(3, "eJVGhT"),
+        f"{TD}/legacy-flask-app:2": _flask_definition(2, "oJsbmj"),
+    }
+    elb: dict[str, Any] = {
+        "elbv2:DescribeTargetGroups": {
+            "TargetGroups": [
+                {
+                    "TargetGroupArn": group,
+                    "TargetGroupName": "flask",
+                    "HealthCheckProtocol": "HTTP",
+                    "HealthCheckPort": "traffic-port",
+                    "HealthCheckPath": "/health",
+                    "HealthCheckTimeoutSeconds": 5,
+                    "HealthCheckIntervalSeconds": 30,
+                    "Matcher": {"HttpCode": "200"},
+                }
+            ]
+        },
+        "elbv2:DescribeTargetHealth": {
+            "TargetHealthDescriptions": [
+                {
+                    "Target": {"Id": "10.0.1.23", "Port": 8000},
+                    "TargetHealth": {
+                        "State": "unhealthy",
+                        "Reason": "Target.Timeout",
+                        "Description": "Request timed out",
+                    },
+                }
+            ]
+        },
+    }
+    if denied:
+        elb = {
+            "elbv2:DescribeTargetGroups": {
+                "Error": {"Code": "AccessDenied", "Message": "not allowed"}
+            }
+        }
+    return {
+        "ecs:DescribeServices": {"services": [service], "failures": []},
+        "ecs:ListTasks": lambda p: {
+            "taskArns": [running["taskArn"]] if p.get("desiredStatus") == "RUNNING" else []
+        },
+        "ecs:DescribeTasks": {"tasks": [running], "failures": []},
+        "ecs:DescribeTaskDefinition": lambda p: {
+            "taskDefinition": definitions[p["taskDefinition"]]
+        },
+        **elb,
+    }
+
+
+def test_ecs_reader_reads_target_and_task_health_and_what_a_deploy_changed() -> None:
+    out = ecs.read_service(_reader(_flask_aws()), REGION, CLUSTER, "legacy-flask-app", SINCE, UNTIL)
+    text = _messages(out.lines)
+    assert (
+        "load balancer target group flask: 0/1 targets healthy (health check HTTP /health on "
+        "port traffic-port, expects 200, timeout 5 s every 30 s); 10.0.1.23:8000 unhealthy "
+        "Target.Timeout Request timed out" in text
+    )
+    assert "task run111 running for 34 min, health UNKNOWN" in text
+    assert "container app health UNKNOWN (no container health check)" in text
+    (diff,) = [x for x in out.lines if x.message.startswith("task definition legacy-flask-app:3")]
+    assert diff.at == at(-20)
+    assert diff.message.startswith(
+        "task definition legacy-flask-app:3 vs legacy-flask-app:2 (same images and commands: "
+        "this deploy shipped no new application code): container app: secrets DATABASE_URL now "
+        "from another secret; runs 'gunicorn -b 0.0.0.0:8000 app:app'"
+    )
+    # Names only: no environment value or secret source in the comparison.
+    assert "production" not in diff.message and "eJVGhT" not in diff.message
+
+
+def test_ecs_reader_says_when_a_deploy_reused_an_existing_revision() -> None:
+    """A forced redeploy after a secret change: ECS no longer lists the old deployment, and
+    revision 3 was registered long before. Comparing with revision 2 would invent a change."""
+    responses = _flask_aws()
+    old = responses["ecs:DescribeTaskDefinition"]
+
+    def describe(p: dict[str, Any]) -> dict[str, Any]:
+        found: dict[str, Any] = old(p)
+        found["taskDefinition"]["registeredAt"] = at(-600)
+        return found
+
+    responses["ecs:DescribeTaskDefinition"] = describe
+    out = ecs.read_service(_reader(responses), REGION, CLUSTER, "legacy-flask-app", SINCE, UNTIL)
+    (diff,) = [x for x in out.lines if x.message.startswith("task definition legacy-flask-app:3")]
+    assert diff.message == (
+        f"task definition legacy-flask-app:3 was registered at {at(-600).isoformat()}, before "
+        "this deploy: it reused an existing revision (no task definition change); its new tasks "
+        "read secrets and environment again when they start"
+    )
+
+
+def test_ecs_compare_names_changed_code_and_settings() -> None:
+    old = _flask_definition(2, "oJsbmj")
+    new = _flask_definition(3, "oJsbmj", image="flask:b001")
+    new["containerDefinitions"][0]["environment"] = [{"name": "WORKERS", "value": "4"}]
+    new["memory"] = "1024"
+    text = ecs.compare(new, old)
+    assert "no new application code" not in text
+    assert "image flask:af37 -> flask:b001" in text
+    assert "environment +WORKERS, -FLASK_ENV" in text and "task memory 512 -> 1024" in text
+
+
+def test_ecs_reader_keeps_going_when_a_health_read_is_refused() -> None:
+    out = ecs.read_service(
+        _reader(_flask_aws(denied=True)), REGION, CLUSTER, "legacy-flask-app", SINCE, UNTIL
+    )
+    text = _messages(out.lines)
+    assert "load balancer target health not read: AccessDenied: not allowed" in text
+    assert "now: 1/1 tasks running" in text and "task run111 running" in text
 
 
 def test_log_reader_keeps_errors_with_context_and_redacts() -> None:

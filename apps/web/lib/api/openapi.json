@@ -71,7 +71,9 @@
               "lambda_rollback_alias",
               "ec2_reboot_instance",
               "k8s_rollout_undo",
-              "k8s_rollout_restart"
+              "k8s_rollout_restart",
+              "agent_restart_service",
+              "agent_rollback_service"
             ],
             "title": "Action",
             "type": "string"
@@ -148,7 +150,9 @@
               "lambda_rollback_alias",
               "ec2_reboot_instance",
               "k8s_rollout_undo",
-              "k8s_rollout_restart"
+              "k8s_rollout_restart",
+              "agent_restart_service",
+              "agent_rollback_service"
             ],
             "title": "Action",
             "type": "string"
@@ -199,6 +203,383 @@
           "finished_at"
         ],
         "title": "ActionResult",
+        "type": "object"
+      },
+      "ActivityDay": {
+        "properties": {
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "incidents_opened": {
+            "title": "Incidents Opened",
+            "type": "integer"
+          },
+          "incidents_resolved": {
+            "title": "Incidents Resolved",
+            "type": "integer"
+          },
+          "runs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Runs",
+            "type": "object"
+          },
+          "succeeded": {
+            "title": "Succeeded",
+            "type": "integer"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          },
+          "usd": {
+            "title": "Usd",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "runs",
+          "succeeded",
+          "failed",
+          "usd",
+          "tokens",
+          "incidents_opened",
+          "incidents_resolved"
+        ],
+        "title": "ActivityDay",
+        "type": "object"
+      },
+      "AgentActivity": {
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "median_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Seconds"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "succeeded": {
+            "title": "Succeeded",
+            "type": "integer"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent",
+          "runs",
+          "succeeded",
+          "failed",
+          "tokens",
+          "median_seconds"
+        ],
+        "title": "AgentActivity",
+        "type": "object"
+      },
+      "AgentConnectIn": {
+        "properties": {
+          "name": {
+            "examples": [
+              "web-1 (Hetzner)"
+            ],
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "name"
+        ],
+        "title": "AgentConnectIn",
+        "type": "object"
+      },
+      "AgentJoinOut": {
+        "description": "A new agent connection (or a new token for one). The token is shown only here.",
+        "properties": {
+          "api_url": {
+            "title": "Api Url",
+            "type": "string"
+          },
+          "connection": {
+            "$ref": "#/components/schemas/ConnectionOut"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection",
+          "token",
+          "expires_at",
+          "api_url"
+        ],
+        "title": "AgentJoinOut",
+        "type": "object"
+      },
+      "AgentOut": {
+        "description": "A Groundcrew agent's state (connection kind `agent`).",
+        "properties": {
+          "arch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arch"
+          },
+          "deploy_services": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Deploy Services",
+            "type": "array"
+          },
+          "enrolled": {
+            "title": "Enrolled",
+            "type": "boolean"
+          },
+          "enrolled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrolled At"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "join_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Join Expires At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "latest_version": {
+            "default": "0.6.1",
+            "title": "Latest Version",
+            "type": "string"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          },
+          "os": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Os"
+          },
+          "registry": {
+            "default": "groundcrew",
+            "title": "Registry",
+            "type": "string"
+          },
+          "registry_auth": {
+            "default": "groundcrew",
+            "enum": [
+              "groundcrew",
+              "token",
+              "ecr"
+            ],
+            "title": "Registry Auth",
+            "type": "string"
+          },
+          "registry_aws_connection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Aws Connection Id"
+          },
+          "registry_token_saved": {
+            "default": false,
+            "title": "Registry Token Saved",
+            "type": "boolean"
+          },
+          "registry_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Username"
+          },
+          "services": {
+            "default": 0,
+            "title": "Services",
+            "type": "integer"
+          },
+          "update_available": {
+            "default": false,
+            "title": "Update Available",
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "enrolled",
+          "online"
+        ],
+        "title": "AgentOut",
+        "type": "object"
+      },
+      "AgentRegistryIn": {
+        "description": "The agent's own registry for deploys (instead of the Groundcrew registry): the same\nchoices as a Kubernetes cluster's (K8sDeploySettingsIn), without the cluster settings.",
+        "properties": {
+          "aws_connection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Connection Id"
+          },
+          "registry": {
+            "examples": [
+              "ghcr.io/acme"
+            ],
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Registry",
+            "type": "string"
+          },
+          "registry_auth": {
+            "default": "token",
+            "enum": [
+              "token",
+              "ecr"
+            ],
+            "title": "Registry Auth",
+            "type": "string"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "registry"
+        ],
+        "title": "AgentRegistryIn",
         "type": "object"
       },
       "ApprovalOut": {
@@ -638,6 +1019,61 @@
           "enabled"
         ],
         "title": "AwsOperateIn",
+        "type": "object"
+      },
+      "AwsOperateValuesOut": {
+        "description": "What to put in the groundcrew-read-only stack's Operate* parameters, from the\nresources Groundcrew discovered in this account. An empty list: leave that parameter at its\ndefault (it matches nothing). Groundcrew's own resources are never suggested.",
+        "properties": {
+          "discovered": {
+            "description": "False until a discovery of this account has run.",
+            "title": "Discovered",
+            "type": "boolean"
+          },
+          "functions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Functions",
+            "type": "array"
+          },
+          "instances": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Instances",
+            "type": "array"
+          },
+          "pass_roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pass Roles",
+            "type": "array"
+          },
+          "secrets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Secrets",
+            "type": "array"
+          },
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "services",
+          "pass_roles",
+          "functions",
+          "secrets",
+          "instances",
+          "discovered"
+        ],
+        "title": "AwsOperateValuesOut",
         "type": "object"
       },
       "AwsRegionsIn": {
@@ -1124,6 +1560,74 @@
         "title": "Claim",
         "type": "object"
       },
+      "CommandOut": {
+        "description": "A command to run: `payload` is the exact signed JSON text, `signature` its base64\nEd25519 signature by Groundcrew's command key.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "title": "Payload",
+            "type": "string"
+          },
+          "signature": {
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "payload",
+          "signature"
+        ],
+        "title": "CommandOut",
+        "type": "object"
+      },
+      "CommandResultIn": {
+        "properties": {
+          "message": {
+            "maxLength": 2000,
+            "title": "Message",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "CommandResultIn",
+        "type": "object"
+      },
+      "CommandSecretsOut": {
+        "description": "What a deploy needs and the payload does not carry. Returned once.",
+        "properties": {
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/EnvOut"
+            },
+            "title": "Env",
+            "type": "array"
+          },
+          "registry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistryLoginOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "CommandSecretsOut",
+        "type": "object"
+      },
       "ConnectionCleanup": {
         "properties": {
           "connection": {
@@ -1183,7 +1687,8 @@
           "github",
           "vercel",
           "azure",
-          "k8s"
+          "k8s",
+          "agent"
         ],
         "title": "ConnectionKind",
         "type": "string"
@@ -1207,6 +1712,16 @@
               }
             ],
             "title": "Account"
+          },
+          "agent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "capabilities": {
             "anyOf": [
@@ -1512,6 +2027,18 @@
             "title": "Target Connection Id",
             "type": "string"
           },
+          "target_service": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Service"
+          },
           "workspace_id": {
             "format": "uuid",
             "title": "Workspace Id",
@@ -1653,6 +2180,15 @@
           "id": {
             "format": "uuid",
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "deploy",
+            "enum": [
+              "deploy",
+              "settings"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "live_url": {
@@ -2079,7 +2615,8 @@
           "target": {
             "enum": [
               "k8s",
-              "aws_ecs"
+              "aws_ecs",
+              "agent"
             ],
             "title": "Target",
             "type": "string"
@@ -2207,7 +2744,8 @@
           "target": {
             "enum": [
               "k8s",
-              "aws_ecs"
+              "aws_ecs",
+              "agent"
             ],
             "title": "Target",
             "type": "string"
@@ -2229,6 +2767,58 @@
           "status"
         ],
         "title": "DeployRecord",
+        "type": "object"
+      },
+      "DeploySettings": {
+        "description": "GET /deploys/{id}/settings: the env names a live deploy runs with. Groundcrew never\nstores values, so none come back; a change sends only what it sets or removes.",
+        "properties": {
+          "blocked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked"
+          },
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/SettingVar"
+            },
+            "title": "Env",
+            "type": "array"
+          }
+        },
+        "required": [
+          "env"
+        ],
+        "title": "DeploySettings",
+        "type": "object"
+      },
+      "DeploySettingsChange": {
+        "additionalProperties": false,
+        "description": "POST /deploys/{id}/settings: a settings change. Nothing is rebuilt: the running image\nruns again with these env values, after the same plan approval as a deploy. Every name\nnot set or removed keeps its value on the target.",
+        "properties": {
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/EnvVarIn"
+            },
+            "maxItems": 100,
+            "title": "Env",
+            "type": "array"
+          },
+          "remove": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Remove",
+            "type": "array"
+          }
+        },
+        "title": "DeploySettingsChange",
         "type": "object"
       },
       "DeploySourceOut": {
@@ -2263,6 +2853,17 @@
             ],
             "title": "Kind",
             "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
           },
           "ref": {
             "anyOf": [
@@ -2377,6 +2978,15 @@
           "id": {
             "format": "uuid",
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "deploy",
+            "enum": [
+              "deploy",
+              "settings"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "live_url": {
@@ -2514,7 +3124,8 @@
           "kind": {
             "enum": [
               "k8s",
-              "aws_ecs"
+              "aws_ecs",
+              "agent"
             ],
             "title": "Kind",
             "type": "string"
@@ -2632,6 +3243,105 @@
         "title": "Email",
         "type": "object"
       },
+      "EnrollIn": {
+        "properties": {
+          "arch": {
+            "maxLength": 32,
+            "title": "Arch",
+            "type": "string"
+          },
+          "hostname": {
+            "maxLength": 253,
+            "title": "Hostname",
+            "type": "string"
+          },
+          "os": {
+            "maxLength": 64,
+            "title": "Os",
+            "type": "string"
+          },
+          "public_key": {
+            "description": "Base64 of the raw Ed25519 public key",
+            "maxLength": 64,
+            "title": "Public Key",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 200,
+            "minLength": 10,
+            "title": "Token",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 32,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "public_key",
+          "hostname",
+          "os",
+          "arch",
+          "version"
+        ],
+        "title": "EnrollIn",
+        "type": "object"
+      },
+      "EnrollOut": {
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "connection_id": {
+            "format": "uuid",
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "heartbeat_seconds": {
+            "default": 30,
+            "title": "Heartbeat Seconds",
+            "type": "integer"
+          },
+          "inventory_seconds": {
+            "default": 60,
+            "title": "Inventory Seconds",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "connection_id",
+          "name"
+        ],
+        "title": "EnrollOut",
+        "type": "object"
+      },
+      "EnvOut": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "title": "EnvOut",
+        "type": "object"
+      },
       "EnvVarIn": {
         "additionalProperties": false,
         "properties": {
@@ -2666,6 +3376,24 @@
       "EnvVarView": {
         "description": "An env var as shown on the approval card and in the deploy detail. A secret's value is\nnever shown; `value` is null for secrets and for missing values.",
         "properties": {
+          "change": {
+            "anyOf": [
+              {
+                "enum": [
+                  "add",
+                  "update",
+                  "keep",
+                  "remove"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Change"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -2702,6 +3430,82 @@
           "provided"
         ],
         "title": "EnvVarView",
+        "type": "object"
+      },
+      "EventIn": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "state",
+              "health",
+              "restart",
+              "log",
+              "deploy",
+              "command"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 2000,
+            "title": "Message",
+            "type": "string"
+          },
+          "service": {
+            "maxLength": 100,
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "at",
+          "kind",
+          "message"
+        ],
+        "title": "EventIn",
+        "type": "object"
+      },
+      "EventsIn": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventIn"
+            },
+            "maxItems": 500,
+            "title": "Events",
+            "type": "array"
+          },
+          "states": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceState"
+            },
+            "maxItems": 100,
+            "title": "States",
+            "type": "array"
+          }
+        },
+        "title": "EventsIn",
+        "type": "object"
+      },
+      "EventsOut": {
+        "properties": {
+          "stored": {
+            "title": "Stored",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stored"
+        ],
+        "title": "EventsOut",
         "type": "object"
       },
       "EvidenceCollected": {
@@ -2956,6 +3760,8 @@
               "ec2_reboot_instance",
               "k8s_rollout_undo",
               "k8s_rollout_restart",
+              "agent_restart_service",
+              "agent_rollback_service",
               "other"
             ],
             "title": "Kind",
@@ -3073,6 +3879,19 @@
             "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
             "title": "Fixture",
             "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "pattern": "^(\\.|[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*){0,5})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
           }
         },
         "required": [
@@ -3485,6 +4304,22 @@
             "title": "Connection Id",
             "type": "string"
           },
+          "path": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "pattern": "^(\\.|[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*){0,5})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "api"
+            ],
+            "title": "Path"
+          },
           "ref": {
             "examples": [
               "main"
@@ -3619,6 +4454,136 @@
           "version"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "HeartbeatIn": {
+        "properties": {
+          "config_hash": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Hash"
+          },
+          "uptime_seconds": {
+            "minimum": 0.0,
+            "title": "Uptime Seconds",
+            "type": "integer"
+          },
+          "version": {
+            "maxLength": 32,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "uptime_seconds"
+        ],
+        "title": "HeartbeatIn",
+        "type": "object"
+      },
+      "HeartbeatOut": {
+        "properties": {
+          "command_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Key"
+          },
+          "events_seconds": {
+            "default": 10,
+            "title": "Events Seconds",
+            "type": "integer"
+          },
+          "heartbeat_seconds": {
+            "default": 30,
+            "title": "Heartbeat Seconds",
+            "type": "integer"
+          },
+          "inventory_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inventory Hash"
+          }
+        },
+        "title": "HeartbeatOut",
+        "type": "object"
+      },
+      "HostFacts": {
+        "additionalProperties": false,
+        "properties": {
+          "arch": {
+            "examples": [
+              "amd64"
+            ],
+            "maxLength": 32,
+            "title": "Arch",
+            "type": "string"
+          },
+          "distribution": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "Ubuntu 24.04"
+            ],
+            "title": "Distribution"
+          },
+          "hostname": {
+            "maxLength": 253,
+            "title": "Hostname",
+            "type": "string"
+          },
+          "kernel": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kernel"
+          },
+          "os": {
+            "examples": [
+              "linux"
+            ],
+            "maxLength": 64,
+            "title": "Os",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hostname",
+          "os",
+          "arch"
+        ],
+        "title": "HostFacts",
         "type": "object"
       },
       "IncidentCreate": {
@@ -3793,6 +4758,7 @@
               "alb_5xx",
               "alb_unhealthy_targets",
               "alb_latency",
+              "agent_service_down",
               "user_report",
               "other"
             ],
@@ -4212,6 +5178,7 @@
               "alb_5xx",
               "alb_unhealthy_targets",
               "alb_latency",
+              "agent_service_down",
               "user_report",
               "other"
             ],
@@ -4475,6 +5442,7 @@
               "alb_5xx",
               "alb_unhealthy_targets",
               "alb_latency",
+              "agent_service_down",
               "user_report",
               "other"
             ],
@@ -4816,6 +5784,52 @@
           "at"
         ],
         "title": "IncidentUpdated",
+        "type": "object"
+      },
+      "Inventory": {
+        "additionalProperties": false,
+        "properties": {
+          "host": {
+            "$ref": "#/components/schemas/HostFacts"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceFacts"
+            },
+            "maxItems": 100,
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "title": "Inventory",
+        "type": "object"
+      },
+      "InventoryOut": {
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "discovery_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Run Id"
+          }
+        },
+        "required": [
+          "changed"
+        ],
+        "title": "InventoryOut",
         "type": "object"
       },
       "InviteOut": {
@@ -5291,7 +6305,8 @@
           "target": {
             "enum": [
               "k8s",
-              "aws_ecs"
+              "aws_ecs",
+              "agent"
             ],
             "title": "Target",
             "type": "string"
@@ -5996,6 +7011,19 @@
         "title": "PlatformOut",
         "type": "object"
       },
+      "PollOut": {
+        "properties": {
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/CommandOut"
+            },
+            "title": "Commands",
+            "type": "array"
+          }
+        },
+        "title": "PollOut",
+        "type": "object"
+      },
       "PreflightCheck": {
         "properties": {
           "detail": {
@@ -6065,7 +7093,9 @@
                   "lambda_rollback_alias",
                   "ec2_reboot_instance",
                   "k8s_rollout_undo",
-                  "k8s_rollout_restart"
+                  "k8s_rollout_restart",
+                  "agent_restart_service",
+                  "agent_rollback_service"
                 ],
                 "type": "string"
               },
@@ -6332,6 +7362,72 @@
           "migrations"
         ],
         "title": "Ready",
+        "type": "object"
+      },
+      "RegistryLoginOut": {
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          },
+          "server": {
+            "title": "Server",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "username",
+          "password"
+        ],
+        "title": "RegistryLoginOut",
+        "type": "object"
+      },
+      "RepoService": {
+        "properties": {
+          "manifests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Manifests",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "manifests"
+        ],
+        "title": "RepoService",
+        "type": "object"
+      },
+      "RepoServices": {
+        "description": "GET /deploys/services: the folders of a repository that can be deployed on their own.",
+        "properties": {
+          "choose": {
+            "title": "Choose",
+            "type": "boolean"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/RepoService"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "services",
+          "choose"
+        ],
+        "title": "RepoServices",
         "type": "object"
       },
       "ResearchDone": {
@@ -7580,6 +8676,299 @@
         "title": "RunStatusEvent",
         "type": "object"
       },
+      "ServiceFacts": {
+        "additionalProperties": false,
+        "properties": {
+          "allow": {
+            "items": {
+              "enum": [
+                "restart",
+                "rollback",
+                "deploy"
+              ],
+              "type": "string"
+            },
+            "title": "Allow",
+            "type": "array"
+          },
+          "deploy_image": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deploy Image"
+          },
+          "found": {
+            "default": true,
+            "title": "Found",
+            "type": "boolean"
+          },
+          "health_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Url"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          },
+          "image_digest": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Digest"
+          },
+          "logs": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logs"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "ports": {
+            "examples": [
+              [
+                "8000/tcp"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Ports",
+            "type": "array"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "runtime": {
+            "enum": [
+              "docker",
+              "compose",
+              "systemd",
+              "kubernetes",
+              "ecs"
+            ],
+            "title": "Runtime",
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 300,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "runtime",
+          "target"
+        ],
+        "title": "ServiceFacts",
+        "type": "object"
+      },
+      "ServiceState": {
+        "additionalProperties": false,
+        "properties": {
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "found": {
+            "title": "Found",
+            "type": "boolean"
+          },
+          "health_detail": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Detail"
+          },
+          "health_failures": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Health Failures",
+            "type": "integer"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          },
+          "image_digest": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Digest"
+          },
+          "image_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Id"
+          },
+          "name": {
+            "maxLength": 100,
+            "title": "Name",
+            "type": "string"
+          },
+          "oom_killed": {
+            "default": false,
+            "title": "Oom Killed",
+            "type": "boolean"
+          },
+          "previous_image": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Image"
+          },
+          "previous_image_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Image Id"
+          },
+          "restarts": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Restarts",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "default": "",
+            "maxLength": 32,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "found"
+        ],
+        "title": "ServiceState",
+        "type": "object"
+      },
+      "SettingVar": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "secret": {
+            "title": "Secret",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "secret"
+        ],
+        "title": "SettingVar",
+        "type": "object"
+      },
       "SignIn": {
         "properties": {
           "email": {
@@ -7700,6 +9089,7 @@
               "alb_5xx",
               "alb_unhealthy_targets",
               "alb_latency",
+              "agent_service_down",
               "user_report",
               "other"
             ],
@@ -8370,6 +9760,163 @@
         "title": "TimeWindow",
         "type": "object"
       },
+      "TokenCreated": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "boolean"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "prefix",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked",
+          "token"
+        ],
+        "title": "TokenCreated",
+        "type": "object"
+      },
+      "TokenIn": {
+        "properties": {
+          "days": {
+            "default": 90,
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Days",
+            "type": "integer"
+          },
+          "name": {
+            "examples": [
+              "Claude Code on my laptop"
+            ],
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "default": "viewer",
+            "enum": [
+              "viewer",
+              "approver"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "TokenIn",
+        "type": "object"
+      },
+      "TokenOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "boolean"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "prefix",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked"
+        ],
+        "title": "TokenOut",
+        "type": "object"
+      },
       "ToolPolicy": {
         "enum": [
           "read",
@@ -8797,6 +10344,51 @@
         "title": "WebhookOut",
         "type": "object"
       },
+      "WorkspaceActivity": {
+        "description": "GET /workspaces/{id}/activity: the overview's charts, every day of the window present.",
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentActivity"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "median_resolve_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Resolve Seconds"
+          },
+          "open_by_severity": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Open By Severity",
+            "type": "object"
+          }
+        },
+        "required": [
+          "days",
+          "agents",
+          "open_by_severity",
+          "median_resolve_seconds"
+        ],
+        "title": "WorkspaceActivity",
+        "type": "object"
+      },
       "WorkspaceConfig": {
         "properties": {
           "daily_usd_cap": {
@@ -9213,6 +10805,323 @@
         "summary": "Set Signups",
         "tags": [
           "admin"
+        ]
+      }
+    },
+    "/agent/v1/commands/poll": {
+      "post": {
+        "description": "Approved commands for this agent, waiting up to POLL_SECONDS for one. Expired commands\nare marked so; a command is handed out once (status sent).",
+        "operationId": "poll_commands_agent_v1_commands_poll_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PollOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Poll Commands",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/commands/{command_id}/result": {
+      "post": {
+        "description": "What the agent did with a command (ran it, or refused it and why).",
+        "operationId": "command_result_agent_v1_commands__command_id__result_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandResultIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Command Result",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/commands/{command_id}/secrets": {
+      "post": {
+        "description": "A deploy's registry login and env values, for the agent running it: once, while the\ncommand is handed out, and then wiped.",
+        "operationId": "command_secrets_agent_v1_commands__command_id__secrets_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandSecretsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Command Secrets",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/enroll": {
+      "post": {
+        "description": "Trade a one-time join token for this agent's place in the workspace. A new token for an\nenrolled agent (a reinstall) replaces its key.",
+        "operationId": "enroll_agent_v1_enroll_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enroll",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/events": {
+      "post": {
+        "description": "The services' live state and what happened since the last report. A detector rule that\nstarts firing for a service opens (or joins) an incident on it.",
+        "operationId": "events_agent_v1_events_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Events",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/heartbeat": {
+      "post": {
+        "operationId": "heartbeat_agent_v1_heartbeat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeartbeatIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeartbeatOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heartbeat",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/inventory": {
+      "post": {
+        "description": "The services the agent watches. A change is stored and starts a discovery of this\nconnection, which puts them on the Map (and marks services no longer listed as stale).",
+        "operationId": "inventory_agent_v1_inventory_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Inventory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inventory",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/registry-login": {
+      "post": {
+        "description": "A fresh pull login for the images Groundcrew deploys through this agent (None: a public\nrepository needs none). Kubernetes and\nECS pull again whenever a pod or task starts, long after a deploy's own login expired, so\nthe agent refreshes its pull secrets with this (every few minutes).",
+        "operationId": "registry_login_agent_v1_registry_login_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RegistryLoginOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Registry Login Agent V1 Registry Login Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Registry Login",
+        "tags": [
+          "agent"
         ]
       }
     },
@@ -10081,6 +11990,66 @@
         ]
       }
     },
+    "/connections/agent": {
+      "post": {
+        "description": "Add a Groundcrew agent: a connection that waits for the agent to enroll with the one-time\njoin token returned here (shown once; only its hash is kept).",
+        "operationId": "agent_connect_connections_agent_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentConnectIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentJoinOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Connect",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
     "/connections/aws/complete": {
       "post": {
         "description": "Verify the role (refused without the ExternalId, works with it, right account) and\nstore its ARN; for Tier=deploy, verify the groundcrew-deploy role the same way. No\ncredentials are stored.",
@@ -10781,6 +12750,194 @@
         ]
       }
     },
+    "/connections/{connection_id}/agent/registry": {
+      "delete": {
+        "description": "Back to the Groundcrew registry (the saved token is deleted).",
+        "operationId": "agent_clear_registry_connections__connection_id__agent_registry_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Clear Registry",
+        "tags": [
+          "connections"
+        ]
+      },
+      "put": {
+        "description": "Deploys to this agent keep their images in this registry instead of the Groundcrew\nregistry: a username and token (stored encrypted, never returned; the agent gets them only\nwhile it runs a deploy), or Amazon ECR through an AWS connection with the deploy\ncapability (a fresh login per deploy).",
+        "operationId": "agent_set_registry_connections__connection_id__agent_registry_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRegistryIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent Set Registry",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/agent/token": {
+      "post": {
+        "description": "A new join token (the old one stops working): to finish a setup whose token expired, or\nto reinstall the agent, whose new key then replaces the old one.",
+        "operationId": "agent_new_token_connections__connection_id__agent_token_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentJoinOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Agent New Token",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
     "/connections/{connection_id}/aws/operate": {
       "post": {
         "description": "Turn approved emergency fixes on or off for a connected AWS account. On: verifies the\ngroundcrew-operate role first (nothing changes if it cannot be used). Off: Groundcrew stops\nusing the role at once; update the stack to EnableOperate=false to delete it. Every fix\nstill needs a person's approval.",
@@ -10846,6 +13003,66 @@
           }
         },
         "summary": "Aws Set Operate",
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/connections/{connection_id}/aws/operate-values": {
+      "get": {
+        "description": "The Operate* stack parameters for this account, from what discovery found: one\nwildcard per ECS cluster, the services' roles, Lambda functions, secrets, and instances.\nGroundcrew's own resources are left out.",
+        "operationId": "aws_operate_values_connections__connection_id__aws_operate_values_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AwsOperateValuesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Aws Operate Values",
         "tags": [
           "connections"
         ]
@@ -11467,6 +13684,100 @@
         ]
       }
     },
+    "/deploys/services": {
+      "get": {
+        "description": "The folders of a repository that deploy on their own (api/, web/, services/billing/),\nread from GitHub without cloning. The deploy form asks which one when there are several.",
+        "operationId": "repo_services_deploys_services_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "maxLength": 140,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "title": "Ref",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoServices"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The connection is not GitHub, or GitHub refused."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Repo Services",
+        "tags": [
+          "deploys"
+        ]
+      }
+    },
     "/deploys/{deploy_id}": {
       "get": {
         "description": "A deploy with its stages, plan (secrets masked), and final deploy record.",
@@ -11595,6 +13906,137 @@
           }
         },
         "summary": "Update Env",
+        "tags": [
+          "deploys"
+        ]
+      }
+    },
+    "/deploys/{deploy_id}/settings": {
+      "get": {
+        "description": "The env names this deploy runs with (never values), and whether they can be changed.",
+        "operationId": "deploy_settings_deploys__deploy_id__settings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploySettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deploy Settings",
+        "tags": [
+          "deploys"
+        ]
+      },
+      "post": {
+        "description": "Change a live deploy's env vars without a rebuild: a new deploy run that skips Scout,\nBuild, and Smoke, plans the running image with the new values, and waits for approval\nlike any deploy. Values are handled like POST /deploys: encrypted in the job, never\nechoed, never stored. Names not set or removed keep their values on the target.",
+        "operationId": "change_settings_deploys__deploy_id__settings_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploySettingsChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The deploy is not live, or a newer one replaced it."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Settings",
         "tags": [
           "deploys"
         ]
@@ -13084,6 +15526,78 @@
         ]
       }
     },
+    "/workspaces/{workspace_id}/activity": {
+      "get": {
+        "description": "Daily runs, outcomes, spend, and incidents for the overview, oldest day first.",
+        "operationId": "activity_workspaces__workspace_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "maximum": 90,
+              "minimum": 7,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceActivity"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activity",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
     "/workspaces/{workspace_id}/approvals": {
       "get": {
         "description": "Pending approvals only list runs that can still resume (not stopped or finished).",
@@ -13999,6 +16513,207 @@
         "summary": "Summary",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/tokens": {
+      "get": {
+        "operationId": "list_tokens_workspaces__workspace_id__tokens_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TokenOut"
+                  },
+                  "title": "Response List Tokens Workspaces  Workspace Id  Tokens Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tokens",
+        "tags": [
+          "tokens"
+        ]
+      },
+      "post": {
+        "description": "A new token, shown once. It acts as you, in this workspace only.",
+        "operationId": "create_token_workspaces__workspace_id__tokens_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/tokens/{token_id}": {
+      "delete": {
+        "description": "Stops the token at once.",
+        "operationId": "revoke_token_workspaces__workspace_id__tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Token Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Token",
+        "tags": [
+          "tokens"
         ]
       }
     },

@@ -241,10 +241,12 @@ export function KubernetesConnectDialog({ open, onOpenChange }: DialogProps) {
       title="Connect Kubernetes"
       description={
         <>
-          A kubeconfig for a service account Groundcrew may use: the read-only one in infra/k8s-readonly-rbac.yaml,
-          or the local kind cluster&apos;s deployer from <code className="font-mono text-[12px]">make kind-kubeconfig</code>{" "}
-          (.kind/groundcrew-deployer.kubeconfig). Groundcrew lists namespaces with it before saving, stores it encrypted,
-          and never lists Secrets.
+          A kubeconfig for a service account Groundcrew may use, with its credentials inline (no exec plugin) and a public API server address.
+          Groundcrew lists namespaces with it before saving, stores it encrypted, and never lists Secrets.{" "}
+          <a href="/docs/connect/kubernetes" target="_blank" rel="noreferrer" className="underline underline-offset-2">
+            How to create one
+          </a>
+          .
         </>
       }
       submitLabel="Verify and connect"

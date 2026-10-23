@@ -80,6 +80,7 @@ const RULES: Record<DetectorRule, string> = {
   lambda_errors: "Function errors",
   lambda_throttles: "Function throttled",
   ec2_status_check: "Instance status check failed",
+  agent_service_down: "Service stopped",
   alb_5xx: "Load balancer 5xx",
   alb_unhealthy_targets: "Unhealthy targets",
   alb_latency: "Slow responses",
@@ -99,6 +100,8 @@ const ACTIONS: Record<string, string> = {
   ec2_reboot_instance: "Reboot instance",
   k8s_rollout_undo: "Roll back Deployment",
   k8s_rollout_restart: "Restart Deployment",
+  agent_restart_service: "Restart service on server",
+  agent_rollback_service: "Roll back service on server",
   pull_request: "Fix pull request",
 };
 
@@ -293,6 +296,16 @@ export function collapseVerifySteps(steps: Step[]): { hidden: Set<number>; round
     run.push(step);
   }
   flush();
+  // Medic records "failed" twice when it gives up: the status change and the incident_failed
+  // step with the same reason. Show the one with the details.
+  const failedReasons = new Set(
+    steps.flatMap((s) => (s.data?.type === "incident_failed" ? [s.data.reason] : [])),
+  );
+  for (const step of steps) {
+    if (step.data?.type === "incident_updated" && step.data.status === "failed" && failedReasons.has(step.data.reason ?? "")) {
+      hidden.add(step.seq);
+    }
+  }
   return { hidden, rounds };
 }
 

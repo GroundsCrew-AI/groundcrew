@@ -125,6 +125,8 @@ so the layer caches.
 - Run as a non-root user when the base image allows it.
 - Start the app with its production server and bind to 0.0.0.0 on the app's port (EXPOSE it). \
 No dev servers, no --reload.
+- CMD and ENTRYPOINT in exec form (["app", "--port", "8080"]) get no variable expansion: write \
+the port as a number, or use shell form with exec (CMD exec app --port ${PORT:-8080}).
 - No secrets, no ARG or ENV with credentials; env vars come at run time.
 - Do not download and run scripts from the internet. Keep it short.
 Return the whole Dockerfile."""
@@ -138,6 +140,11 @@ Rules:
 Python package that compiles C code needs gcc and the library's dev headers).
 - Change as little as possible; keep everything that worked.
 - Do not repeat a fix that already failed (see earlier attempts).
+- When the failing step is the smoke test, the image built but the app did not start or \
+answer: read its output and fix how it runs (CMD or ENTRYPOINT, files and installed packages \
+in the final stage, the port it listens on, binding 0.0.0.0).
+- Never set the app's env vars in the Dockerfile, not even placeholders (DATABASE_URL, API keys): \
+they come from the deploy at run time, and Groundcrew removes such ENV lines.
 - No secrets, no ARG or ENV with credentials. Do not download and run scripts from the internet.
 Return the whole corrected Dockerfile, the lines you changed, and the kind of fix."""
 

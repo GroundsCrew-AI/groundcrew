@@ -117,6 +117,12 @@ async def run_approvals(session: AsyncSession, run: Run) -> list[ApprovalOut]:
 async def create_run(
     body: RunCreate, user: CurrentUser, session: SessionDep, settings: SettingsDep
 ) -> RunCreated:
+    if settings.app_env not in ("dev", "test"):
+        # Test runs drive a simulated agent: useful while developing, noise (and token spend)
+        # for a hosted workspace. Real runs start from Connections, Deploy, and Incidents.
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Test runs are only available in local development."
+        )
     if body.agent not in AGENTS:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,

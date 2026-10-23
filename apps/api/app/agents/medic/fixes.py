@@ -51,6 +51,7 @@ from app.db.models import Connection, Edge, Resource
 from app.llm.budget import RunBudget
 from app.llm.client import OnCall, TokenFactory
 from app.llm.router import Task
+from app.remote_agents import outdated
 from app.tools.github_pr import (
     FixPullRequestError,
     PullRequestDraft,
@@ -67,6 +68,7 @@ DOWN_RULES = frozenset(
         "k8s_rollout_failed",
         "k8s_pods_crashing",
         "ec2_status_check",
+        "agent_service_down",
     }
 )
 CRASH_RULES = frozenset(
@@ -225,6 +227,20 @@ def plan_lines(plan: ActionPlan) -> list[PlanLine]:
                 what=f"{plan.target} alias version",
                 before=(plan.current or "-").rsplit(":", 1)[-1],
                 after=(plan.desired or "-").rsplit(":", 1)[-1],
+            )
+        ]
+    if plan.action == "agent_rollback_service":
+        return [
+            PlanLine(
+                what=f"{plan.target} image", before=plan.current or "-", after=plan.desired or "-"
+            )
+        ]
+    if plan.action == "agent_restart_service":
+        return [
+            PlanLine(
+                what=f"{plan.target}",
+                before=(plan.current or "-").split(" ", 1)[-1],
+                after="restarted",
             )
         ]
     if plan.action == "ec2_reboot_instance":
@@ -470,8 +486,17 @@ async def emergency(
     each EC2 instance whose status check fails."""
     out = await _change_fixes(root_cause, signals, graph, changes, actions, start_order, memory)
     reboots = await _reboots(root_cause, signals, graph, actions, start_order + len(out.records))
-    out.records += reboots.records
-    out.notes += reboots.notes
+    agents = await _agent_fixes(
+        root_cause,
+        signals,
+        graph,
+        changes,
+        actions,
+        start_order + len(out.records) + len(reboots.records),
+    )
+    for found in (reboots, agents):
+        out.records += found.records
+        out.notes += found.notes
     return out
 
 
@@ -508,6 +533,92 @@ async def _reboots(
                 f"Reboot {found.name}",
                 "Its status check fails; a reboot restarts the operating system, which clears "
                 "most instance check failures.",
+            )
+        )
+        order += 1
+    return out
+
+
+# Agents from this version report images, so a container can be rolled back.
+ROLLBACK_SINCE = "0.3.0"
+UPGRADE_COMMAND = "curl -fsSL https://groundkrew.com/agent/install.sh | sudo sh"
+# Rules that mean a service on an agent's host is down: a restart is the emergency fix.
+AGENT_DOWN_RULES = frozenset({"agent_service_down", "health_check"})
+
+
+async def _agent_fixes(
+    root_cause: RootCause,
+    signals: list[Signal],
+    graph: Graph,
+    changes: list[ChangeMarker],
+    actions: EmergencyActions | None,
+    order: int,
+) -> Proposal:
+    """For each service on a Groundcrew agent's host that is down or fails its health checks:
+    a rollback to the image it ran before when its image changed in the incident window (a bad
+    deploy), else a restart. The agent acts only if its configuration allows it; a refused
+    rollback falls back to a restart."""
+    out = Proposal()
+    down = list(
+        dict.fromkeys(
+            s.resource_id
+            for s in signals
+            if s.rule in AGENT_DOWN_RULES
+            and s.resource_id in graph.resources
+            and graph.resources[s.resource_id].type == "agent:service"
+        )
+    )
+    if root_cause.false_alarm or not down:
+        return out
+    if actions is None:
+        out.notes.append("A service on an agent's host is down, but no emergency actions run here.")
+        return out
+    for rid in down:
+        found = graph.resources[rid] if rid else None
+        if found is None or found.connection_id is None:
+            continue
+        host = found.account or "its host"
+        conn = graph.connections.get(found.connection_id)
+        version = str((conn.config or {}).get("agent_version") or "") if conn else ""
+        if found.config.get("runtime") in ("docker", "compose") and outdated(
+            version, ROLLBACK_SINCE
+        ):
+            out.notes.append(
+                f"The agent on {host} is version {version}; from {ROLLBACK_SINCE} it remembers the "
+                "images a container ran, so Medic can roll it back after a bad deploy. Upgrade it: "
+                f"{UPGRADE_COMMAND}"
+            )
+        deployed = [c for c in changes if c.kind == "deploy" and c.resource_id == rid]
+        if deployed:
+            try:
+                plan = await actions.plan_agent_rollback_service(found.connection_id, found.name)
+            except EmergencyActionError as exc:
+                out.notes.append(f"No rollback of {found.name}: {exc}")
+            else:
+                out.records.append(
+                    _emergency_record(
+                        plan,
+                        order,
+                        f"Roll back {found.name} on {host} to {plan.desired}",
+                        "Its image changed right before it failed; the agent recreates it from "
+                        "the image it ran before, with the same settings and volumes, and keeps "
+                        "the current container if that one does not come up healthy.",
+                    )
+                )
+                order += 1
+                continue
+        try:
+            plan = await actions.plan_agent_restart_service(found.connection_id, found.name)
+        except EmergencyActionError as exc:
+            out.notes.append(f"No restart of {found.name}: {exc}")
+            continue
+        out.records.append(
+            _emergency_record(
+                plan,
+                order,
+                f"Restart {found.name} on {host}",
+                "It stopped or fails its health checks; the agent on its host restarts it, and "
+                "Medic checks it runs and passes them again.",
             )
         )
         order += 1
@@ -720,13 +831,29 @@ async def pull_request(
     change = root_cause.triggering_change
     if root_cause.false_alarm or change is None or change.kind not in ("commit", "deploy"):
         return out
+    matched = matched_change(root_cause, changes)
+    on_host = graph.resources.get(matched.resource_id) if matched and matched.resource_id else None
+    if on_host is not None and on_host.type == "agent:service":
+        # "image changed to web:2@0a1b2c3d4e5f": the short image id looks like a commit SHA,
+        # but it names an image on the host, not a commit in a repository.
+        out.notes.append(
+            f"No fix PR: the change was a new container image on {on_host.account or 'the host'}, "
+            "not a commit Groundcrew can follow to a repository."
+        )
+        return out
     if github is None:
         out.notes.append("No fix PR: the GitHub App is not configured.")
         return out
     first = min(signals, key=lambda s: s.at) if signals else None
     sha, marker = commit_change(root_cause, changes, first)
     if sha is None:
-        out.notes.append(f"No fix PR: no commit found for {change.kind} {change.ref or '-'}.")
+        what = (change.ref or "-").rsplit("/", 1)[-1]
+        out.notes.append(
+            f"No fix PR: commit {what} was not found in a linked repository."
+            if change.kind == "commit"
+            else f"No fix PR: the deploy of {what} is not linked to a commit (it was likely "
+            "made by Terraform, the console, or the CLI), so there is no code change to revert."
+        )
         return out
     target = await resolve_repo(graph, marker, github)
     if isinstance(target, str):

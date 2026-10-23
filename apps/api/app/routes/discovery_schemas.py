@@ -6,7 +6,7 @@ redact_json before it leaves the API.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -17,11 +17,12 @@ from app.connectors.access import access_summary
 from app.connectors.aws import AWS_REGION, MAX_CONNECTION_REGIONS, connection_regions
 from app.connectors.credentials import capabilities
 from app.connectors.kubernetes import CONFIGMAP_CHANGES_KEY
-from app.db.models import Connection, Edge, Resource
+from app.db.models import Agent, Connection, Edge, Resource
 from app.discovery.engine import FACTS_KEY, PREVIEW_KINDS
 from app.graph.roles import role_of
+from app.remote_agents import AGENT_VERSION, outdated
 from app.security.redact import redact_json
-from app.targets.k8s_deploy import deploy_settings
+from app.targets.k8s_deploy import K8sDeploySettings, deploy_settings
 
 
 class ConnectionKind(StrEnum):
@@ -30,6 +31,7 @@ class ConnectionKind(StrEnum):
     vercel = "vercel"
     azure = "azure"
     k8s = "k8s"
+    agent = "agent"
 
 
 ConnectionStatus = Literal["pending", "connected", "error"]
@@ -65,6 +67,74 @@ class K8sDeploySettingsOut(BaseModel):
     # "ecr": aws_connection_id logs in to the ECR registry at push time (no stored token).
     registry_auth: Literal["token", "ecr"] = "token"
     aws_connection_id: uuid.UUID | None = None
+
+
+def _registry_view(conn: Connection) -> dict[str, Any]:
+    own = K8sDeploySettings.from_config(conn.config)
+    if own is None:
+        return {}
+    return {
+        "registry": own.registry,
+        "registry_auth": own.registry_auth,
+        "registry_username": own.username,
+        "registry_token_saved": bool(own.password_encrypted),
+        "registry_aws_connection_id": own.aws_connection_id,
+    }
+
+
+class AgentOut(BaseModel):
+    """A Groundcrew agent's state (connection kind `agent`)."""
+
+    enrolled: bool
+    online: bool
+    hostname: str | None = None
+    os: str | None = None
+    arch: str | None = None
+    version: str | None = None
+    enrolled_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    # A join token is waiting to be used until then (null: none).
+    join_expires_at: datetime | None = None
+    services: int = 0
+    # Services Groundcrew may deploy to (their `allow` lists deploy).
+    deploy_services: list[str] = Field(default_factory=list)
+    # Where deploys keep their images: "groundcrew" (the Groundcrew registry) or the
+    # connection's own registry (host/path); token never returned.
+    registry: str = "groundcrew"
+    registry_auth: Literal["groundcrew", "token", "ecr"] = "groundcrew"
+    registry_username: str | None = None
+    registry_token_saved: bool = False
+    registry_aws_connection_id: str | None = None
+    # The version groundkrew.com serves; update_available when this agent runs an older one.
+    latest_version: str = AGENT_VERSION
+    update_available: bool = False
+
+    @classmethod
+    def build(cls, agent: Agent, conn: Connection, now: datetime) -> "AgentOut":
+        offline_after = timedelta(seconds=get_settings().agent_offline_after_seconds)
+        stored = (conn.config or {}).get("inventory") or {}
+        pending = agent.join_expires_at if agent.join_token_hash else None
+        return cls(
+            enrolled=agent.public_key is not None,
+            online=agent.last_seen_at is not None
+            and agent.public_key is not None
+            and now - agent.last_seen_at < offline_after,
+            hostname=agent.hostname,
+            os=agent.os,
+            arch=agent.arch,
+            version=agent.version,
+            enrolled_at=agent.enrolled_at,
+            last_seen_at=agent.last_seen_at,
+            join_expires_at=pending if pending and pending > now else None,
+            services=len(stored.get("services") or []),
+            deploy_services=[
+                str(s.get("name"))
+                for s in stored.get("services") or []
+                if "deploy" in (s.get("allow") or [])
+            ],
+            **_registry_view(conn),
+            update_available=agent.public_key is not None and outdated(agent.version),
+        )
 
 
 class ConnectionOut(BaseModel):
@@ -103,6 +173,8 @@ class ConnectionOut(BaseModel):
     deploy_settings: K8sDeploySettingsOut | None = None
     # Kubernetes: the owner opted in to ConfigMap changes as incident causes. Null: not k8s.
     configmap_changes: bool | None = None
+    # Agent: enrollment, online state, and host (null for other kinds).
+    agent: AgentOut | None = None
     # What Groundcrew can read and change through it, in plain sentences (app.connectors.access).
     access: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -111,7 +183,9 @@ class ConnectionOut(BaseModel):
     created_at: datetime
 
     @classmethod
-    def build(cls, conn: Connection, resource_count: int = 0) -> "ConnectionOut":
+    def build(
+        cls, conn: Connection, resource_count: int = 0, agent: Agent | None = None
+    ) -> "ConnectionOut":
         c = conn.config or {}
         last = LastDiscovery.model_validate(conn.last_discovery) if conn.last_discovery else None
         deploy = deploy_settings(conn)
@@ -143,12 +217,39 @@ class ConnectionOut(BaseModel):
             namespaces=c.get("namespaces"),
             deploy_settings=K8sDeploySettingsOut(**deploy.public()) if deploy else None,
             configmap_changes=bool(c.get(CONFIGMAP_CHANGES_KEY)) if conn.kind == "k8s" else None,
+            agent=AgentOut.build(agent, conn, datetime.now(UTC)) if agent else None,
             access=access_summary(conn, get_settings()),
             error=c.get("last_error"),
             resource_count=resource_count,
             last_discovery=last,
             created_at=conn.created_at,
         )
+
+
+class AgentRegistryIn(BaseModel):
+    """The agent's own registry for deploys (instead of the Groundcrew registry): the same
+    choices as a Kubernetes cluster's (K8sDeploySettingsIn), without the cluster settings."""
+
+    registry: str = Field(min_length=3, max_length=255, examples=["ghcr.io/acme"])
+    registry_auth: Literal["token", "ecr"] = "token"
+    aws_connection_id: uuid.UUID | None = None
+    username: str | None = Field(default=None, max_length=200)
+    token: str | None = Field(default=None, max_length=4000)
+
+
+class AgentConnectIn(BaseModel):
+    workspace_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=200, examples=["web-1 (Hetzner)"])
+
+
+class AgentJoinOut(BaseModel):
+    """A new agent connection (or a new token for one). The token is shown only here."""
+
+    connection: ConnectionOut
+    token: str
+    expires_at: datetime
+    # Where the agent reaches Groundcrew (its `groundcrew.url` setting).
+    api_url: str
 
 
 class AwsRegionsIn(BaseModel):
@@ -222,6 +323,19 @@ class AwsOperateIn(BaseModel):
     """Turn approved emergency fixes on (after the stack has EnableOperate=true) or off."""
 
     enabled: bool
+
+
+class AwsOperateValuesOut(BaseModel):
+    """What to put in the groundcrew-read-only stack's Operate* parameters, from the
+    resources Groundcrew discovered in this account. An empty list: leave that parameter at its
+    default (it matches nothing). Groundcrew's own resources are never suggested."""
+
+    services: list[str]
+    pass_roles: list[str]
+    functions: list[str]
+    secrets: list[str]
+    instances: list[str]
+    discovered: bool = Field(description="False until a discovery of this account has run.")
 
 
 class K8sOperateIn(BaseModel):
@@ -364,7 +478,9 @@ def _facts(r: Resource) -> list[str]:
         if tags:
             out.append(f"image {tags[0][:7]}")
     elif r.type == "rds:db":
-        out.append(f"{c.get('engine')} {c.get('engine_version')}")
+        engine = " ".join(str(c[k]) for k in ("engine", "engine_version") if c.get(k))
+        if engine:
+            out.append(engine)
         out.append("public" if c.get("publicly_accessible") else "private")
     elif r.type == "ecr:repository":
         images = c.get("images") or []

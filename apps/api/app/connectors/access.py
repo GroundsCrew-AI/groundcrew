@@ -78,4 +78,14 @@ def access_summary(conn: Connection, settings: Settings) -> list[str]:
             f"Reads resources in resource group {c.get('resource_group') or '?'} with the Reader "
             "role (preview). Changes nothing."
         ]
+    if conn.kind == "agent":
+        host = c.get("hostname") or "its host"
+        return [
+            f"The Groundcrew agent on {host} reports the services listed in its configuration "
+            "file: their runtime, image, ports, and health check. It connects out to Groundcrew; "
+            "nothing connects in.",
+            "Never reads environment or secret values. Changes nothing: actions are off until "
+            "a service allows them in the agent's configuration file, and each one then needs "
+            "your approval.",
+        ]
     return ["Reads metadata only."]

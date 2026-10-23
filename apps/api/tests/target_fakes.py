@@ -69,6 +69,13 @@ class FakeSandbox:
         self.pushed.append((image_ref, target))
         return PushResult(image=target.image, digest="sha256:" + "a" * 64, duration_ms=10)
 
+    async def push_to_groundcrew(
+        self, image_ref: str, registry_url: str, repository: str, tag: str
+    ) -> PushResult:
+        image = f"{registry_url}/{repository}:{tag}"
+        self.events.append(f"push {image_ref} -> {image}")
+        return PushResult(image=image, digest="sha256:" + "a" * 64, duration_ms=10)
+
     async def image_id(self, image_ref: str) -> str:
         return "sha256:" + "b" * 64
 

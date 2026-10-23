@@ -291,6 +291,61 @@ export function useConnectVercel() {
   });
 }
 
+export type AgentJoin = Schemas["AgentJoinOut"];
+
+/** Add a Groundcrew agent: the answer holds its one-time join token. */
+export function useConnectAgent() {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async (body: Schemas["AgentConnectIn"]) =>
+      unwrap(await api.POST("/connections/agent", { body })),
+    onSuccess: (_data, body) => invalidate(body.workspace_id),
+  });
+}
+
+/** A new join token for an agent connection (the old one stops working). */
+export function useAgentToken() {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async (connection: Connection) =>
+      unwrap(
+        await api.POST("/connections/{connection_id}/agent/token", {
+          params: { path: { connection_id: connection.id } },
+        }),
+      ),
+    onSuccess: (_data, connection) => invalidate(connection.workspace_id),
+  });
+}
+
+/** The agent's own registry for deploys (instead of the Groundcrew registry). */
+export function useAgentRegistry() {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async ({ connection, body }: { connection: Connection; body: Schemas["AgentRegistryIn"] }) =>
+      unwrap(
+        await api.PUT("/connections/{connection_id}/agent/registry", {
+          params: { path: { connection_id: connection.id } },
+          body,
+        }),
+      ),
+    onSuccess: (_data, { connection }) => invalidate(connection.workspace_id),
+  });
+}
+
+/** Back to the Groundcrew registry. */
+export function useClearAgentRegistry() {
+  const invalidate = useInvalidateWorkspace();
+  return useMutation({
+    mutationFn: async (connection: Connection) =>
+      unwrap(
+        await api.DELETE("/connections/{connection_id}/agent/registry", {
+          params: { path: { connection_id: connection.id } },
+        }),
+      ),
+    onSuccess: (_data, connection) => invalidate(connection.workspace_id),
+  });
+}
+
 export function useConnectAzure() {
   const invalidate = useInvalidateWorkspace();
   return useMutation({
@@ -387,6 +442,22 @@ export function useResource(resourceId: string | null) {
 
 /** The CloudFormation template, downloaded through the proxy (it needs the session). */
 /** The connect template's S3 URL (null when the server has none) for updating a stack. */
+export type AwsOperateValues = Schemas["AwsOperateValuesOut"];
+
+/** The Operate* stack parameters for an AWS connection, from what discovery found. */
+export function useAwsOperateValues(connectionId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["aws-operate-values", connectionId],
+    enabled,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/connections/{connection_id}/aws/operate-values", {
+          params: { path: { connection_id: connectionId } },
+        }),
+      ),
+  });
+}
+
 export function useAwsTemplateUrl(enabled = true) {
   return useQuery({
     queryKey: ["aws-template-url"],

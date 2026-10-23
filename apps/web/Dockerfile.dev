@@ -1,4 +1,4 @@
-# Development image for docker-compose (hot reload). Production web runs on Vercel.
+# Development image for docker-compose (hot reload). Production uses ./Dockerfile.
 FROM node:22-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./

@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.db.models import RunStatus, StopReason
 from app.pipeline.events import DeployPlan, DeployStage, EnvVarView, TargetKind
@@ -17,6 +17,8 @@ from app.pipeline.state import DeployRecord, StageState
 
 MAX_ENV_VARS = 100
 MAX_ENV_VALUE_CHARS = 16_384
+# A service folder inside the repository: relative, no "..", "." for the root.
+SERVICE_PATH = r"^(\.|[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*){0,5})$"
 
 # --- request ------------------------------------------------------------------------------
 
@@ -33,6 +35,9 @@ class GitHubRepoSource(BaseModel):
     )
     # Branch, tag, or commit SHA. The commit actually built is in the deploy record.
     ref: str = Field(min_length=1, max_length=255, pattern=r"^[^\s~^:?*\[\\]+$", examples=["main"])
+    # The service to deploy when the repo holds several (GET /deploys/services lists them).
+    # Scout reads and Builder builds only this folder. Omitted: the root, or the one service.
+    path: str | None = Field(default=None, max_length=255, pattern=SERVICE_PATH, examples=["api"])
 
 
 class FixtureSource(BaseModel):
@@ -41,6 +46,7 @@ class FixtureSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fixture: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,62}$", examples=["py-build-trap"])
+    path: str | None = Field(default=None, max_length=255, pattern=SERVICE_PATH)
 
 
 DeploySource = GitHubRepoSource | FixtureSource
@@ -77,8 +83,10 @@ class DeployCreate(BaseModel):
 
     workspace_id: uuid.UUID
     repo: DeploySource
-    # A k8s connection, or an AWS connection with Tier=deploy.
+    # A k8s connection, an AWS connection with Tier=deploy, or a Groundcrew agent.
     target_connection_id: uuid.UUID
+    # Agent targets: the service on the server to update (its `allow` lists deploy).
+    target_service: str | None = Field(default=None, max_length=100)
     env: list[EnvVarIn] = Field(default_factory=list, max_length=MAX_ENV_VARS)
     options: DeployOptions = Field(default_factory=DeployOptions)
 
@@ -107,9 +115,76 @@ class DeployEnvUpdate(BaseModel):
         return _unique(env)
 
 
+class SettingVar(BaseModel):
+    name: str
+    secret: bool
+
+
+class DeploySettings(BaseModel):
+    """GET /deploys/{id}/settings: the env names a live deploy runs with. Groundcrew never
+    stores values, so none come back; a change sends only what it sets or removes."""
+
+    env: list[SettingVar]
+    # Why this deploy's settings cannot be changed (not live, or a newer deploy replaced it).
+    blocked: str | None = None
+
+
+class DeploySettingsChange(BaseModel):
+    """POST /deploys/{id}/settings: a settings change. Nothing is rebuilt: the running image
+    runs again with these env values, after the same plan approval as a deploy. Every name
+    not set or removed keeps its value on the target."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Added or updated, each with its value.
+    env: list[EnvVarIn] = Field(default_factory=list, max_length=MAX_ENV_VARS)
+    # Taken off the app.
+    remove: list[str] = Field(default_factory=list, max_length=MAX_ENV_VARS)
+
+    @field_validator("env")
+    @classmethod
+    def _unique_names(cls, env: list[EnvVarIn]) -> list[EnvVarIn]:
+        for var in env:
+            if not var.value.get_secret_value():
+                raise ValueError(f"{var.name} needs a value (to take it off the app, remove it)")
+        return _unique(env)
+
+    @field_validator("remove")
+    @classmethod
+    def _names(cls, remove: list[str]) -> list[str]:
+        if len(set(remove)) != len(remove):
+            raise ValueError("a name is removed twice")
+        return remove
+
+    @model_validator(mode="after")
+    def _a_change(self) -> "DeploySettingsChange":
+        both = {v.name for v in self.env} & set(self.remove)
+        if both:
+            raise ValueError(f"{', '.join(sorted(both))} is both set and removed")
+        if not self.env and not self.remove:
+            raise ValueError("nothing to change")
+        return self
+
+
 class DeployEnvUpdated(BaseModel):
     # The approval that was replaced; a new approval_requested follows on the run stream.
     approval_id: uuid.UUID
+
+
+class RepoService(BaseModel):
+    # "." is the repository root.
+    path: str
+    # What makes it a service: manifests (package.json, go.mod, ...), a Dockerfile, or the
+    # Compose file that builds it.
+    manifests: list[str]
+
+
+class RepoServices(BaseModel):
+    """GET /deploys/services: the folders of a repository that can be deployed on their own."""
+
+    services: list[RepoService]
+    # More than one service and no root app: the deploy form asks which one.
+    choose: bool
 
 
 class DeployCreated(BaseModel):
@@ -132,6 +207,8 @@ class DeploySourceOut(BaseModel):
     # owner/name for GitHub, the fixture name otherwise.
     repo: str
     ref: str | None
+    # The service folder deployed; null for the repository root.
+    path: str | None = None
     connection_id: uuid.UUID | None
     # The commit that was built, once Scout has checked it out.
     commit: str | None
@@ -161,6 +238,8 @@ class DeploySummary(BaseModel):
     live_url: str | None
     build_attempts: int
     automatic_fix: bool
+    # "settings": a settings change of a live deploy (POST /deploys/{id}/settings), no build.
+    kind: Literal["deploy", "settings"] = "deploy"
     cost_usd: float | None
     ultra_equiv_usd: float | None
     error: str | None

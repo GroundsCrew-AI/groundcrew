@@ -19,7 +19,8 @@ export default function RunsPage() {
 
   return (
     <>
-      <PageHeader title="Runs" actions={<NewRunDialog />} />
+      {/* Test runs (a simulated agent) are for local development; a hosted instance has none. */}
+      <PageHeader title="Runs" actions={process.env.NODE_ENV !== "production" && <NewRunDialog />} />
       <PageBody className="p-0 md:p-0">
         {error ? (
           <div className="p-4 md:p-6">

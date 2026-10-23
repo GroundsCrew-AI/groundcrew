@@ -11,7 +11,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Approval, Decision } from "@/lib/api/client";
-import { envDisplay, failingChecks } from "@/lib/deploy-view";
+import { ENV_CHANGE, envDisplay, failingChecks } from "@/lib/deploy-view";
 import { type DeployPlan, type EnvFix, targetLabel } from "@/lib/deploys";
 import { formatRelative, formatTimestamp } from "@/lib/format";
 
@@ -150,7 +150,12 @@ export function DeployPlanCard({
                   const canSet = fixable && v.required && !v.provided;
                   return (
                     <tr key={v.name} className="align-baseline">
-                      <td className="py-0.5 pr-3 font-mono">{v.name}</td>
+                      <td className="py-0.5 pr-3 font-mono">
+                        <span className={cn(v.change === "remove" && "line-through")}>{v.name}</span>
+                        {v.change && v.change !== "keep" && (
+                          <span className="ml-2 font-sans text-[11.5px] text-muted-foreground">{ENV_CHANGE[v.change]}</span>
+                        )}
+                      </td>
                       <td className="py-0.5 pr-3">
                         {editing === v.name && onFixEnv ? (
                           <EnvValueForm
@@ -167,7 +172,13 @@ export function DeployPlanCard({
                           />
                         ) : (
                           <span className="flex flex-wrap items-baseline gap-x-2">
-                            <span className={cn("font-mono break-all", !v.provided && "text-[var(--status-failed)]")}>
+                            <span
+                              className={cn(
+                                "font-mono break-all",
+                                !v.provided && v.change !== "remove" && "text-[var(--status-failed)]",
+                                (v.change === "keep" || v.change === "remove") && "font-sans text-muted-foreground",
+                              )}
+                            >
                               {envDisplay(v)}
                             </span>
                             {canSet && (

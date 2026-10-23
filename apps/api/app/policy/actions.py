@@ -54,6 +54,8 @@ MedicAction = Literal[
     "ec2_reboot_instance",
     "k8s_rollout_undo",
     "k8s_rollout_restart",
+    "agent_restart_service",
+    "agent_rollback_service",
 ]
 ApprovedActionName = TargetAction | MedicAction
 
@@ -70,6 +72,8 @@ _POLICY: dict[str, ToolPolicy] = {
     "ec2_reboot_instance": ToolPolicy.emergency,
     "k8s_rollout_undo": ToolPolicy.emergency,
     "k8s_rollout_restart": ToolPolicy.emergency,
+    "agent_restart_service": ToolPolicy.emergency,
+    "agent_rollback_service": ToolPolicy.emergency,
 }
 
 

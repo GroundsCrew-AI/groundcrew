@@ -22,6 +22,7 @@ dependencies = [
     "python-hcl2>=8.1.4",
     "pyyaml>=6.0.3",
     "kubernetes>=36.0.3,<37",
+    "mcp>=1.12,<2",
 ]
 
 [dependency-groups]

@@ -80,7 +80,7 @@ _OFF, _LOW, _ON = Reasoning.off, Reasoning.low, Reasoning.on
 
 ROUTES: dict[Task, Route] = {
     Task.summarize_graph: Route(Task.summarize_graph, _N, _OFF, 1_500),
-    Task.detect_app_spec: Route(Task.detect_app_spec, _N, _LOW, 2_000, fallback=_S),
+    Task.detect_app_spec: Route(Task.detect_app_spec, _N, _LOW, 4_000, fallback=_S),
     Task.compress_evidence: Route(Task.compress_evidence, _N, _OFF, 1_200),
     Task.classify_signal: Route(Task.classify_signal, _N, _OFF, 300),
     Task.write_dockerfile: Route(Task.write_dockerfile, _S, _LOW, 3_000),

@@ -51,8 +51,8 @@ export function plan(overrides: Partial<DeployPlan> = {}): DeployPlan {
     cpu: "250m",
     memory: "512Mi",
     env: [
-      { name: "DATABASE_URL", secret: true, required: true, provided: true, value: null },
-      { name: "MODE", secret: false, required: false, provided: true, value: "production" },
+      { name: "DATABASE_URL", secret: true, required: true, provided: true, value: null, change: null },
+      { name: "MODE", secret: false, required: false, provided: true, value: "production", change: null },
     ],
     resources: [
       { kind: "image", name: "kind-registry:5000/legacy-flask-app:abc", action: "push", detail: null },

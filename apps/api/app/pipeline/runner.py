@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 from sqlalchemy import func, select, update
@@ -46,6 +46,8 @@ from app.agents.deployer import (
     plan_summary,
 )
 from app.agents.scout.appspec import AppSpec
+from app.agents.scout.detectors import find_subpath
+from app.agents.scout.repo_view import RepoView
 from app.agents.scout.scout import scout
 from app.config import Settings, get_settings
 from app.connectors.credentials import ConnectionCredentialsProvider, CredentialsProvider
@@ -552,8 +554,32 @@ class _Job:
 
     # --- start: scout, build, smoke, plan, preflight, approval --------------------------------
 
+    @property
+    def settings_change(self) -> dict[str, Any] | None:
+        """A settings change's request (POST /deploys/{id}/settings), else None."""
+        settings = self.request.get("settings")
+        return dict(settings) if isinstance(settings, dict) else None
+
+    async def settings_start(self) -> None:
+        """A settings change: the live deploy's image, spec, and plan draft are in runs.state
+        already; nothing is read, built, or smoke-tested, and no model is asked."""
+        skipped: list[tuple[DeployStage, StageAgent]] = [
+            ("scout", "scout"),
+            ("build", "builder"),
+            ("smoke", "builder"),
+        ]
+        for stage, agent in skipped:
+            started = await self.stage_start(stage, agent)
+            await self.stage_end(
+                stage, agent, started, "skipped", "Settings change: the running image is reused"
+            )
+        await self.plan_and_ask(replan=False)
+
     async def from_start(self) -> None:
         request = self.request
+        if self.settings_change is not None:
+            await self.settings_start()
+            return
         source_conn: Connection | None = None
         if request["source"].get("connection_id"):
             source_conn = await self.session.get(
@@ -576,11 +602,30 @@ class _Job:
                     error=summarize(f"Could not read the repository: {exc}", 500),
                 )
             commit = getattr(source, "commit", None)
+            # The service folder to deploy: Scout reads only it and Builder builds only it, so
+            # another service's env vars, port, or start command never reach this deploy.
+            path = request["source"].get("path")
+            subpath = None if path in (None, ".") else path
+            if path is None:
+                chosen, candidates = await asyncio.to_thread(find_subpath, RepoView(root))
+                if chosen is None and len(candidates) > 1:
+                    message = (
+                        f"This repository has several services ({', '.join(candidates)}). "
+                        "Choose the one to deploy."
+                    )
+                    await self.stage_end("scout", "scout", started, "failed", message)
+                    await self.finish(RunStatus.failed, StopReason.error, error=message)
             found = await scout(
-                root, self.deps.llm, await self.budget(), on_call=self.recorder("scout")
+                root,
+                self.deps.llm,
+                await self.budget(),
+                subpath=subpath,
+                on_call=self.recorder("scout"),
             )
             spec = found.spec
             app = slug(request["source"]["repo"].rsplit("/", 1)[-1])
+            if spec.subpath:
+                app = slug(f"{app}-{PurePosixPath(spec.subpath).name}")
             self.state.update(spec=spec.model_dump(mode="json"), app=app, commit=commit)
             facts = [str(spec.framework or spec.language or "unknown app")]
             if spec.port:
@@ -590,7 +635,8 @@ class _Job:
             await self.stage_end("scout", "scout", started, "succeeded", ", ".join(facts))
 
             await self.check_not_stopped()
-            outcome = await self.build(root, spec, app, commit)
+            app_root = root / spec.subpath if spec.subpath else root
+            outcome = await self.build(app_root, spec, app, commit)
         finally:
             await asyncio.to_thread(source.cleanup)
 
@@ -620,6 +666,10 @@ class _Job:
             )
             await self.session.commit()
 
+        async def check(built: Any) -> Any:
+            # The smoke test of each built image: a failure goes back to Builder to fix.
+            return await builder.smoke(built, spec, await self.smoke_env(), run_id=str(self.run.id))
+
         try:
             outcome = await builder.build(
                 root,
@@ -631,6 +681,7 @@ class _Job:
                 recorder=self.recorder("builder"),
                 on_attempt=on_attempt,
                 on_note=on_note,
+                check=check,
             )
         except BuilderError as exc:
             await self.stage_end("build", "builder", started, "failed", str(exc)[:200])
@@ -661,24 +712,51 @@ class _Job:
     async def smoke(self, spec: AppSpec, outcome: Any) -> None:
         await self.check_not_stopped()
         started = await self.stage_start("smoke", "builder")
-        env = [
-            SmokeEnv(name, _secret(value), secret)
-            for name, (value, secret) in (await self.env_values()).items()
-        ]
-        result = await Builder(self.deps.llm, self.deps.sandbox).smoke(
-            outcome, spec, env, run_id=str(self.run.id)
+        # Builder smoke-tested the image it built; an outcome without one is tested here.
+        result = outcome.smoke or await Builder(self.deps.llm, self.deps.sandbox).smoke(
+            outcome, spec, await self.smoke_env(), run_id=str(self.run.id)
         )
         checks = ", ".join(f"{c.path} {c.status_code or c.detail}" for c in result.checks)
+        if not result.ok and result.answered:
+            # The app runs and answers; its health check failed on something the sandbox
+            # does not have (its database, a queue). Verify checks health on the target.
+            note = (
+                f"The app started and answered HTTP ({checks}), but its health check did not "
+                "pass in the sandbox, which cannot reach your databases or other services. "
+                "Verify checks the health path again once it runs on the target."
+                + _last_lines(result.logs_tail)
+            )
+            await record_step(
+                self.session,
+                self.run,
+                kind="note",
+                agent="builder",
+                output_summary=summarize(note, 1500),
+            )
+            self.state["build"]["smoke"] = {"ok": True, "checks": checks, "unhealthy": True}
+            await self.stage_end(
+                "smoke", "builder", started, "succeeded", f"the app answered ({checks})"
+            )
+            return
         self.state["build"]["smoke"] = {"ok": result.ok, "checks": checks}
         if not result.ok:
             await self.stage_end("smoke", "builder", started, "failed", checks or result.detail)
-            logs = f"\n{result.logs_tail}" if result.logs_tail else ""
             await self.finish(
                 RunStatus.failed,
                 StopReason.error,
-                error=summarize(f"The smoke test failed ({checks or result.detail}).{logs}", 1500),
+                error=summarize(
+                    f"The smoke test failed: {result.detail or checks}."
+                    + _last_lines(result.logs_tail),
+                    1500,
+                ),
             )
         await self.stage_end("smoke", "builder", started, "succeeded", f"{checks} in the sandbox")
+
+    async def smoke_env(self) -> list[SmokeEnv]:
+        return [
+            SmokeEnv(name, _secret(value), secret)
+            for name, (value, secret) in (await self.env_values()).items()
+        ]
 
     async def plan_and_ask(self, *, replan: bool) -> None:
         """plan (plan_deploy + render), preflight, and the approval card. On a replan (the env
@@ -689,7 +767,9 @@ class _Job:
         request = self.request
         env = await self.env_values()
         target = await self.target()
-        if not replan:
+        if not replan and self.settings_change is not None:
+            started = await self.stage_start("plan", "deployer")
+        elif not replan:
             started = await self.stage_start("plan", "deployer")
             draft, note = await Deployer(self.deps.llm).draft(
                 spec,
@@ -719,6 +799,8 @@ class _Job:
             allow_missing_env=bool(request.get("allow_missing_env")),
             repo=request["source"]["repo"],
             commit=self.state.get("commit"),
+            target_service=(request.get("target") or {}).get("service"),
+            settings=self.settings_change,
         )
         plan = await target.plan(deploy)
         if not replan:
@@ -736,6 +818,8 @@ class _Job:
         summary = (
             "Blocked: " + "; ".join(c.detail for c in failing)
             if failing
+            else "The running image; env, port, and names checked"
+            if self.settings_change is not None
             else "Image built and smoke-tested; env, port, and names checked"
         )
         await self.stage_end(
@@ -774,7 +858,9 @@ class _Job:
             agent="deployer",
             tool_name=TARGET_APPLY,
             approval_id=approval.id,
-            output_summary=f"Waiting for approval to deploy {plan.app}",
+            output_summary=f"Waiting for approval to change the settings of {plan.app}"
+            if self.settings_change is not None
+            else f"Waiting for approval to deploy {plan.app}",
             data=card,
         )
         await self.pause(AWAIT_PLAN)
@@ -823,6 +909,8 @@ class _Job:
             allow_missing_env=bool(request.get("allow_missing_env")),
             repo=request["source"]["repo"],
             commit=self.state.get("commit"),
+            target_service=(request.get("target") or {}).get("service"),
+            settings=self.settings_change,
         )
 
     async def apply_and_verify(self, approval: Approval) -> None:
@@ -996,13 +1084,15 @@ class _Job:
         if not deployment.external_id:
             return None
         request = self.request
-        k8s = deployment.target == "k8s"
+        k8s, agent = deployment.target == "k8s", deployment.target == "agent"
         resource = DiscoveredResource(
-            provider="k8s" if k8s else "aws",
-            type="k8s:deployment" if k8s else "ecs:service",
+            provider="agent" if agent else "k8s" if k8s else "aws",
+            type="agent:service" if agent else "k8s:deployment" if k8s else "ecs:service",
             external_id=deployment.external_id,
-            name=slug(deployment.app),
-            region=deployment.location if k8s else self.settings.gc_aws_region,
+            # An agent's service keeps its name from the agent's configuration.
+            name=deployment.location.split("/", 1)[-1] if agent else slug(deployment.app),
+            account=deployment.location.split("/", 1)[0] if agent else None,
+            region=deployment.location if k8s else None if agent else self.settings.gc_aws_region,
             config={
                 "image": deployment.image,
                 "live_url": deployment.live_url,
@@ -1053,7 +1143,7 @@ class _Job:
 
 
 def _where(plan: TargetPlan) -> str:
-    return "Kubernetes" if plan.target == "k8s" else "AWS ECS"
+    return {"k8s": "Kubernetes", "agent": "the server"}.get(plan.target, "AWS ECS")
 
 
 def _secret(value: str) -> Any:
@@ -1099,3 +1189,12 @@ __all__ = [
     "purge_env",
     "seal_env",
 ]
+
+
+def _last_lines(logs: str | None, count: int = 4) -> str:
+    """The app's last few lines, each cut short (JSON log lines run long)."""
+    lines = [line.strip() for line in (logs or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    shown = [line if len(line) <= 240 else line[:237] + "..." for line in lines[-count:]]
+    return "\nThe app's last lines:\n" + "\n".join(shown)

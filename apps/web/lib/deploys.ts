@@ -9,6 +9,9 @@ export type DeployCreated = Schemas["DeployCreated"];
 export type DeploySummary = Schemas["DeploySummary"];
 export type DeployDetail = Schemas["DeployDetail"];
 export type DeployPage = Schemas["DeployPage"];
+export type RepoServices = Schemas["RepoServices"];
+export type DeploySettings = Schemas["DeploySettings"];
+export type DeploySettingsChange = Schemas["DeploySettingsChange"];
 export type DeployState = DeploySummary["status"];
 export type DeployStage = Schemas["StageStarted"]["stage"];
 export type TargetKind = Schemas["DeployPlan"]["target"];
@@ -79,6 +82,31 @@ export function useDeploy(deployId: string) {
   });
 }
 
+/**
+ * The folders of a repository that deploy on their own (api/, web/), read from GitHub. With
+ * several and no app at the root, the deploy form asks which one; Scout and Builder then read
+ * and build only that folder.
+ */
+export function useRepoServices(
+  workspaceId: string,
+  connectionId: string | undefined,
+  repo: string,
+  ref: string,
+) {
+  return useQuery({
+    queryKey: ["repo-services", workspaceId, connectionId, repo, ref] as const,
+    enabled: Boolean(connectionId && repo && ref),
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async (): Promise<RepoServices> =>
+      unwrap(
+        await api.GET("/deploys/services", {
+          params: { query: { workspace_id: workspaceId, connection_id: connectionId!, repo, ref } },
+        }),
+      ),
+  });
+}
+
 export function useCreateDeploy() {
   const client = useQueryClient();
   return useMutation({
@@ -111,5 +139,34 @@ export function stageLabel(stage: DeployStage): string {
 }
 
 export function targetLabel(kind: TargetKind): string {
-  return kind === "k8s" ? "Kubernetes" : "AWS ECS";
+  return kind === "k8s" ? "Kubernetes" : kind === "agent" ? "Server (agent)" : "AWS ECS";
 }
+
+/** The env names a live deploy runs with (never values), and whether they can be changed. */
+export function useDeploySettings(deployId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["deploy-settings", deployId] as const,
+    enabled,
+    queryFn: async (): Promise<DeploySettings> =>
+      unwrap(await api.GET("/deploys/{deploy_id}/settings", { params: { path: { deploy_id: deployId } } })),
+  });
+}
+
+/**
+ * Change a live deploy's settings without a rebuild: a new deploy run that reuses the running
+ * image and waits for the same plan approval. Names not set or removed keep their values.
+ */
+export function useChangeSettings(deployId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: DeploySettingsChange): Promise<DeployCreated> =>
+      unwrap(
+        await api.POST("/deploys/{deploy_id}/settings", { params: { path: { deploy_id: deployId } }, body }),
+      ),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["deploys"] });
+      void client.invalidateQueries({ queryKey: ["deploy-settings", deployId] });
+    },
+  });
+}
+
