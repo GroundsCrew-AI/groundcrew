@@ -54,4 +54,16 @@ describe("auditSummary", () => {
     );
     expect(auditSummary({ action: "something.new", detail: {} })).toBe("something new");
   });
+
+  it("says what an assistant asked for, and why it was refused", () => {
+    expect(
+      auditSummary({ action: "assistant.start_deploy", detail: { repository: "acme/shop", result: "started" } }),
+    ).toBe("asked to deploy: acme/shop");
+    expect(
+      auditSummary({ action: "assistant.report_incident", detail: { result: "This token can only read." } }),
+    ).toBe("asked to report an incident, refused: This token can only read.");
+    expect(auditSummary({ action: "token.created", detail: { name: "laptop" } })).toBe(
+      "made an assistant token: laptop",
+    );
+  });
 });

@@ -52,6 +52,8 @@ Not offered: approving, rejecting, reading secret values, deleting anything.
 2. **M2** (done 2026-10-23) `list_targets`, `start_deploy`, `change_settings` (plain values only),
    `report_incident`, `retry_fix`, each ending at an approval link. No secret value ever passes
    through an assistant.
+   Audit (2026-10-23): every start-work tool call is an `assistant.<tool>` event (refusals too),
+   and any event an assistant's request causes says "via assistant (<token name>)".
 3. **Later** Groundcrew as an MCP *client*: workspaces add read-only MCP servers (Sentry,
    Datadog, their own runbooks) that Medic queries for evidence.
 

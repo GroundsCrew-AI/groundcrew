@@ -231,3 +231,19 @@ async def test_starting_work_needs_an_approver_token_and_ends_at_an_approval_lin
         client, worker, "report_incident", resource_ids=[str(api.id)], title="api returns 500s"
     )
     assert reported["data"]["link"].endswith(f"/incidents/{reported['data']['incident_id']}")
+
+    # The audit log says what the assistant did, through which token, and what was refused.
+    events = (
+        await client.get(f"/workspaces/{alice.workspace_id}/audit", headers=alice.headers)
+    ).json()["items"]
+    by_action = {e["action"]: e for e in events}
+    refused = by_action["assistant.report_incident"]
+    assert any(
+        e["action"] == "assistant.report_incident" and "can only read" in e["detail"]["result"]
+        for e in events
+    )
+    assert by_action["assistant.start_deploy"]["detail"]["repository"] == "acme/shop"
+    started_deploy = by_action["deploy.started"]
+    assert "via assistant (laptop)" in started_deploy["actor"]
+    assert started_deploy["detail"]["assistant_token"]
+    assert refused["target_type"] == "token"
