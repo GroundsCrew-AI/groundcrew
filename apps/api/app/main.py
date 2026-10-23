@@ -16,8 +16,10 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
+from starlette.routing import Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app import mcp_server
 from app.accounts import ForbiddenError
 from app.config import get_settings
 from app.db.session import get_engine
@@ -36,6 +38,7 @@ from app.routes import (
     incidents,
     internal,
     runs,
+    tokens,
     workspace_admin,
     workspaces,
 )
@@ -181,7 +184,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     setup_logging(settings.log_level)
     settings.require_production_ready()
     check_writable(settings)
-    yield
+    async with mcp_server.endpoint.running():
+        yield
     if get_settings().database_url is not None:
         await get_engine().dispose()
 
@@ -280,6 +284,11 @@ app.include_router(admin.router)
 app.include_router(github_webhook.router)
 app.include_router(remote_agents.router)
 app.include_router(internal.router)
+app.include_router(tokens.router)
+# Assistants (MCP): streamable HTTP, workspace tokens (app/mcp_server.py). Not in the schema.
+app.router.routes.append(
+    Route("/mcp", endpoint=mcp_server.endpoint, methods=["GET", "POST", "DELETE"])
+)
 
 
 def _openapi() -> dict[str, Any]:

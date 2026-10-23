@@ -1039,6 +1039,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deploys/{deploy_id}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deploy Settings
+         * @description The env names this deploy runs with (never values), and whether they can be changed.
+         */
+        get: operations["deploy_settings_deploys__deploy_id__settings_get"];
+        put?: never;
+        /**
+         * Change Settings
+         * @description Change a live deploy's env vars without a rebuild: a new deploy run that skips Scout,
+         *     Build, and Smoke, plans the running image with the new values, and waits for approval
+         *     like any deploy. Values are handled like POST /deploys: encrypted in the job, never
+         *     echoed, never stored. Names not set or removed keep their values on the target.
+         */
+        post: operations["change_settings_deploys__deploy_id__settings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/github/webhook": {
         parameters: {
             query?: never;
@@ -1651,6 +1678,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workspaces/{workspace_id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tokens */
+        get: operations["list_tokens_workspaces__workspace_id__tokens_get"];
+        put?: never;
+        /**
+         * Create Token
+         * @description A new token, shown once. It acts as you, in this workspace only.
+         */
+        post: operations["create_token_workspaces__workspace_id__tokens_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{workspace_id}/tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Token
+         * @description Stops the token at once.
+         */
+        delete: operations["revoke_token_workspaces__workspace_id__tokens__token_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspace_id}/usage": {
         parameters: {
             query?: never;
@@ -1853,7 +1921,7 @@ export interface components {
             last_seen_at?: string | null;
             /**
              * Latest Version
-             * @default 0.6.0
+             * @default 0.6.1
              */
             latest_version: string;
             /** Online */
@@ -2728,6 +2796,29 @@ export interface components {
              */
             target: "k8s" | "aws_ecs" | "agent";
         };
+        /**
+         * DeploySettings
+         * @description GET /deploys/{id}/settings: the env names a live deploy runs with. Groundcrew never
+         *     stores values, so none come back; a change sends only what it sets or removes.
+         */
+        DeploySettings: {
+            /** Blocked */
+            blocked?: string | null;
+            /** Env */
+            env: components["schemas"]["SettingVar"][];
+        };
+        /**
+         * DeploySettingsChange
+         * @description POST /deploys/{id}/settings: a settings change. Nothing is rebuilt: the running image
+         *     runs again with these env values, after the same plan approval as a deploy. Every name
+         *     not set or removed keeps its value on the target.
+         */
+        DeploySettingsChange: {
+            /** Env */
+            env?: components["schemas"]["EnvVarIn"][];
+            /** Remove */
+            remove?: string[];
+        };
         /** DeploySourceOut */
         DeploySourceOut: {
             /** Commit */
@@ -2942,6 +3033,11 @@ export interface components {
          *     never shown; `value` is null for secrets and for missing values.
          */
         EnvVarView: {
+            /**
+             * Change
+             * @default null
+             */
+            change: ("add" | "update" | "keep" | "remove") | null;
             /** Name */
             name: string;
             /** Provided */
@@ -4969,6 +5065,13 @@ export interface components {
              */
             state: string;
         };
+        /** SettingVar */
+        SettingVar: {
+            /** Name */
+            name: string;
+            /** Secret */
+            secret: boolean;
+        };
         /** SignIn */
         SignIn: {
             /**
@@ -5198,6 +5301,83 @@ export interface components {
              * Format: date-time
              */
             start: string;
+        };
+        /** TokenCreated */
+        TokenCreated: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Name */
+            name: string;
+            /** Prefix */
+            prefix: string;
+            /** Revoked */
+            revoked: boolean;
+            /** Role */
+            role: string;
+            /** Token */
+            token: string;
+        };
+        /** TokenIn */
+        TokenIn: {
+            /**
+             * Days
+             * @default 90
+             */
+            days: number;
+            /**
+             * Name
+             * @example Claude Code on my laptop
+             */
+            name: string;
+            /**
+             * Role
+             * @default viewer
+             * @enum {string}
+             */
+            role: "viewer" | "approver";
+        };
+        /** TokenOut */
+        TokenOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Name */
+            name: string;
+            /** Prefix */
+            prefix: string;
+            /** Revoked */
+            revoked: boolean;
+            /** Role */
+            role: string;
         };
         /**
          * ToolPolicy
@@ -7314,6 +7494,83 @@ export interface operations {
             };
         };
     };
+    deploy_settings_deploys__deploy_id__settings_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deploy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploySettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_settings_deploys__deploy_id__settings_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                deploy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeploySettingsChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployCreated"];
+                };
+            };
+            /** @description The deploy is not live, or a newer one replaced it. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     github_webhook_github_webhook_post: {
         parameters: {
             query?: never;
@@ -8569,6 +8826,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tokens_workspaces__workspace_id__tokens_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_token_workspaces__workspace_id__tokens_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TokenIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_token_workspaces__workspace_id__tokens__token_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenOut"];
                 };
             };
             /** @description Validation Error */

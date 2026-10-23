@@ -24,6 +24,8 @@ connection the user is not a member of is a 404, like everywhere else.
 | GET | `/deploys/services` | `workspace_id`, `connection_id`, `repo`, `ref` | 200 `RepoServices`: the repo's service folders, read from GitHub |
 | GET | `/deploys/{deploy_id}` | | 200 `DeployDetail` |
 | POST | `/deploys/{deploy_id}/env` | `DeployEnvUpdate` | 202 `DeployEnvUpdated` (below) |
+| GET | `/deploys/{deploy_id}/settings` | | 200 `DeploySettings`: the env names a live deploy runs with (never values), and `blocked` when they cannot be changed |
+| POST | `/deploys/{deploy_id}/settings` | `DeploySettingsChange` | 202 `DeployCreated`: a settings change (below) |
 
 Follow a deploy live with the run stream: `POST /runs/{run_id}/stream-token`, then
 `GET /runs/{run_id}/events?token=`. Stop it with `POST /runs/{run_id}/stop`. Approve its plan with
@@ -182,3 +184,21 @@ approval as `script:<name> (dev)` (stored in `approvals.decided_via`, shown in t
 the timeline). It answers 404 unless `APP_ENV=dev` and `LIVE_SCRIPT_SELF_APPROVE=1`, only for
 members of the run's workspace, and it never rejects. `scripts/live_phase4.sh` uses it; a
 person approving in the UI never needs it.
+
+## Changing settings without a rebuild
+
+`POST /deploys/{deploy_id}/settings` with `{env: [{name, value, secret}], remove: [names]}` changes
+a live deploy's env vars. It is a new deploy run that reuses what the live one built:
+
+- Scout, Build, and Smoke are `skipped`; no model is asked. The plan names the image running
+  now, with the image step `unchanged` (nothing is built or pushed).
+- Every env var the deploy had that is neither set nor removed is **kept**: its value stays as it
+  is on the target (Groundcrew never stores values). Kubernetes reads the kept values from the
+  app's Secret and Deployment at apply; ECS keeps the Secrets Manager references and reads kept
+  plain values from the running task definition; a server agent leaves them on the container.
+- The approval card marks each var `added`, `updated`, `kept` (shown as "unchanged"), or
+  `removed`, and the plan waits for approval like any deploy. Apply, verify, and the offered
+  rollback work as for a deploy.
+- Only the newest live deploy of an app on a target can be changed (`blocked` says why not).
+- Removing vars on a server needs agent 0.6.1 or later (preflight says so before).
+

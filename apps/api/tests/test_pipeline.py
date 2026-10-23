@@ -331,7 +331,14 @@ async def test_kind_deploy_from_post_to_live_url(
     assert detail["plan"]["resources"][0]["action"] == "push"
     assert detail["plan"]["source_image"] == "sha256:" + "e" * 64
     assert detail["env"] == [
-        {"name": "DATABASE_URL", "secret": True, "required": True, "provided": True, "value": None}
+        {
+            "name": "DATABASE_URL",
+            "secret": True,
+            "required": True,
+            "provided": True,
+            "value": None,
+            "change": None,
+        }
     ]
 
     approval_id = next(s.approval_id for s in steps if s.kind == "approval_requested")
@@ -777,3 +784,105 @@ async def test_only_the_chosen_service_is_read_and_built(
     assert run.state["app"] == "py-build-trap-api"
     detail = (await client.get(f"/deploys/{deploy_id}", headers=alice.headers)).json()
     assert detail["source"]["path"] == "api"
+
+
+async def test_settings_change_reuses_the_image_and_keeps_untouched_values(
+    client: httpx.AsyncClient, alice: Member, session_factory: SessionFactory
+) -> None:
+    stack = Stack(session_factory, alice)
+    k8s = await _connection(session_factory, alice.workspace_id, "k8s", "kind", {"cluster": "k"})
+    deploy_id = await _start(
+        client,
+        alice,
+        k8s,
+        [
+            {"name": "DATABASE_URL", "value": SECRET, "secret": True},
+            {"name": "LOG_LEVEL", "value": "info"},
+            {"name": "FEATURE", "value": "on"},
+        ],
+    )
+    await stack.drain()
+    first = next(
+        s for s in await _steps(session_factory, deploy_id) if s.kind == "approval_requested"
+    )
+    await client.post(
+        f"/approvals/{first.approval_id}/decide",
+        json={"decision": "approve"},
+        headers=alice.headers,
+    )
+    await stack.drain()
+    assert (await _run(session_factory, deploy_id)).status == RunStatus.succeeded
+
+    settings = (await client.get(f"/deploys/{deploy_id}/settings", headers=alice.headers)).json()
+    assert settings == {
+        "env": [
+            {"name": "DATABASE_URL", "secret": True},
+            {"name": "FEATURE", "secret": False},
+            {"name": "LOG_LEVEL", "secret": False},
+        ],
+        "blocked": None,
+    }
+    # Nothing to change, or removing a name the app does not have, is refused.
+    bad = await client.post(f"/deploys/{deploy_id}/settings", json={}, headers=alice.headers)
+    assert bad.status_code == 422
+    bad = await client.post(
+        f"/deploys/{deploy_id}/settings", json={"remove": ["NOPE"]}, headers=alice.headers
+    )
+    assert bad.status_code == 422 and "NOPE" in bad.text
+
+    events, builds, llm_calls = len(stack.events), stack.sandbox.builds, len(stack.llm.calls)
+    r = await client.post(
+        f"/deploys/{deploy_id}/settings",
+        json={
+            "env": [
+                {"name": "LOG_LEVEL", "value": "debug"},
+                {"name": "API_TOKEN", "value": "t0ken-value", "secret": True},
+            ],
+            "remove": ["FEATURE"],
+        },
+        headers=alice.headers,
+    )
+    assert r.status_code == 202, r.text
+    change_id = r.json()["deploy_id"]
+    await stack.drain()
+
+    steps = await _steps(session_factory, change_id)
+    skipped = [
+        s.data["stage"]
+        for s in steps
+        if s.kind == "stage_finished" and s.data["status"] == "skipped"
+    ]
+    assert skipped == ["scout", "build", "smoke"]
+    # No model, no build, no smoke test, no push.
+    assert len(stack.llm.calls) == llm_calls and stack.sandbox.builds == builds
+    assert not any(e.startswith(("push", "smoke", "build")) for e in stack.events[events:])
+    detail = (await client.get(f"/deploys/{change_id}", headers=alice.headers)).json()
+    assert detail["plan"]["resources"][0]["action"] == "unchanged"
+    changes = {v["name"]: v["change"] for v in detail["env"]}
+    assert changes == {
+        "API_TOKEN": "add",
+        "DATABASE_URL": "keep",
+        "FEATURE": "remove",
+        "LOG_LEVEL": "update",
+    }
+    plan = next(s for s in steps if s.kind == "approval_requested")
+    image = next(c for c in plan.data["preflight"] if c["name"] == "image")
+    assert "nothing is built or pushed" in image["detail"]
+    assert "change the settings" in (plan.output_summary or "")
+    await client.post(
+        f"/approvals/{plan.approval_id}/decide", json={"decision": "approve"}, headers=alice.headers
+    )
+    await stack.drain()
+    run = await _run(session_factory, change_id)
+    assert run.status == RunStatus.succeeded, run.error
+    ns = "gc-py-build-trap"
+    secret = stack.kube.objects[("secrets", ns, "py-build-trap-env")]
+    assert secret["stringData"] == {"API_TOKEN": "t0ken-value", "DATABASE_URL": SECRET}
+    deployment = stack.kube.objects[("deployments", ns, "py-build-trap")]
+    env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["LOG_LEVEL"]["value"] == "debug" and "FEATURE" not in env
+    assert env["DATABASE_URL"]["valueFrom"]["secretKeyRef"]["key"] == "DATABASE_URL"
+    # The first deploy was replaced: its settings are not the ones to change any more.
+    old = (await client.get(f"/deploys/{deploy_id}/settings", headers=alice.headers)).json()
+    assert old["blocked"] and "newer deploy" in old["blocked"]
+    assert "t0ken-value" not in await _everything_stored(session_factory, change_id)

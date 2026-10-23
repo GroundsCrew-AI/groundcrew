@@ -428,7 +428,7 @@
             "title": "Last Seen At"
           },
           "latest_version": {
-            "default": "0.6.0",
+            "default": "0.6.1",
             "title": "Latest Version",
             "type": "string"
           },
@@ -2760,6 +2760,58 @@
         "title": "DeployRecord",
         "type": "object"
       },
+      "DeploySettings": {
+        "description": "GET /deploys/{id}/settings: the env names a live deploy runs with. Groundcrew never\nstores values, so none come back; a change sends only what it sets or removes.",
+        "properties": {
+          "blocked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked"
+          },
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/SettingVar"
+            },
+            "title": "Env",
+            "type": "array"
+          }
+        },
+        "required": [
+          "env"
+        ],
+        "title": "DeploySettings",
+        "type": "object"
+      },
+      "DeploySettingsChange": {
+        "additionalProperties": false,
+        "description": "POST /deploys/{id}/settings: a settings change. Nothing is rebuilt: the running image\nruns again with these env values, after the same plan approval as a deploy. Every name\nnot set or removed keeps its value on the target.",
+        "properties": {
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/EnvVarIn"
+            },
+            "maxItems": 100,
+            "title": "Env",
+            "type": "array"
+          },
+          "remove": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Remove",
+            "type": "array"
+          }
+        },
+        "title": "DeploySettingsChange",
+        "type": "object"
+      },
       "DeploySourceOut": {
         "properties": {
           "commit": {
@@ -3306,6 +3358,24 @@
       "EnvVarView": {
         "description": "An env var as shown on the approval card and in the deploy detail. A secret's value is\nnever shown; `value` is null for secrets and for missing values.",
         "properties": {
+          "change": {
+            "anyOf": [
+              {
+                "enum": [
+                  "add",
+                  "update",
+                  "keep",
+                  "remove"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Change"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -8863,6 +8933,24 @@
         "title": "ServiceState",
         "type": "object"
       },
+      "SettingVar": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "secret": {
+            "title": "Secret",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "secret"
+        ],
+        "title": "SettingVar",
+        "type": "object"
+      },
       "SignIn": {
         "properties": {
           "email": {
@@ -9652,6 +9740,163 @@
           "start"
         ],
         "title": "TimeWindow",
+        "type": "object"
+      },
+      "TokenCreated": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "boolean"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "prefix",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked",
+          "token"
+        ],
+        "title": "TokenCreated",
+        "type": "object"
+      },
+      "TokenIn": {
+        "properties": {
+          "days": {
+            "default": 90,
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Days",
+            "type": "integer"
+          },
+          "name": {
+            "examples": [
+              "Claude Code on my laptop"
+            ],
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "default": "viewer",
+            "enum": [
+              "viewer",
+              "approver"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "TokenIn",
+        "type": "object"
+      },
+      "TokenOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "boolean"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "prefix",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked"
+        ],
+        "title": "TokenOut",
         "type": "object"
       },
       "ToolPolicy": {
@@ -13648,6 +13893,137 @@
         ]
       }
     },
+    "/deploys/{deploy_id}/settings": {
+      "get": {
+        "description": "The env names this deploy runs with (never values), and whether they can be changed.",
+        "operationId": "deploy_settings_deploys__deploy_id__settings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploySettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deploy Settings",
+        "tags": [
+          "deploys"
+        ]
+      },
+      "post": {
+        "description": "Change a live deploy's env vars without a rebuild: a new deploy run that skips Scout,\nBuild, and Smoke, plans the running image with the new values, and waits for approval\nlike any deploy. Values are handled like POST /deploys: encrypted in the job, never\nechoed, never stored. Names not set or removed keep their values on the target.",
+        "operationId": "change_settings_deploys__deploy_id__settings_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploySettingsChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The deploy is not live, or a newer one replaced it."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Settings",
+        "tags": [
+          "deploys"
+        ]
+      }
+    },
     "/github/webhook": {
       "post": {
         "operationId": "github_webhook_github_webhook_post",
@@ -16119,6 +16495,207 @@
         "summary": "Summary",
         "tags": [
           "workspaces"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/tokens": {
+      "get": {
+        "operationId": "list_tokens_workspaces__workspace_id__tokens_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TokenOut"
+                  },
+                  "title": "Response List Tokens Workspaces  Workspace Id  Tokens Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tokens",
+        "tags": [
+          "tokens"
+        ]
+      },
+      "post": {
+        "description": "A new token, shown once. It acts as you, in this workspace only.",
+        "operationId": "create_token_workspaces__workspace_id__tokens_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/tokens/{token_id}": {
+      "delete": {
+        "description": "Stops the token at once.",
+        "operationId": "revoke_token_workspaces__workspace_id__tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Token Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Token",
+        "tags": [
+          "tokens"
         ]
       }
     },

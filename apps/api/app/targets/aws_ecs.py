@@ -257,11 +257,40 @@ class EcsTarget:
 
     # --- plan -----------------------------------------------------------------------------
 
+    async def _kept_plain(self, plan: TargetPlan) -> dict[str, str]:
+        """The plain values the running revision has for the names a settings change keeps."""
+        names = {v.name for v in plan.env if v.change == "keep" and not v.secret}
+        if not names:
+            return {}
+        service = await self._service(self._names(plan.app)["service"])
+        arn = (service or {}).get("taskDefinition")
+        if not arn:
+            raise TargetError("The service has no running revision to keep settings from.")
+        described = await self._aws("ecs", "describe_task_definition", taskDefinition=arn)
+        container = described["taskDefinition"]["containerDefinitions"][0]
+        out = {
+            e["name"]: str(e.get("value", ""))
+            for e in container.get("environment") or []
+            if e.get("name") in names
+        }
+        missing = sorted(names - set(out))
+        if missing:
+            raise TargetError(
+                f"Kept settings are not on the service any more: {', '.join(missing)}. Change "
+                "the settings again and give them values."
+            )
+        return out
+
     def _task_definition(
-        self, plan: TargetPlan, account: str, secret_arns: dict[str, str] | None
+        self,
+        plan: TargetPlan,
+        account: str,
+        secret_arns: dict[str, str] | None,
+        kept_plain: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """The task definition apply registers. Secrets reference Secrets Manager (ARNs at
-        apply, names in the plan); their values are never in it."""
+        apply, names in the plan); their values are never in it. `kept_plain`: a settings
+        change's kept plain values (read at apply; the plan shows "(unchanged)")."""
         n = self._names(plan.app)
         secrets = [v.name for v in plan.env if v.secret and v.provided]
         return {
@@ -279,7 +308,14 @@ class EcsTarget:
                     "essential": True,
                     "portMappings": [{"containerPort": plan.port, "protocol": "tcp"}],
                     "environment": [
-                        {"name": v.name, "value": v.value or ""}
+                        {
+                            "name": v.name,
+                            "value": (
+                                (kept_plain or {}).get(v.name, "(unchanged)")
+                                if v.change == "keep"
+                                else v.value or ""
+                            ),
+                        }
                         for v in plan.env
                         if v.provided and not v.secret
                     ],
@@ -341,6 +377,13 @@ class EcsTarget:
                 action=create(await self._repository_exists(n["repository"])),
             ),
             ApplyStep(
+                kind="image",
+                name=image,
+                action="unchanged",
+                detail="the image running now; nothing is built or pushed",
+            )
+            if spec.config_change
+            else ApplyStep(
                 kind="image",
                 name=image,
                 action="push",
@@ -469,9 +512,11 @@ class EcsTarget:
                 except ClientError as exc:
                     if _code(exc) != "RepositoryAlreadyExistsException":
                         raise
-            await sandbox.push(
-                spec.source_image, await ecr_target(self.session, n["repository"], spec.tag)
-            )
+            # A settings change runs the image already in ECR: nothing to push.
+            if not spec.config_change:
+                await sandbox.push(
+                    spec.source_image, await ecr_target(self.session, n["repository"], spec.tag)
+                )
 
             # 2. Log group.
             if not await self._log_group_exists(n["log_group"]):
@@ -540,9 +585,23 @@ class EcsTarget:
                         "secretsmanager", "put_secret_value", SecretId=full, SecretString=value
                     )
                 arns[name] = arn
+            # A settings change keeps the secrets it does not change (their values stay in
+            # Secrets Manager) and the plain values the running revision has for kept names.
+            kept_plain: dict[str, str] = {}
+            if spec.config_change:
+                for v in plan.env:
+                    if v.change == "keep" and v.secret:
+                        found = await self._secret_arn(secret_name(plan.app, v.name))
+                        if found is None:
+                            raise TargetError(
+                                f"The secret for {v.name} is not in Secrets Manager any more. "
+                                "Change the settings again and give it a value."
+                            )
+                        arns[v.name] = found
+                kept_plain = await self._kept_plain(plan)
 
             # 5. Task definition: a new revision; old ones stay for rollback.
-            definition = self._task_definition(plan, account, arns)
+            definition = self._task_definition(plan, account, arns, kept_plain)
             registered = await self._aws(
                 "ecs",
                 "register_task_definition",

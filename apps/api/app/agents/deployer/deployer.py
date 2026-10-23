@@ -14,7 +14,7 @@ keeps secret values out of state, approvals, steps, and logs.
 
 import json
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from app.agents.deployer.schemas import DeployDraft
 from app.agents.scout.appspec import AppSpec
@@ -107,6 +107,7 @@ def deploy_spec(
     repo: str | None,
     commit: str | None,
     target_service: str | None = None,
+    settings: dict[str, Any] | None = None,
 ) -> DeploySpec:
     """The target's input. A variable is secret if the user, Scout, or the model said so."""
     scout_secret = {v.name for v in spec.env_vars if v.secret}
@@ -137,6 +138,12 @@ def deploy_spec(
         repo=repo,
         commit=commit,
         target_service=target_service,
+        # A settings change: the running image with other env values (runs.state request).
+        config_change=settings is not None,
+        keep_env=sorted((settings or {}).get("keep_env", [])),
+        keep_secret=sorted((settings or {}).get("keep_secret", [])),
+        remove_env=sorted((settings or {}).get("remove_env", [])),
+        previous_env=sorted((settings or {}).get("previous_env", [])),
     )
 
 

@@ -116,6 +116,9 @@ class EnvVarView(BaseModel):
     required: bool
     provided: bool
     value: str | None = None
+    # A settings change (no rebuild): what happens to this var. "keep": its value on the
+    # target stays (Groundcrew never stores values). Null on a full deploy.
+    change: Literal["add", "update", "keep", "remove"] | None = None
 
 
 class PlannedResource(BaseModel):

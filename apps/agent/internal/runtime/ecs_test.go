@@ -37,7 +37,7 @@ func newFakeAWS(image string) *fakeAWS {
 		"status": "ACTIVE", "networkMode": "awsvpc", "executionRoleArn": "arn:aws:iam::1:role/exec",
 		"containerDefinitions": []any{map[string]any{
 			"name": "api", "image": image, "essential": true,
-			"environment":  []any{map[string]any{"name": "KEEP", "value": "1"}},
+			"environment":  []any{map[string]any{"name": "KEEP", "value": "1"}, map[string]any{"name": "GONE", "value": "x"}},
 			"portMappings": []any{map[string]any{"containerPort": float64(8000), "protocol": "tcp"}},
 			"logConfiguration": map[string]any{"logDriver": "awslogs", "options": map[string]any{
 				"awslogs-group": "/ecs/api", "awslogs-stream-prefix": "ecs"}},
@@ -182,7 +182,7 @@ func TestECSDeploysAndPutsTheRevisionBackOnFailure(t *testing.T) {
 	s := ecsSvc("api")
 	login := &RegistryLogin{Server: "api.groundkrew.com", Username: "u", Password: "p1"}
 
-	if _, err := e.Deploy(ctx, s, DeployRequest{Image: "reg/api:2", Env: map[string]string{"NEW": "x"}, Login: login}); err != nil {
+	if _, err := e.Deploy(ctx, s, DeployRequest{Image: "reg/api:2", Env: map[string]string{"NEW": "x"}, Unset: []string{"GONE"}, Login: login}); err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
 	if f.current != 2 || f.image(2) != "reg/api:2" {
@@ -190,7 +190,7 @@ func TestECSDeploysAndPutsTheRevisionBackOnFailure(t *testing.T) {
 	}
 	c := f.revisions[1]["containerDefinitions"].([]any)[0].(map[string]any)
 	env, _ := json.Marshal(c["environment"])
-	if !strings.Contains(string(env), `"KEEP"`) || !strings.Contains(string(env), `"NEW"`) {
+	if !strings.Contains(string(env), `"KEEP"`) || !strings.Contains(string(env), `"NEW"`) || strings.Contains(string(env), `"GONE"`) {
 		t.Fatalf("env %s", env)
 	}
 	if c["repositoryCredentials"].(map[string]any)["credentialsParameter"] != "arn:secret:groundcrew/pull/checkout/api" {

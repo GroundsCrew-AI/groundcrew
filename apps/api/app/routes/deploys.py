@@ -39,6 +39,8 @@ from app.routes.deploy_schemas import (
     DeployEnvUpdate,
     DeployEnvUpdated,
     DeployPage,
+    DeploySettings,
+    DeploySettingsChange,
     DeploySourceOut,
     DeployState,
     DeploySummary,
@@ -46,6 +48,7 @@ from app.routes.deploy_schemas import (
     FixtureSource,
     RepoService,
     RepoServices,
+    SettingVar,
     StageOut,
 )
 from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
@@ -395,6 +398,11 @@ async def get_deploy(deploy_id: uuid.UUID, user: CurrentUser, session: SessionDe
         )
         for v in request.get("env", [])
     ]
+    planned = (state.get("target_plan") or {}).get("env")
+    if planned:
+        # Once planned, the plan's view: on a settings change it says what happens to each
+        # name (added, updated, kept, removed). Values stay on the approval card only.
+        env = [EnvVarView.model_validate({**v, "value": None}) for v in planned]
     stages = [StageOut(stage=name, **value) for name, value in (state.get("stages") or {}).items()]
     record = state.get("deploy")
     return DeployDetail(
@@ -408,6 +416,150 @@ async def get_deploy(deploy_id: uuid.UUID, user: CurrentUser, session: SessionDe
 
 
 # --- fixing env at the approval card ------------------------------------------------------
+
+
+def _live_env(state: dict[str, Any]) -> list[SettingVar]:
+    """The env names a finished deploy runs with: its approved plan's provided vars."""
+    plan = state.get("target_plan") or {}
+    return [
+        SettingVar(name=v["name"], secret=bool(v.get("secret")))
+        for v in plan.get("env", [])
+        if v.get("provided") and v.get("change") != "remove"
+    ]
+
+
+async def _settings_blocked(session: SessionDep, run: Run) -> str | None:
+    """Why this deploy's settings cannot be changed, or None."""
+    state: dict[str, Any] = dict(run.state or {})
+    if _deploy_state(run, state) != "live":
+        return "Only a live deploy's settings can be changed."
+    request = state.get("request") or {}
+    newer = await session.scalar(
+        select(Run.id)
+        .where(
+            Run.workspace_id == run.workspace_id,
+            Run.agent == "deploy",
+            Run.created_at > run.created_at,
+            Run.status.in_([RunStatus.succeeded, RunStatus.running, RunStatus.waiting_approval]),
+            Run.state["app"].astext == str(state.get("app") or ""),
+            Run.state["request"]["target_connection_id"].astext
+            == str(request.get("target_connection_id") or ""),
+        )
+        .limit(1)
+    )
+    if newer is not None:
+        return "A newer deploy of this app replaced this one; change its settings instead."
+    return None
+
+
+@router.get("/{deploy_id}/settings")
+async def deploy_settings(
+    deploy_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> DeploySettings:
+    """The env names this deploy runs with (never values), and whether they can be changed."""
+    run = await _deploy_run(session, user, deploy_id)
+    return DeploySettings(
+        env=_live_env(dict(run.state or {})), blocked=await _settings_blocked(session, run)
+    )
+
+
+@router.post(
+    "/{deploy_id}/settings",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={409: {"description": "The deploy is not live, or a newer one replaced it."}},
+)
+async def change_settings(
+    deploy_id: uuid.UUID,
+    body: DeploySettingsChange,
+    user: CurrentUser,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> DeployCreated:
+    """Change a live deploy's env vars without a rebuild: a new deploy run that skips Scout,
+    Build, and Smoke, plans the running image with the new values, and waits for approval
+    like any deploy. Values are handled like POST /deploys: encrypted in the job, never
+    echoed, never stored. Names not set or removed keep their values on the target."""
+    run = await _deploy_run(session, user, deploy_id, WorkspaceRole.approver)
+    blocked = await _settings_blocked(session, run)
+    if blocked:
+        raise HTTPException(status.HTTP_409_CONFLICT, blocked)
+    await quotas.check_can_start_run(session, run.workspace_id, settings)
+    state: dict[str, Any] = dict(run.state or {})
+    current = {v.name: v for v in _live_env(state)}
+    unknown = sorted(set(body.remove) - set(current))
+    if unknown:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"{', '.join(unknown)} is not set on this deploy, so it cannot be removed.",
+        )
+    changed = {v.name for v in body.env}
+    keep = sorted(set(current) - changed - set(body.remove))
+    source_request = dict(state.get("request") or {})
+    record_ = state.get("deployment") or {}
+    build = dict(state.get("build") or {})
+    # The image already in the registry: nothing is built or pushed (the sandbox one is gone).
+    build["image_ref"] = record_.get("image") or (state.get("target_plan") or {}).get("image")
+    request = {
+        **source_request,
+        "env": [
+            *[{"name": n, "secret": current[n].secret, "provided": True} for n in keep],
+            *[{"name": v.name, "secret": v.secret, "provided": True} for v in body.env],
+        ],
+        "settings": {
+            "from_deploy": str(run.id),
+            "keep_env": keep,
+            "keep_secret": [n for n in keep if current[n].secret],
+            "remove_env": sorted(body.remove),
+            "previous_env": sorted(current),
+        },
+        "created_by": str(user.id),
+    }
+    new_id = uuid.uuid4()
+    app = str(state.get("app") or "app")
+    target_name = (source_request.get("target") or {}).get("name") or "its target"
+    new = Run(
+        id=new_id,
+        workspace_id=run.workspace_id,
+        agent="deploy",
+        goal=f"Change settings of {app} on {target_name}",
+        status=RunStatus.queued,
+        state={
+            "deploy_id": str(new_id),
+            "request": request,
+            "phase": "start",
+            "stages": {},
+            # What the live deploy built and planned with, reused as it was.
+            "spec": state.get("spec"),
+            "draft": state.get("draft"),
+            "app": state.get("app"),
+            "commit": state.get("commit"),
+            "build": build,
+        },
+    )
+    session.add(new)
+    await session.flush()
+    # Kept secrets carry no value: the target keeps the one it has.
+    env = [
+        {"name": v.name, "value": v.value.get_secret_value(), "secret": v.secret} for v in body.env
+    ]
+    await queue.enqueue(
+        session, DEPLOY_JOB, {"run_id": str(new_id), "env": seal_env(env)}, max_attempts=1
+    )
+    record(
+        session,
+        workspace_id=run.workspace_id,
+        actor=user,
+        action="deploy.settings",
+        target_type="run",
+        target_id=new_id,
+        detail={
+            "from_deploy": str(run.id),
+            "set": sorted(changed),
+            "removed": sorted(body.remove),
+        },
+    )
+    await session.commit()
+    return DeployCreated(deploy_id=new_id, run_id=new_id)
 
 
 @router.post(

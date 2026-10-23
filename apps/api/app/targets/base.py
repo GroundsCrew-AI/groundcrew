@@ -69,6 +69,17 @@ class DeploySpec(BaseModel):
     commit: str | None = None
     # Agent targets: the service on the server this deploy updates (its `allow` lists deploy).
     target_service: str | None = None
+    # A settings change (POST /deploys/{id}/settings): the image already in the registry
+    # (`source_image` is its reference) runs again with other env values; nothing is built or
+    # pushed. `keep_env`: names whose value stays as it is on the target (secrets: Groundcrew
+    # never stores values); `remove_env`: names taken off the app. `previous_env`: the names
+    # the app had, so the plan can say what is added and what is updated.
+    config_change: bool = False
+    keep_env: list[str] = Field(default_factory=list)
+    # Which kept names are secrets (the rest are plain values).
+    keep_secret: list[str] = Field(default_factory=list)
+    remove_env: list[str] = Field(default_factory=list)
+    previous_env: list[str] = Field(default_factory=list)
 
 
 class ApplyStep(BaseModel):
@@ -178,21 +189,40 @@ MASK = "********"
 
 
 def env_views(spec: DeploySpec) -> list[EnvVarView]:
-    """The plan's env: every given var plus every required one, secrets without values."""
+    """The plan's env: every given var plus every required one, secrets without values. On a
+    settings change, also the kept and removed names, each with what happens to it."""
     given = {v.name: v for v in spec.env}
-    names = sorted(set(given) | set(spec.required_env))
+    kept, removed = set(spec.keep_env), set(spec.remove_env)
+    names = sorted(set(given) | (set(spec.required_env) - removed) | kept | removed)
+    before = set(spec.previous_env)
     views = []
     for name in names:
         var = given.get(name)
-        provided = var is not None and bool(var.value.get_secret_value())
-        secret = var.secret if var is not None else True
+        provided = (var is not None and bool(var.value.get_secret_value())) or name in kept
+        if var is not None:
+            secret = var.secret
+        elif name in kept:
+            secret = name in spec.keep_secret
+        else:
+            secret = True
+        change: Literal["add", "update", "keep", "remove"] | None = None
+        if spec.config_change:
+            if name in removed:
+                change, provided = "remove", False
+            elif name in kept:
+                change = "keep"
+            else:
+                change = "update" if name in before else "add"
         views.append(
             EnvVarView(
                 name=name,
                 secret=secret,
-                required=name in spec.required_env,
+                required=name in spec.required_env and name not in removed,
                 provided=provided,
-                value=var.value.get_secret_value() if var and provided and not secret else None,
+                value=var.value.get_secret_value()
+                if var and var.value.get_secret_value() and not secret
+                else None,
+                change=change,
             )
         )
     return views
@@ -201,11 +231,16 @@ def env_views(spec: DeploySpec) -> list[EnvVarView]:
 def common_checks(plan: TargetPlan) -> list[PreflightCheck]:
     """Preflight checks every target makes from the plan alone (image, env, port)."""
     short = (plan.source_image_id or "")[:19]
+    settings_change = any(v.change is not None for v in plan.env) or not any(
+        s.action == "push" for s in plan.steps
+    )
     image = PreflightCheck(
         name="image",
         status="pass" if plan.image_tested else "fail",
         detail=(
-            f"Built and smoke-tested ({short}); pushed after approval"
+            f"The image running now ({short}); nothing is built or pushed"
+            if settings_change and plan.image_tested
+            else f"Built and smoke-tested ({short}); pushed after approval"
             if plan.image_tested
             else f"The image ({short}) did not pass the smoke test in the sandbox"
         ),

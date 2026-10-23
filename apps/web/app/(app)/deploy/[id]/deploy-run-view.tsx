@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { toast } from "sonner";
 
 import { DeployStatePill } from "@/components/deploy/deploy-list";
+import { ChangeSettingsButton } from "@/components/deploy/settings-dialog";
 import { StageStrip } from "@/components/deploy/stage-strip";
 import { Timeline } from "@/components/runs/timeline";
 import { statusLabel } from "@/components/runs/badges";
@@ -172,6 +173,7 @@ export function DeployRunView({ deployId }: { deployId: string }) {
         actions={
           <>
             <StreamNote state={stream} />
+            {status === "live" && <ChangeSettingsButton deployId={d.id} />}
             <Link href={`/runs/${run.id}`} className="text-[12.5px] text-muted-foreground hover:text-foreground">
               Open as run
             </Link>

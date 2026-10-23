@@ -15,6 +15,7 @@ const TOC = [
   { id: "stages", title: "What happens, stage by stage" },
   { id: "plan", title: "Reviewing the plan" },
   { id: "env", title: "Env vars and secrets" },
+  { id: "settings", title: "Change settings without a rebuild" },
   { id: "targets", title: "What gets created" },
   { id: "verify", title: "Verify and rollback" },
   { id: "builds", title: "Isolated builds" },
@@ -134,6 +135,20 @@ export default function DeploysPage() {
             run steps, approvals, or logs.
           </p>
         </Callout>
+      </DocSection>
+
+      <DocSection id="settings" title="Change settings without a rebuild">
+        <p>
+          To change env vars on a live deploy, open it and choose <strong>Change settings</strong>. Keep each variable,
+          give it a new value, or remove it, and add new ones. Nothing is rebuilt: the image running now runs again with
+          the new values, so it takes about a minute and no model is used.
+        </p>
+        <p>
+          The approval card marks each variable added, updated, unchanged, or removed, and the change waits for your
+          approval like any deploy. Groundcrew never stores values, so the ones you keep stay exactly as they are on the
+          target. Only the newest deploy of an app can be changed. Removing variables on a server needs agent 0.6.1 or
+          later.
+        </p>
       </DocSection>
 
       <DocSection id="targets" title="What gets created">

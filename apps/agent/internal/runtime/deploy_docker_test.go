@@ -74,6 +74,16 @@ func TestDeployOnARealDockerEngine(t *testing.T) {
 	if env := docker("inspect", "-f", "{{range .Config.Env}}{{.}} {{end}}", app); !strings.Contains(env, "A=2") || strings.Contains(env, "A=1") {
 		t.Fatalf("env %q", env)
 	}
+	// A settings change takes a name off and keeps the others.
+	if _, err := d.Deploy(ctx, s, DeployRequest{Image: good, Port: hostPort, Env: map[string]string{"B": "1"}}); err != nil {
+		t.Fatalf("add B: %v", err)
+	}
+	if _, err := d.Deploy(ctx, s, DeployRequest{Image: good, Port: hostPort, Unset: []string{"A"}}); err != nil {
+		t.Fatalf("unset A: %v", err)
+	}
+	if env := docker("inspect", "-f", "{{range .Config.Env}}{{.}} {{end}}", app); strings.Contains(env, "A=") || !strings.Contains(env, "B=1") {
+		t.Fatalf("after unset %q", env)
+	}
 	// The app's port stays published (the same port on the host).
 	if got := docker("port", app, fmt.Sprint(hostPort)); !strings.HasSuffix(got, fmt.Sprintf(":%d", hostPort)) {
 		t.Fatalf("port lost: %q", got)

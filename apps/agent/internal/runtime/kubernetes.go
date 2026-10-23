@@ -704,8 +704,13 @@ func (k *Kubernetes) Deploy(ctx context.Context, s config.Service, req DeployReq
 		return DeployResult{}, err
 	}
 	container := map[string]any{"name": c.Name, "image": req.Image}
-	if env := kubeEnv(req.Env); len(env) > 0 {
-		container["env"] = env // merged by name: other values stay
+	env := make([]map[string]string, 0, len(req.Env)+len(req.Unset))
+	env = append(env, kubeEnv(req.Env)...) // merged by name: other values stay
+	for _, name := range req.Unset {
+		env = append(env, map[string]string{"name": name, "$patch": "delete"})
+	}
+	if len(env) > 0 {
+		container["env"] = env
 	}
 	podSpec := map[string]any{"containers": []map[string]any{container}}
 	if pullSecret != "" {

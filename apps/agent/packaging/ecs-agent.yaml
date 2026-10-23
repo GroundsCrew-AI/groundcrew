@@ -15,7 +15,7 @@ Parameters:
     Default: https://api.groundkrew.com
   AgentImage:
     Type: String
-    Default: groundkrew.com/public/groundcrew-agent:0.6.0
+    Default: groundkrew.com/public/groundcrew-agent:0.6.1
     Description: The agent's image (the install dialog fills in the current version).
   ClusterName:
     Type: String

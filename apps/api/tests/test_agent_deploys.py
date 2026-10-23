@@ -273,3 +273,33 @@ async def test_an_agent_refreshes_its_pull_login(
         client, sf, await _member(sf, 8307, "bob"), allow=["restart"]
     )
     assert (await watcher.post("/agent/v1/registry-login", {})).status_code == 401
+
+
+async def test_removing_env_needs_an_agent_that_can(
+    client: httpx.AsyncClient, session_factory: SessionFactory
+) -> None:
+    """A settings change that takes a var off: agents before 0.6.1 cannot, so preflight says so
+    instead of leaving the var in place."""
+    from app.targets.agent import UNSET_SINCE
+
+    sf = session_factory
+    alice = await _member(sf, 8308, "alice")
+    agent, conn_id = await _agent_with_services(client, sf, alice, allow=["deploy"])
+    await agent.post("/agent/v1/events", {"states": [state()], "events": []})
+    await agent.post("/agent/v1/heartbeat", {"version": "0.6.0", "uptime_seconds": 1})
+    conn = await _conn(sf, conn_id)
+    target = AgentTarget(_settings(**REGISTRY), None, sf, conn)  # type: ignore[arg-type]
+    change = _spec(conn, uuid.uuid4()).model_copy(
+        update={
+            "config_change": True,
+            "remove_env": ["LOG_LEVEL"],
+            "previous_env": ["DATABASE_URL", "LOG_LEVEL"],
+        }
+    )
+    plan = await target.plan(change)
+    assert plan.steps[0].action == "unchanged"
+    refused = [c for c in await target.preflight(plan) if c.status == "fail"]
+    assert refused and UNSET_SINCE in refused[0].detail and "LOG_LEVEL" in refused[0].detail
+    await agent.post("/agent/v1/heartbeat", {"version": UNSET_SINCE, "uptime_seconds": 2})
+    target = AgentTarget(_settings(**REGISTRY), None, sf, await _conn(sf, conn_id))  # type: ignore[arg-type]
+    assert not [c for c in await target.preflight(plan) if c.status == "fail"]

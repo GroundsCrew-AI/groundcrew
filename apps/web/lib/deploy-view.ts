@@ -126,7 +126,18 @@ export function planBlocked(plan: DeployPlan): boolean {
 }
 
 /** Masked display value for an env var on the approval card. */
+/** A settings change's verb for a var on the approval card ("" on a full deploy). */
+export const ENV_CHANGE: Record<NonNullable<DeployPlan["env"][number]["change"]>, string> = {
+  add: "added",
+  update: "updated",
+  keep: "kept",
+  remove: "removed",
+};
+
 export function envDisplay(v: DeployPlan["env"][number]): string {
+  // A settings change: the value stays as it is on the target, or the var goes.
+  if (v.change === "remove") return "removed";
+  if (v.change === "keep") return "unchanged";
   if (v.secret) return v.provided ? "********" : "not set";
   return v.provided ? (v.value ?? "") : "not set";
 }

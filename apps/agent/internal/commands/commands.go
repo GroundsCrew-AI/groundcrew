@@ -251,6 +251,13 @@ func (r *Runner) deploy(ctx context.Context, cmd Command, s config.Service, rt r
 	for _, e := range secrets.Env {
 		env[e.Name] = e.Value
 	}
+	// A settings change: names to take off the service (comma-separated).
+	var unset []string
+	for _, name := range strings.Split(cmd.Params["unset"], ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			unset = append(unset, name)
+		}
+	}
 	port, _ := strconv.Atoi(cmd.Params["port"])
 	var healthy func(context.Context) error
 	if s.Health != nil {
@@ -259,7 +266,7 @@ func (r *Runner) deploy(ctx context.Context, cmd Command, s config.Service, rt r
 		}
 	}
 	res, err := d.Deploy(ctx, s, runtime.DeployRequest{
-		Image: cmd.Params["image"], Port: port, Env: env, Login: secrets.Registry,
+		Image: cmd.Params["image"], Port: port, Env: env, Unset: unset, Login: secrets.Registry,
 		HealthPath: cmd.Params["health_path"], Healthy: healthy,
 	})
 	if err != nil {

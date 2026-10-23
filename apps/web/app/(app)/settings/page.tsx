@@ -4,6 +4,7 @@ import { Lock, Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { AccessSection } from "@/components/settings/access-section";
+import { AssistantSection } from "@/components/settings/assistant-section";
 import { AccountSection } from "@/components/settings/account-section";
 import { AuditSection } from "@/components/settings/audit-section";
 import { UsageSection } from "@/components/settings/usage-section";
@@ -179,6 +180,14 @@ export default function SettingsPage() {
           description="For each connection: what it reads, and what it may change after an approval."
         >
           <AccessSection workspaceId={data.id} />
+        </SettingsSection>
+
+        <SettingsSection
+          id="settings-assistants"
+          title="Assistant access (MCP)"
+          description="Tokens for Claude Code, Cursor, and other assistants to read this workspace."
+        >
+          <AssistantSection workspaceId={data.id} canManage={owner} />
         </SettingsSection>
 
         <SettingsSection

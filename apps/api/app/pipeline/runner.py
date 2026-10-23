@@ -554,8 +554,32 @@ class _Job:
 
     # --- start: scout, build, smoke, plan, preflight, approval --------------------------------
 
+    @property
+    def settings_change(self) -> dict[str, Any] | None:
+        """A settings change's request (POST /deploys/{id}/settings), else None."""
+        settings = self.request.get("settings")
+        return dict(settings) if isinstance(settings, dict) else None
+
+    async def settings_start(self) -> None:
+        """A settings change: the live deploy's image, spec, and plan draft are in runs.state
+        already; nothing is read, built, or smoke-tested, and no model is asked."""
+        skipped: list[tuple[DeployStage, StageAgent]] = [
+            ("scout", "scout"),
+            ("build", "builder"),
+            ("smoke", "builder"),
+        ]
+        for stage, agent in skipped:
+            started = await self.stage_start(stage, agent)
+            await self.stage_end(
+                stage, agent, started, "skipped", "Settings change: the running image is reused"
+            )
+        await self.plan_and_ask(replan=False)
+
     async def from_start(self) -> None:
         request = self.request
+        if self.settings_change is not None:
+            await self.settings_start()
+            return
         source_conn: Connection | None = None
         if request["source"].get("connection_id"):
             source_conn = await self.session.get(
@@ -743,7 +767,9 @@ class _Job:
         request = self.request
         env = await self.env_values()
         target = await self.target()
-        if not replan:
+        if not replan and self.settings_change is not None:
+            started = await self.stage_start("plan", "deployer")
+        elif not replan:
             started = await self.stage_start("plan", "deployer")
             draft, note = await Deployer(self.deps.llm).draft(
                 spec,
@@ -774,6 +800,7 @@ class _Job:
             repo=request["source"]["repo"],
             commit=self.state.get("commit"),
             target_service=(request.get("target") or {}).get("service"),
+            settings=self.settings_change,
         )
         plan = await target.plan(deploy)
         if not replan:
@@ -791,6 +818,8 @@ class _Job:
         summary = (
             "Blocked: " + "; ".join(c.detail for c in failing)
             if failing
+            else "The running image; env, port, and names checked"
+            if self.settings_change is not None
             else "Image built and smoke-tested; env, port, and names checked"
         )
         await self.stage_end(
@@ -829,7 +858,9 @@ class _Job:
             agent="deployer",
             tool_name=TARGET_APPLY,
             approval_id=approval.id,
-            output_summary=f"Waiting for approval to deploy {plan.app}",
+            output_summary=f"Waiting for approval to change the settings of {plan.app}"
+            if self.settings_change is not None
+            else f"Waiting for approval to deploy {plan.app}",
             data=card,
         )
         await self.pause(AWAIT_PLAN)
@@ -879,6 +910,7 @@ class _Job:
             repo=request["source"]["repo"],
             commit=self.state.get("commit"),
             target_service=(request.get("target") or {}).get("service"),
+            settings=self.settings_change,
         )
 
     async def apply_and_verify(self, approval: Approval) -> None:

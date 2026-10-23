@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -549,7 +550,7 @@ func (e *ECS) Deploy(ctx context.Context, s config.Service, req DeployRequest) (
 	}
 	next, err := e.register(ctx, td, tags, ref.Container, func(c map[string]any) {
 		c["image"] = req.Image
-		c["environment"] = ecsEnv(c["environment"], req.Env)
+		c["environment"] = ecsEnv(c["environment"], req.Env, req.Unset)
 		if creds != "" {
 			c["repositoryCredentials"] = map[string]any{"credentialsParameter": creds}
 		}
@@ -561,12 +562,12 @@ func (e *ECS) Deploy(ctx context.Context, s config.Service, req DeployRequest) (
 }
 
 // ecsEnv sets `env` on a task definition's environment list, keeping the other values.
-func ecsEnv(list any, env map[string]string) []any {
+func ecsEnv(list any, env map[string]string, unset []string) []any {
 	out := []any{}
 	have, _ := list.([]any)
 	for _, item := range have {
 		m, _ := item.(map[string]any)
-		if _, replaced := env[str(m["name"])]; !replaced {
+		if _, replaced := env[str(m["name"])]; !replaced && !slices.Contains(unset, str(m["name"])) {
 			out = append(out, item)
 		}
 	}

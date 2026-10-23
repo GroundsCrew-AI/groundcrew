@@ -20,6 +20,7 @@ rollout undo`); rolling back a first deploy deletes the namespace. Both need an 
 """
 
 import asyncio
+import base64
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -90,6 +91,10 @@ KINDS: dict[str, tuple[str, str]] = {
     "ingresses": ("networking.k8s.io/v1", "Ingress"),
     "pods": ("v1", "Pod"),
 }
+
+
+# A kept value in a rendered plan (the real one is read from the cluster at apply).
+KEPT = "(unchanged)"
 
 
 class KubeApi(Protocol):
@@ -479,14 +484,47 @@ class K8sTarget:
 
     # --- plan -----------------------------------------------------------------------------
 
+    async def _kept_env(self, plan: TargetPlan, ns: str) -> dict[str, str]:
+        """The values the app has now for the names a settings change keeps: secrets from its
+        Secret, plain values from its Deployment (Groundcrew stores no values of its own)."""
+        names = {v.name for v in plan.env if v.change == "keep"}
+        n = self._names(plan.app)
+        out: dict[str, str] = {}
+        secret = await self.api.get("secrets", n["secret"], ns) or {}
+        # The API returns values base64-encoded in data (stringData only as written).
+        for name, raw in (secret.get("data") or {}).items():
+            if name in names:
+                out[name] = base64.b64decode(raw).decode()
+        for name, value in (secret.get("stringData") or {}).items():
+            if name in names:
+                out[name] = str(value)
+        deployment = await self.api.get("deployments", n["app"], ns) or {}
+        containers = (
+            deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+        )
+        for c in containers[:1]:
+            for e in c.get("env") or []:
+                if e.get("name") in names and "value" in e:
+                    out[e["name"]] = str(e["value"])
+        missing = sorted(names - set(out))
+        if missing:
+            raise TargetError(
+                f"Kept settings are not on the cluster any more: {', '.join(missing)}. Change "
+                "the settings again and give them values."
+            )
+        return out
+
     def _manifests(
         self,
         spec_like: TargetPlan,
         secrets: dict[str, str] | None,
         pull_secret: str | None = None,
+        kept: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """The objects apply creates, in order. `secrets` None renders them masked, and so
-        does `pull_secret` (the imagePullSecret's .dockerconfigjson) None."""
+        does `pull_secret` (the imagePullSecret's .dockerconfigjson) None. On a settings
+        change, `kept` holds the values the app has now for the names it keeps (read from the
+        cluster at apply; None renders them as "(unchanged)")."""
         n = self._names(spec_like.app)
         labels = self._labels(spec_like.run_id, spec_like.app)
         ns = n["namespace"]
@@ -502,6 +540,9 @@ class K8sTarget:
                         "valueFrom": {"secretKeyRef": {"name": n["secret"], "key": v.name}},
                     }
                 )
+            elif v.change == "keep":
+                value = KEPT if kept is None else kept.get(v.name, "")
+                container_env.append({"name": v.name, "value": value})
             else:
                 container_env.append({"name": v.name, "value": v.value or ""})
         probe: dict[str, Any] = (
@@ -531,7 +572,10 @@ class K8sTarget:
             },
         ]
         if secret_names:
-            data = {name: (MASK if secrets is None else secrets[name]) for name in secret_names}
+            data = {
+                name: MASK if secrets is None else secrets.get(name, (kept or {}).get(name, ""))
+                for name in secret_names
+            }
             objects.append(
                 {
                     "apiVersion": "v1",
@@ -696,6 +740,13 @@ class K8sTarget:
             )
         steps = [
             ApplyStep(
+                kind="image",
+                name=image,
+                action="unchanged",
+                detail="the image running now; nothing is built or pushed",
+            )
+            if spec.config_change
+            else ApplyStep(
                 kind="image",
                 name=image,
                 action="push",
@@ -867,15 +918,21 @@ class K8sTarget:
                 "deploy again."
             )
         # 1. Push: the first thing that leaves the sandbox, only now that the plan is approved.
+        # A settings change runs the image already in the registry: nothing to push.
         fresh: RegistryLogin | None = None
-        if self.deploy is not None and self.deploy.uses_ecr:
+        if spec.config_change:
+            if self.deploy is not None and self.deploy.uses_ecr:
+                fresh = await self._ecr_login()
+        elif self.deploy is not None and self.deploy.uses_ecr:
             # ECR: the repository, then a login fetched now (tokens last 12 hours).
             await self._ensure_ecr_repository(self._repository(n["app"]), plan.run_id)
             fresh = await self._ecr_login()
             target = PushTarget(image=plan.image, login=fresh)
         else:
             target = self._push_target(n["app"], spec.tag)
-        await sandbox.push(spec.source_image, target)
+        if not spec.config_change:
+            await sandbox.push(spec.source_image, target)
+        kept = await self._kept_env(plan, ns) if spec.config_change else None
         # Plain values are in the plan already (check_spec_matches); secrets come from the spec.
         # With ECR the pull secret is written again with this deploy's fresh token.
         pull = (
@@ -883,7 +940,7 @@ class K8sTarget:
             if self.deploy is not None and self.deploy.uses_pull_secret
             else None
         )
-        rendered = self._manifests(plan, secret_values(spec), pull)
+        rendered = self._manifests(plan, secret_values(spec), pull, kept)
         for obj in rendered:
             kind = {"Namespace": "namespaces", "RoleBinding": "rolebindings"}.get(obj["kind"])
             name = obj["metadata"]["name"]

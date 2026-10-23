@@ -6,7 +6,7 @@
 
 # The agent version groundkrew.com/agent/ serves (apps/agent/VERSION; a test keeps them equal).
 # An agent reporting an older one is shown as out of date.
-AGENT_VERSION = "0.6.0"
+AGENT_VERSION = "0.6.1"
 
 
 def version_tuple(version: str | None) -> tuple[int, ...] | None:

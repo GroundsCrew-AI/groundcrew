@@ -257,6 +257,27 @@ class Connection(TimestampMixin, Base):
     last_discovery: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
 
 
+class WorkspaceToken(TimestampMixin, Base):
+    """A workspace access token for assistants (Groundcrew's MCP server, app/mcp_server.py).
+    It acts as the member who made it, inside this workspace only, with at most its role:
+    `viewer` reads, `approver` may also start work (never approve). Only its SHA-256 is kept."""
+
+    __tablename__ = "workspace_tokens"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(100))
+    role: Mapped[str] = mapped_column(String(16))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # The first characters, to tell tokens apart in Settings (gct_ab12cd…).
+    prefix: Mapped[str] = mapped_column(String(16))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Agent(TimestampMixin, Base):
     """A Groundcrew agent on a host: one per `agent` connection. It enrolls with a one-time join
     token (only its SHA-256 is kept) and its own Ed25519 public key; every later request is

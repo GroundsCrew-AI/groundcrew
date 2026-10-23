@@ -92,3 +92,55 @@ func TestKubernetesOnALiveCluster(t *testing.T) {
 		t.Fatalf("read outside its namespaces: %+v", st)
 	}
 }
+
+// A settings change on a live cluster: one name updated, one taken off, the rest kept.
+// GC_KIND_UNSET_TEST=1 with GC_KUBE_API, GC_KUBE_TOKEN_FILE, GC_KUBE_CA, GC_KUBE_IMAGE; namespace
+// gc-unset holds Deployment web with env A=1, B=2.
+func TestKubernetesUnsetOnALiveCluster(t *testing.T) {
+	if os.Getenv("GC_KIND_UNSET_TEST") != "1" {
+		t.Skip("set GC_KIND_UNSET_TEST=1 to run against a live cluster")
+	}
+	ca, err := os.ReadFile(os.Getenv("GC_KUBE_CA"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(ca)
+	k := &Kubernetes{
+		API: os.Getenv("GC_KUBE_API"),
+		Token: func() (string, error) {
+			b, err := os.ReadFile(os.Getenv("GC_KUBE_TOKEN_FILE"))
+			return strings.TrimSpace(string(b)), err
+		},
+		HTTP:    &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}},
+		Rollout: 90 * time.Second,
+	}
+	ctx := context.Background()
+	web := config.Service{Name: "web", Runtime: config.Kubernetes,
+		Kubernetes: &config.KubernetesRef{Namespace: "gc-unset", Deployment: "web"}}
+	img := os.Getenv("GC_KUBE_IMAGE") + ":good"
+	if _, err := k.Deploy(ctx, web, DeployRequest{Image: img, Env: map[string]string{"B": "3", "C": "4"}, Unset: []string{"A"}}); err != nil {
+		t.Fatalf("settings change: %v", err)
+	}
+	var d struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Env []struct{ Name, Value string } `json:"env"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := k.get(ctx, "/apis/apps/v1/namespaces/gc-unset/deployments/web", &d); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range d.Spec.Template.Spec.Containers[0].Env {
+		got[e.Name] = e.Value
+	}
+	if len(got) != 2 || got["B"] != "3" || got["C"] != "4" {
+		t.Fatalf("env after the change: %v", got)
+	}
+}

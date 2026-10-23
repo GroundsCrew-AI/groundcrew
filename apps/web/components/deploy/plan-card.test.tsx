@@ -24,7 +24,7 @@ function render(ui: ReactElement) {
 
 const missingEnv = () =>
   plan({
-    env: [{ name: "DATABASE_URL", secret: true, required: true, provided: false, value: null }],
+    env: [{ name: "DATABASE_URL", secret: true, required: true, provided: false, value: null, change: null }],
     preflight: [{ name: "env", status: "fail", detail: "Missing required: DATABASE_URL", overridden: false }],
   });
 
@@ -41,6 +41,26 @@ describe("DeployPlanCard", () => {
     await userEvent.click(screen.getByRole("button", { name: /show the rendered manifests/i }));
     expect(screen.getByText(/DATABASE_URL: "\*\*\*\*\*\*\*\*"/)).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("hunter2");
+  });
+
+  it("says what a settings change does to each var", () => {
+    const change = plan({
+      env: [
+        { name: "API_TOKEN", secret: true, required: false, provided: true, value: null, change: "add" },
+        { name: "DATABASE_URL", secret: true, required: true, provided: true, value: null, change: "keep" },
+        { name: "FEATURE", secret: false, required: false, provided: false, value: null, change: "remove" },
+        { name: "LOG_LEVEL", secret: false, required: false, provided: true, value: "debug", change: "update" },
+      ],
+    });
+    render(<DeployPlanCard plan={change} approval={pending} onDecide={vi.fn()} deciding={null} />);
+    const row = (name: string) => screen.getByText(name).closest("tr")!;
+    expect(row("API_TOKEN")).toHaveTextContent("added");
+    expect(row("API_TOKEN")).toHaveTextContent("********");
+    expect(row("DATABASE_URL")).toHaveTextContent("unchanged");
+    expect(row("FEATURE")).toHaveTextContent("removed");
+    expect(row("FEATURE")).not.toHaveTextContent("not set");
+    expect(row("LOG_LEVEL")).toHaveTextContent("updated");
+    expect(row("LOG_LEVEL")).toHaveTextContent("debug");
   });
 
   it("lists the image push as the first apply step", () => {

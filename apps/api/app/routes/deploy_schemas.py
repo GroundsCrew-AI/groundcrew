@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from app.db.models import RunStatus, StopReason
 from app.pipeline.events import DeployPlan, DeployStage, EnvVarView, TargetKind
@@ -113,6 +113,57 @@ class DeployEnvUpdate(BaseModel):
     @classmethod
     def _unique_names(cls, env: list[EnvVarIn]) -> list[EnvVarIn]:
         return _unique(env)
+
+
+class SettingVar(BaseModel):
+    name: str
+    secret: bool
+
+
+class DeploySettings(BaseModel):
+    """GET /deploys/{id}/settings: the env names a live deploy runs with. Groundcrew never
+    stores values, so none come back; a change sends only what it sets or removes."""
+
+    env: list[SettingVar]
+    # Why this deploy's settings cannot be changed (not live, or a newer deploy replaced it).
+    blocked: str | None = None
+
+
+class DeploySettingsChange(BaseModel):
+    """POST /deploys/{id}/settings: a settings change. Nothing is rebuilt: the running image
+    runs again with these env values, after the same plan approval as a deploy. Every name
+    not set or removed keeps its value on the target."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Added or updated, each with its value.
+    env: list[EnvVarIn] = Field(default_factory=list, max_length=MAX_ENV_VARS)
+    # Taken off the app.
+    remove: list[str] = Field(default_factory=list, max_length=MAX_ENV_VARS)
+
+    @field_validator("env")
+    @classmethod
+    def _unique_names(cls, env: list[EnvVarIn]) -> list[EnvVarIn]:
+        for var in env:
+            if not var.value.get_secret_value():
+                raise ValueError(f"{var.name} needs a value (to take it off the app, remove it)")
+        return _unique(env)
+
+    @field_validator("remove")
+    @classmethod
+    def _names(cls, remove: list[str]) -> list[str]:
+        if len(set(remove)) != len(remove):
+            raise ValueError("a name is removed twice")
+        return remove
+
+    @model_validator(mode="after")
+    def _a_change(self) -> "DeploySettingsChange":
+        both = {v.name for v in self.env} & set(self.remove)
+        if both:
+            raise ValueError(f"{', '.join(sorted(both))} is both set and removed")
+        if not self.env and not self.remove:
+            raise ValueError("nothing to change")
+        return self
 
 
 class DeployEnvUpdated(BaseModel):

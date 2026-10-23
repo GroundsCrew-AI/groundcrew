@@ -27,6 +27,7 @@ export const DOCS_GROUPS: DocsGroup[] = [
       { href: "/docs/deploys", title: "Deploys" },
       { href: "/docs/incidents", title: "Incidents and fixes" },
       { href: "/docs/notifications", title: "Notifications" },
+      { href: "/docs/assistants", title: "Assistants (MCP)" },
     ],
   },
   {

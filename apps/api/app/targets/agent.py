@@ -45,7 +45,7 @@ from app.policy.actions import (
     ApprovedAction,
     consume_approved_action,
 )
-from app.remote_agents import commands
+from app.remote_agents import commands, outdated
 from app.remote_agents import inventory as inv
 from app.remote_agents.signals import RUNNING, ServiceState, describe
 from app.sandbox.base import PushTarget, RegistryLogin, Sandbox, SandboxError
@@ -74,6 +74,10 @@ _APP = re.compile(r"[^a-z0-9._-]+")
 def own_registry(conn: Connection) -> K8sDeploySettings | None:
     """The agent connection's own registry, or None for the Groundcrew registry."""
     return K8sDeploySettings.from_config(conn.config) if conn.kind == "agent" else None
+
+
+# The first agent that can take env vars off a container (the deploy command's `unset`).
+UNSET_SINCE = "0.6.1"
 
 
 def deployable_services(conn: Connection) -> list[str]:
@@ -281,7 +285,14 @@ class AgentTarget:
                 f"host, or the next free port above it if {spec.port} is in use",
             )
         steps = [
-            ApplyStep(kind="image", name=image, action="push", detail=f"to the {where}"),
+            ApplyStep(
+                kind="image",
+                name=image,
+                action="unchanged",
+                detail="the image running now; nothing is built or pushed",
+            )
+            if spec.config_change
+            else ApplyStep(kind="image", name=image, action="push", detail=f"to the {where}"),
             ApplyStep(
                 kind=kind,
                 name=f"{host}/{service}",
@@ -343,6 +354,17 @@ class AgentTarget:
                     "list in /etc/groundcrew-agent/agent.yaml and restart the agent.",
                 )
             )
+        removing = [v.name for v in plan.env if v.change == "remove"]
+        if removing and outdated(agent.version, UNSET_SINCE):
+            checks.append(
+                PreflightCheck(
+                    name="env",
+                    status="fail",
+                    detail=f"Removing env vars needs agent {UNSET_SINCE} or later; the agent on "
+                    f"{host} is {agent.version or 'older'}. Upgrade it, or keep "
+                    f"{', '.join(removing)}.",
+                )
+            )
         state = self._state(agent, service)
         if state is not None and state.found and state.state not in RUNNING:
             checks.append(
@@ -369,12 +391,13 @@ class AgentTarget:
         agent = await self._agent()
         repo, tag = self._repository(plan.app), spec.tag
         try:
-            # 1. The push: nothing left the sandbox before approval.
-            if self.own is None:
+            # 1. The push: nothing left the sandbox before approval. A settings change runs
+            # the image already in the registry.
+            if not spec.config_change and self.own is None:
                 await sandbox.push_to_groundcrew(
                     spec.source_image, str(self.settings.registry_internal_url), repo, tag
                 )
-            else:
+            elif not spec.config_change and self.own is not None:
                 if self.own.uses_ecr:
                     await self._ensure_ecr_repository(repo, plan.run_id)
                 login = await self._ecr_login() if self.own.uses_ecr else self.own.login()
@@ -395,6 +418,9 @@ class AgentTarget:
                 "image": plan.image,
                 "port": str(plan.port),
                 "health_path": plan.health_path or "",
+                # A settings change: names to take off the container (agent 0.6.1+). Values
+                # it keeps are simply not sent; the container has them already.
+                "unset": ",".join(spec.remove_env),
             },
             secrets={"registry": await self.pull_login(), "env": env},
         )

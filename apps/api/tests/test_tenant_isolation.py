@@ -305,6 +305,31 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         lambda t: f"/deploys/{t.deploy}/env",
         lambda t: {"approval_id": str(t.approval)},
     ),
+    ("GET", "/deploys/{deploy_id}/settings"): (
+        "GET",
+        lambda t: f"/deploys/{t.deploy}/settings",
+        _none,
+    ),
+    ("POST", "/deploys/{deploy_id}/settings"): (
+        "POST",
+        lambda t: f"/deploys/{t.deploy}/settings",
+        lambda t: {"env": [{"name": "A", "value": "1"}]},
+    ),
+    ("GET", "/workspaces/{workspace_id}/tokens"): (
+        "GET",
+        lambda t: f"/workspaces/{t.workspace}/tokens",
+        _none,
+    ),
+    ("POST", "/workspaces/{workspace_id}/tokens"): (
+        "POST",
+        lambda t: f"/workspaces/{t.workspace}/tokens",
+        lambda t: {"name": "intruder"},
+    ),
+    ("DELETE", "/workspaces/{workspace_id}/tokens/{token_id}"): (
+        "DELETE",
+        lambda t: f"/workspaces/{t.workspace}/tokens/{uuid.uuid4()}",
+        _none,
+    ),
     ("GET", "/incidents"): ("GET", lambda t: f"/incidents?workspace_id={t.workspace}", _none),
     ("POST", "/incidents"): (
         "POST",

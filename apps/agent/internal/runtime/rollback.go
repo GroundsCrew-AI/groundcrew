@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -31,11 +32,11 @@ const rollbackSettle = 45 * time.Second
 // `ref` ("nginx:1.27") names the image when it still points at `image`, so the
 // container shows its name rather than a bare id.
 func (d *Docker) Rollback(ctx context.Context, s config.Service, image, ref string, healthy func(context.Context) error) error {
-	return d.recreate(ctx, s, image, ref, nil, healthy)
+	return d.recreate(ctx, s, image, ref, nil, nil, healthy)
 }
 
 // recreate is Rollback with `env` (NAME -> value) set on top of the container's own.
-func (d *Docker) recreate(ctx context.Context, s config.Service, image, ref string, env map[string]string, healthy func(context.Context) error) error {
+func (d *Docker) recreate(ctx context.Context, s config.Service, image, ref string, env map[string]string, unset []string, healthy func(context.Context) error) error {
 	c, err := d.container(ctx, s)
 	if err != nil {
 		return err
@@ -66,8 +67,8 @@ func (d *Docker) recreate(ctx context.Context, s config.Service, image, ref stri
 	if err != nil {
 		return err
 	}
-	if len(env) > 0 {
-		body["Env"] = withEnv(body["Env"], env)
+	if len(env) > 0 || len(unset) > 0 {
+		body["Env"] = withEnv(body["Env"], env, unset)
 	}
 	name := strings.TrimPrefix(c.Name, "/")
 	parked := fmt.Sprintf("%s-gc-previous-%d", name, time.Now().Unix())
@@ -390,12 +391,12 @@ func withoutImageDefaults(body, imageCfg map[string]any) {
 }
 
 // withEnv sets `env` over a container's NAME=value list (same names replaced).
-func withEnv(list any, env map[string]string) []any {
+func withEnv(list any, env map[string]string, unset []string) []any {
 	out := []any{}
 	have, _ := list.([]any)
 	for _, e := range have {
 		name, _, _ := strings.Cut(fmt.Sprint(e), "=")
-		if _, replaced := env[name]; !replaced {
+		if _, replaced := env[name]; !replaced && !slices.Contains(unset, name) {
 			out = append(out, e)
 		}
 	}

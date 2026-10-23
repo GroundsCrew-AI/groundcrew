@@ -99,7 +99,7 @@ describe("planBlocked and envDisplay", () => {
   });
 
   it("never shows a secret value", () => {
-    const secret = { name: "DB", secret: true, required: true, provided: true, value: "leak" };
+    const secret = { name: "DB", secret: true, required: true, provided: true, value: "leak", change: null };
     expect(envDisplay(secret)).toBe("********");
     expect(envDisplay({ ...secret, provided: false })).toBe("not set");
     expect(envDisplay({ ...secret, secret: false, value: "plain" })).toBe("plain");

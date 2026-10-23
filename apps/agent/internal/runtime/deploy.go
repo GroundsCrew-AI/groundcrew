@@ -32,8 +32,10 @@ type DeployRequest struct {
 	Image string
 	// The app's port in the container. A new container publishes it on the same host port
 	// when that is free, else on the next free one above it.
-	Port  int
-	Env   map[string]string
+	Port int
+	Env  map[string]string
+	// Unset names env vars to take off the service (a settings change); the others stay.
+	Unset []string
 	Login *RegistryLogin
 	// HealthPath is checked on the host port the app is published on (empty: none).
 	HealthPath string
@@ -75,7 +77,7 @@ func (d *Docker) Deploy(ctx context.Context, s config.Service, req DeployRequest
 	if err == nil {
 		// The container keeps its ports; its health is checked where they are published.
 		healthy := healthCheck(req, hostPortOf(c, req.Port))
-		return DeployResult{}, d.recreate(ctx, s, img.ID, req.Image, req.Env, healthy)
+		return DeployResult{}, d.recreate(ctx, s, img.ID, req.Image, req.Env, req.Unset, healthy)
 	}
 	if s.Runtime != config.Docker || !strings.HasPrefix(err.Error(), "no container named") {
 		return DeployResult{}, err
@@ -121,7 +123,7 @@ func (d *Docker) createNew(ctx context.Context, s config.Service, req DeployRequ
 		}
 		body := map[string]any{
 			"Image":        req.Image,
-			"Env":          withEnv(nil, req.Env),
+			"Env":          withEnv(nil, req.Env, nil),
 			"ExposedPorts": map[string]any{port: map[string]any{}},
 			"Labels":       map[string]any{"io.groundcrew.deployed": "true"},
 			"HostConfig": map[string]any{
