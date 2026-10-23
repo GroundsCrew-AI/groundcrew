@@ -39,3 +39,10 @@ resource "aws_iam_instance_profile" "platform" {
   name = "groundcrew-platform"
   role = aws_iam_role.platform.name
 }
+
+# Systems Manager: an operator can reach the host without SSH when the admin address changed
+# (Session Manager, Run Command). Ubuntu's AMI runs the SSM agent; this lets it register.
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.platform.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
