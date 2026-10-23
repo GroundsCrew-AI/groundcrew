@@ -205,6 +205,103 @@
         "title": "ActionResult",
         "type": "object"
       },
+      "ActivityDay": {
+        "properties": {
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "incidents_opened": {
+            "title": "Incidents Opened",
+            "type": "integer"
+          },
+          "incidents_resolved": {
+            "title": "Incidents Resolved",
+            "type": "integer"
+          },
+          "runs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Runs",
+            "type": "object"
+          },
+          "succeeded": {
+            "title": "Succeeded",
+            "type": "integer"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          },
+          "usd": {
+            "title": "Usd",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "runs",
+          "succeeded",
+          "failed",
+          "usd",
+          "tokens",
+          "incidents_opened",
+          "incidents_resolved"
+        ],
+        "title": "ActivityDay",
+        "type": "object"
+      },
+      "AgentActivity": {
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "median_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Seconds"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "succeeded": {
+            "title": "Succeeded",
+            "type": "integer"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent",
+          "runs",
+          "succeeded",
+          "failed",
+          "tokens",
+          "median_seconds"
+        ],
+        "title": "AgentActivity",
+        "type": "object"
+      },
       "AgentConnectIn": {
         "properties": {
           "name": {
@@ -9982,6 +10079,51 @@
         "title": "WebhookOut",
         "type": "object"
       },
+      "WorkspaceActivity": {
+        "description": "GET /workspaces/{id}/activity: the overview's charts, every day of the window present.",
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentActivity"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "median_resolve_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Resolve Seconds"
+          },
+          "open_by_severity": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Open By Severity",
+            "type": "object"
+          }
+        },
+        "required": [
+          "days",
+          "agents",
+          "open_by_severity",
+          "median_resolve_seconds"
+        ],
+        "title": "WorkspaceActivity",
+        "type": "object"
+      },
       "WorkspaceConfig": {
         "properties": {
           "daily_usd_cap": {
@@ -14953,6 +15095,78 @@
           }
         },
         "summary": "Update Workspace",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/workspaces/{workspace_id}/activity": {
+      "get": {
+        "description": "Daily runs, outcomes, spend, and incidents for the overview, oldest day first.",
+        "operationId": "activity_workspaces__workspace_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "maximum": 90,
+              "minimum": 7,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceActivity"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Activity",
         "tags": [
           "workspaces"
         ]

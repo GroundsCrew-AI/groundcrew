@@ -6,7 +6,7 @@ runs.messages (the raw conversation) is never returned: it can hold full prompts
 
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -342,6 +342,40 @@ class DecideIn(BaseModel):
 class StreamToken(BaseModel):
     token: str
     expires_at: datetime
+
+
+class ActivityDay(BaseModel):
+    day: date
+    # Runs started that day (UTC), by agent ("discovery", "deploy", "medic", others as is).
+    runs: dict[str, int]
+    succeeded: int
+    # Failed or stopped.
+    failed: int
+    usd: float
+    tokens: int
+    incidents_opened: int
+    incidents_resolved: int
+
+
+class AgentActivity(BaseModel):
+    agent: str
+    runs: int
+    succeeded: int
+    failed: int
+    tokens: int
+    # Median wall time of finished runs, seconds.
+    median_seconds: float | None
+
+
+class WorkspaceActivity(BaseModel):
+    """GET /workspaces/{id}/activity: the overview's charts, every day of the window present."""
+
+    days: list[ActivityDay]
+    agents: list[AgentActivity]
+    # Open incidents by severity ("unknown" when not set).
+    open_by_severity: dict[str, int]
+    # Median time from opening to resolution of incidents resolved in the window, seconds.
+    median_resolve_seconds: float | None
 
 
 class WorkspaceSummary(BaseModel):

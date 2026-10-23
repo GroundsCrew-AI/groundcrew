@@ -93,6 +93,11 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         lambda t: f"/workspaces/{t.workspace}/summary",
         _none,
     ),
+    ("GET", "/workspaces/{workspace_id}/activity"): (
+        "GET",
+        lambda t: f"/workspaces/{t.workspace}/activity",
+        _none,
+    ),
     ("GET", "/workspaces/{workspace_id}/usage"): (
         "GET",
         lambda t: f"/workspaces/{t.workspace}/usage",

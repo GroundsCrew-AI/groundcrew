@@ -15,6 +15,7 @@ export const keys = {
   run: (id: string) => ["run", id] as const,
   approvals: (ws: string, tab: "pending" | "decided") => ["approvals", ws, tab] as const,
   config: (ws: string) => ["workspace-config", ws] as const,
+  activity: (ws: string, days: number) => ["activity", ws, days] as const,
 };
 
 /**
@@ -32,6 +33,21 @@ export function useSummary(workspaceId: string | undefined) {
       unwrap(
         await api.GET("/workspaces/{workspace_id}/summary", {
           params: { path: { workspace_id: workspaceId! } },
+        }),
+      ),
+  });
+}
+
+/** Daily runs, outcomes, spend, and incidents for the overview's charts (oldest day first). */
+export function useActivity(workspaceId: string | undefined, days = 14) {
+  return useQuery({
+    queryKey: keys.activity(workspaceId ?? "", days),
+    enabled: Boolean(workspaceId),
+    refetchInterval: 60_000,
+    queryFn: async () =>
+      unwrap(
+        await api.GET("/workspaces/{workspace_id}/activity", {
+          params: { path: { workspace_id: workspaceId! }, query: { days } },
         }),
       ),
   });

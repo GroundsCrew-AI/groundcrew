@@ -3,7 +3,7 @@
 import base64
 import binascii
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated
 
@@ -31,6 +31,7 @@ from app.db.models import (
     IncidentFollowUp,
     LlmWorkspaceUsage,
     Run,
+    RunStatus,
     RunStep,
     User,
     Workspace,
@@ -41,6 +42,8 @@ from app.platform import is_platform_admin
 from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
 from app.routes.runs import rejected_counts
 from app.routes.schemas import (
+    ActivityDay,
+    AgentActivity,
     ApprovalOut,
     MeOut,
     PasswordChange,
@@ -48,6 +51,7 @@ from app.routes.schemas import (
     RunOut,
     RunPage,
     UserOut,
+    WorkspaceActivity,
     WorkspaceOut,
     WorkspaceSummary,
 )
@@ -259,6 +263,117 @@ async def summary(
         total_usd_cap=None,
         pending_permanent_fixes=int(pending_fixes or 0),
         open_incidents=int(open_incidents or 0),
+    )
+
+
+@router.get("/workspaces/{workspace_id}/activity")
+async def activity(
+    workspace_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    days: Annotated[int, Query(ge=7, le=90)] = 14,
+) -> WorkspaceActivity:
+    """Daily runs, outcomes, spend, and incidents for the overview, oldest day first."""
+    await _check_member(session, user, workspace_id)
+    first = _start_of_day() - timedelta(days=days - 1)
+    run_day = func.date(func.timezone("UTC", Run.created_at))
+    rows = (
+        await session.execute(
+            select(run_day, Run.agent, Run.status, func.count(Run.id))
+            .where(Run.workspace_id == workspace_id, Run.created_at >= first)
+            .group_by(run_day, Run.agent, Run.status)
+        )
+    ).all()
+    series = {
+        first.date() + timedelta(days=i): ActivityDay(
+            day=first.date() + timedelta(days=i),
+            runs={},
+            succeeded=0,
+            failed=0,
+            usd=0.0,
+            tokens=0,
+            incidents_opened=0,
+            incidents_resolved=0,
+        )
+        for i in range(days)
+    }
+    for day, agent, run_status, count in rows:
+        point = series.get(day)
+        if point is None:
+            continue
+        point.runs[agent] = point.runs.get(agent, 0) + count
+        if run_status == RunStatus.succeeded:
+            point.succeeded += count
+        elif run_status in (RunStatus.failed, RunStatus.stopped):
+            point.failed += count
+    for usage in await session.scalars(
+        select(LlmWorkspaceUsage).where(
+            LlmWorkspaceUsage.workspace_id == workspace_id, LlmWorkspaceUsage.day >= first.date()
+        )
+    ):
+        if point := series.get(usage.day):
+            point.usd, point.tokens = float(usage.usd), int(usage.tokens)
+    opened_day = func.date(func.timezone("UTC", Incident.created_at))
+    for day, count in await session.execute(
+        select(opened_day, func.count(Incident.id))
+        .where(Incident.workspace_id == workspace_id, Incident.created_at >= first)
+        .group_by(opened_day)
+    ):
+        if point := series.get(day):
+            point.incidents_opened = count
+    resolved_day = func.date(func.timezone("UTC", Incident.resolved_at))
+    for day, count in await session.execute(
+        select(resolved_day, func.count(Incident.id))
+        .where(Incident.workspace_id == workspace_id, Incident.resolved_at >= first)
+        .group_by(resolved_day)
+    ):
+        if point := series.get(day):
+            point.incidents_resolved = count
+
+    seconds = func.extract("epoch", Run.finished_at - Run.started_at)
+    agents = [
+        AgentActivity(
+            agent=agent,
+            runs=runs,
+            succeeded=int(ok or 0),
+            failed=int(bad or 0),
+            tokens=int(tokens or 0),
+            median_seconds=float(median) if median is not None else None,
+        )
+        for agent, runs, ok, bad, tokens, median in await session.execute(
+            select(
+                Run.agent,
+                func.count(Run.id),
+                func.count(Run.id).filter(Run.status == RunStatus.succeeded),
+                func.count(Run.id).filter(Run.status.in_([RunStatus.failed, RunStatus.stopped])),
+                func.sum(Run.prompt_tokens + Run.completion_tokens),
+                func.percentile_cont(0.5).within_group(seconds),
+            )
+            .where(Run.workspace_id == workspace_id, Run.created_at >= first)
+            .group_by(Run.agent)
+            .order_by(func.count(Run.id).desc(), Run.agent)
+        )
+    ]
+    open_by_severity = {
+        severity or "unknown": count
+        for severity, count in await session.execute(
+            select(Incident.severity, func.count(Incident.id))
+            .where(Incident.workspace_id == workspace_id, Incident.status.in_(OPEN_STATUSES))
+            .group_by(Incident.severity)
+        )
+    }
+    median_resolve = await session.scalar(
+        select(
+            func.percentile_cont(0.5).within_group(
+                func.extract("epoch", Incident.resolved_at - Incident.created_at)
+            )
+        ).where(Incident.workspace_id == workspace_id, Incident.resolved_at >= first)
+    )
+    return WorkspaceActivity(
+        days=list(series.values()),
+        agents=agents,
+        open_by_severity=open_by_severity,
+        median_resolve_seconds=float(median_resolve) if median_resolve is not None else None,
     )
 
 
