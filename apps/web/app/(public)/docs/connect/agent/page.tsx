@@ -182,7 +182,8 @@ export default function ConnectAgentPage() {
             <p>
               It recreates the container from the new image, keeping its name, ports, networks, volumes, and other
               settings, with your env values set on top. A service with no container yet gets a new one with the
-              app&apos;s port published.
+              app&apos;s port published on the same host port, or on the next free one above it when something
+              else on the server already uses that port. The deploy shows the host port it chose.
             </p>
           </Step>
           <Step title="Check, or go back">

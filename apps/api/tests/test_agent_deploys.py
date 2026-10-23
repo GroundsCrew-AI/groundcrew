@@ -140,10 +140,17 @@ async def test_apply_uploads_then_the_agent_fetches_its_secrets_once(
         again = await agent.post(f"/agent/v1/commands/{command['id']}/secrets", {})
         fetched["second_status"] = again.status_code
         await agent.post(
-            f"/agent/v1/commands/{command['id']}/result", {"ok": True, "message": "recreated"}
+            f"/agent/v1/commands/{command['id']}/result",
+            {
+                "ok": True,
+                "message": "created the container from x, app port 8000 published on host port "
+                "8002 (host port 8000 was in use); it is running",
+            },
         )
 
     deployment, _ = await asyncio.gather(target.apply(plan, spec, token, sandbox), the_agent())  # type: ignore[arg-type]
+    # The agent moved to a free host port; the deploy records the one it chose.
+    assert deployment.port == 8002
     ns = registry.namespace(conn.workspace_id)
     assert sandbox.pushed == [f"http://registry:5000/{ns}/flask-app:abc123def456"]
     assert deployment.location == f"web-1/{FLASK}" and deployment.revision == plan.image
@@ -206,3 +213,14 @@ async def test_an_agent_can_use_its_own_registry(
 
     back = await client.delete(f"/connections/{conn_id}/agent/registry", headers=alice.headers)
     assert back.json()["agent"]["registry"] == "groundcrew"
+
+
+def test_the_published_port_is_read_from_the_agents_result() -> None:
+    from app.targets.agent import published_port
+
+    assert (
+        published_port("app port 3000 published on host port 3001 (host port 3000 was in use)")
+        == 3001
+    )
+    # An update keeps the container's ports; agents before 0.5.0 do not say.
+    assert published_port("recreated the container from x; it is running") is None

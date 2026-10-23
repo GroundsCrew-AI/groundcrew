@@ -254,23 +254,26 @@ func (r *Runner) deploy(ctx context.Context, cmd Command, s config.Service, rt r
 	}
 	port, _ := strconv.Atoi(cmd.Params["port"])
 	var healthy func(context.Context) error
-	switch {
-	case s.Health != nil:
+	if s.Health != nil {
 		healthy = func(ctx context.Context) error {
 			return runtime.HealthCheck(ctx, s.Health.URL, s.Health.Timeout)
 		}
-	case cmd.Params["health_path"] != "" && port > 0:
-		url := fmt.Sprintf("http://127.0.0.1:%d%s", port, cmd.Params["health_path"])
-		healthy = func(ctx context.Context) error { return runtime.HealthCheck(ctx, url, 5*time.Second) }
 	}
-	created, err := d.Deploy(ctx, s, runtime.DeployRequest{
-		Image: cmd.Params["image"], Port: port, Env: env, Login: secrets.Registry, Healthy: healthy,
+	res, err := d.Deploy(ctx, s, runtime.DeployRequest{
+		Image: cmd.Params["image"], Port: port, Env: env, Login: secrets.Registry,
+		HealthPath: cmd.Params["health_path"], Healthy: healthy,
 	})
 	if err != nil {
 		return false, err.Error()
 	}
-	if created {
-		return true, fmt.Sprintf("created the container from %s, port %d published; it is running", cmd.Params["image"], port)
+	if res.Created {
+		// "published on host port N": Groundcrew reads the port back from this sentence.
+		taken := ""
+		if res.HostPort != port {
+			taken = fmt.Sprintf(" (host port %d was in use)", port)
+		}
+		return true, fmt.Sprintf("created the container from %s, app port %d published on host port %d%s; it is running",
+			cmd.Params["image"], port, res.HostPort, taken)
 	}
 	return true, "recreated the container from " + cmd.Params["image"] + "; it is running"
 }

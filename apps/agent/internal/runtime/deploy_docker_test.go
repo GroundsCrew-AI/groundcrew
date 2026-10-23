@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -58,17 +59,17 @@ func TestDeployOnARealDockerEngine(t *testing.T) {
 	ctx := context.Background()
 	hostPort := 18000 + int(n%1000)
 
-	created, err := d.Deploy(ctx, s, DeployRequest{Image: good, Port: hostPort, Env: map[string]string{"A": "1"}})
-	if err != nil || !created {
-		t.Fatalf("first deploy: created=%v %v", created, err)
+	res, err := d.Deploy(ctx, s, DeployRequest{Image: good, Port: hostPort, Env: map[string]string{"A": "1"}})
+	if err != nil || !res.Created || res.HostPort != hostPort {
+		t.Fatalf("first deploy: %+v %v", res, err)
 	}
 	if st := d.State(ctx, s); !st.Running() || st.Image != good {
 		t.Fatalf("after create %+v", st)
 	}
 	// A second deploy updates it in place, keeping its port and setting a new env value.
-	created, err = d.Deploy(ctx, s, DeployRequest{Image: good, Port: hostPort, Env: map[string]string{"A": "2"}})
-	if err != nil || created {
-		t.Fatalf("second deploy: created=%v %v", created, err)
+	res, err = d.Deploy(ctx, s, DeployRequest{Image: good, Port: hostPort, Env: map[string]string{"A": "2"}})
+	if err != nil || res.Created {
+		t.Fatalf("second deploy: %+v %v", res, err)
 	}
 	if env := docker("inspect", "-f", "{{range .Config.Env}}{{.}} {{end}}", app); !strings.Contains(env, "A=2") || strings.Contains(env, "A=1") {
 		t.Fatalf("env %q", env)
@@ -84,6 +85,22 @@ func TestDeployOnARealDockerEngine(t *testing.T) {
 	}
 	if st := d.State(ctx, s); !st.Running() || st.Image != good {
 		t.Fatalf("not kept: %+v", st)
+	}
+	// A new service whose port is taken is published on the next free host port: one held by
+	// a container (the first app), the next by a plain listener on the host.
+	other := config.Service{Name: "web2", Runtime: config.Docker, Container: app + "-2"}
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", other.Container).Run() })
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", hostPort+1))
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer l.Close()
+	res, err = d.Deploy(ctx, other, DeployRequest{Image: good, Port: hostPort})
+	if err != nil || !res.Created || res.HostPort != hostPort+2 {
+		t.Fatalf("taken port: %+v %v", res, err)
+	}
+	if got := docker("port", other.Container, fmt.Sprint(hostPort)); !strings.HasSuffix(got, fmt.Sprintf(":%d", hostPort+2)) {
+		t.Fatalf("published on %q", got)
 	}
 	// An image that does not exist fails at the pull, before anything is touched.
 	if _, err := d.Deploy(ctx, s, DeployRequest{Image: host + "/w0/web:missing"}); err == nil || !strings.Contains(err.Error(), "pulling") {
