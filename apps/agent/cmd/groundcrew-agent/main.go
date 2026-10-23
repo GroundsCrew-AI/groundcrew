@@ -259,6 +259,7 @@ func serve(cfg *config.Config) error {
 	}
 	go w.Run(ctx)
 	go runner.Run(ctx)
+	go refreshPulls(ctx, cfg, c, rts, log)
 	return a.Run(ctx)
 }
 

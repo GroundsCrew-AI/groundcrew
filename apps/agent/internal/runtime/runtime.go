@@ -58,6 +58,13 @@ type Runtime interface {
 	HasImage(ctx context.Context, id string) bool
 }
 
+// PullRefresher keeps the image pull credentials a deploy left in a cluster current
+// (Kubernetes, ECS): pods and tasks pull again when they start, after a deploy's login expired.
+type PullRefresher interface {
+	// RefreshPull replaces the service's pull credentials, if a deploy made them; false if not.
+	RefreshPull(ctx context.Context, s config.Service, login *RegistryLogin) (bool, error)
+}
+
 // Rollbacker recreates a service from an earlier image (Docker and Compose).
 type Rollbacker interface {
 	Rollback(ctx context.Context, s config.Service, image, ref string, healthy func(context.Context) error) error

@@ -183,6 +183,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/v1/registry-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Registry Login
+         * @description A fresh pull login for the images Groundcrew deploys through this agent (None: a public
+         *     repository needs none). Kubernetes and
+         *     ECS pull again whenever a pod or task starts, long after a deploy's own login expired, so
+         *     the agent refreshes its pull secrets with this (every few minutes).
+         */
+        post: operations["registry_login_agent_v1_registry_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/approvals/{approval_id}/decide": {
         parameters: {
             query?: never;
@@ -4840,7 +4863,7 @@ export interface components {
              * Runtime
              * @enum {string}
              */
-            runtime: "docker" | "compose" | "systemd";
+            runtime: "docker" | "compose" | "systemd" | "kubernetes" | "ecs";
             /** Target */
             target: string;
         };
@@ -5705,6 +5728,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    registry_login_agent_v1_registry_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistryLoginOut"] | null;
                 };
             };
         };

@@ -359,6 +359,7 @@ NOT_WORKSPACE_SCOPED = {
     ("POST", "/agent/v1/commands/poll"): "signed by the agent's key; its own commands only",
     ("POST", "/agent/v1/commands/{command_id}/result"): "signed; 404 for another agent's command",
     ("POST", "/agent/v1/commands/{command_id}/secrets"): "signed; 404 for another agent's command",
+    ("POST", "/agent/v1/registry-login"): "signed; a pull login for the agent's own workspace only",
     ("GET", "/admin/platform"): "platform operators only, 404 for others (test_abuse.py)",
     ("PUT", "/admin/platform/signups"): "platform operators only, 404 for others (test_abuse.py)",
 }

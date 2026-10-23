@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -213,7 +214,17 @@ func (f *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// /api/v1/namespaces/{ns}/secrets[/{name}], services
 	if len(parts) >= 5 && (parts[4] == "secrets" || parts[4] == "services") {
-		name, _ := body["metadata"].(map[string]any)["name"].(string)
+		if r.Method == http.MethodGet && len(parts) == 6 {
+			got, ok := f.secrets[parts[3]+"/"+parts[5]]
+			if !ok {
+				write(w, 404, map[string]string{"message": "not found"})
+				return
+			}
+			write(w, 200, got)
+			return
+		}
+		meta, _ := body["metadata"].(map[string]any)
+		name, _ := meta["name"].(string)
 		key := parts[3] + "/" + name
 		if parts[4] == "services" {
 			f.services[key] = true
@@ -329,4 +340,36 @@ func TestKubernetesCreatesAMissingDeployment(t *testing.T) {
 	if kept {
 		t.Fatal("a failed new deployment was kept")
 	}
+}
+
+func TestKubernetesRenewsOnlyThePullSecretsADeployMade(t *testing.T) {
+	f, k := kubeFixture(t)
+	f.add("shop", "api", "reg/api:1")
+	ctx := context.Background()
+	login := &RegistryLogin{Server: "api.groundkrew.com", Username: "u", Password: "old"}
+	if renewed, err := k.RefreshPull(ctx, kubeService("api"), login); err != nil || renewed {
+		t.Fatalf("no secret yet: %v %v", renewed, err)
+	}
+	if _, err := k.Deploy(ctx, kubeService("api"), DeployRequest{Image: "reg/api:2", Login: login}); err != nil {
+		t.Fatal(err)
+	}
+	fresh := &RegistryLogin{Server: "api.groundkrew.com", Username: "u", Password: "new"}
+	if renewed, err := k.RefreshPull(ctx, kubeService("api"), fresh); err != nil || !renewed {
+		t.Fatalf("renew: %v %v", renewed, err)
+	}
+	f.mu.Lock()
+	data := f.secrets["shop/groundcrew-pull-api"]["data"].(map[string]any)[".dockerconfigjson"].(string)
+	f.mu.Unlock()
+	if !strings.Contains(string(mustB64(t, data)), `"password":"new"`) {
+		t.Fatalf("not renewed: %s", mustB64(t, data))
+	}
+}
+
+func mustB64(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

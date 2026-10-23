@@ -8607,7 +8607,9 @@
             "enum": [
               "docker",
               "compose",
-              "systemd"
+              "systemd",
+              "kubernetes",
+              "ecs"
             ],
             "title": "Runtime",
             "type": "string"
@@ -10683,6 +10685,36 @@
           }
         },
         "summary": "Inventory",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/agent/v1/registry-login": {
+      "post": {
+        "description": "A fresh pull login for the images Groundcrew deploys through this agent (None: a public\nrepository needs none). Kubernetes and\nECS pull again whenever a pod or task starts, long after a deploy's own login expired, so\nthe agent refreshes its pull secrets with this (every few minutes).",
+        "operationId": "registry_login_agent_v1_registry_login_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RegistryLoginOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Registry Login Agent V1 Registry Login Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Registry Login",
         "tags": [
           "agent"
         ]

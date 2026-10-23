@@ -93,6 +93,24 @@ describe("AgentConnectDialog", () => {
     rerender(<AgentConnectDialog open onOpenChange={vi.fn()} />);
     expect(screen.getByRole("status")).toHaveTextContent("Connected: web-1.example");
   });
+
+  it("writes a Kubernetes manifest with the token, the agent image, and read-only access by default", async () => {
+    render(<AgentConnectDialog open onOpenChange={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText("Name"), "cluster-1");
+    await userEvent.click(screen.getByRole("button", { name: "Create join token" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Kubernetes" }));
+    const command = () => screen.getByText(/kubectl apply -f -/).textContent ?? "";
+    expect(command()).toContain("token: gcj_secret");
+    expect(command()).toMatch(/image: [^\s]+\/public\/groundcrew-agent:0\.3\.0/);
+    expect(command()).not.toContain("verbs: [patch, create, delete]");
+
+    await userEvent.clear(screen.getByLabelText("Namespaces with your apps"));
+    await userEvent.type(screen.getByLabelText("Namespaces with your apps"), "shop, Bad");
+    expect(screen.getByText("Bad is not a namespace name")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Let it restart, roll back, and deploy/ }));
+    expect(command()).toContain("namespace: shop");
+    expect(command()).toContain("verbs: [patch, create, delete]");
+  });
 });
 
 describe("ConnectionRow for an agent", () => {

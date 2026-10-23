@@ -55,7 +55,7 @@ function role(ns: string, act: boolean): string {
     verbs: [create]`,
       `  - apiGroups: [""]
     resources: [secrets]
-    verbs: [create, update]`,
+    verbs: [get, create, update]`,
     );
   }
   return `apiVersion: rbac.authorization.k8s.io/v1

@@ -82,6 +82,12 @@ def deployable_services(conn: Connection) -> list[str]:
     return [s.name for s in (stored.services if stored else []) if commands.DEPLOY in s.allow]
 
 
+def service_runtime(conn: Connection, service: str) -> str | None:
+    """The runtime the agent reports for one of its services (docker, kubernetes, ...)."""
+    stored = inv.stored(conn)
+    return next((s.runtime for s in (stored.services if stored else []) if s.name == service), None)
+
+
 _PUBLISHED = re.compile(r"published on host port (\d+)")
 
 
@@ -179,7 +185,7 @@ class AgentTarget:
         except Exception as exc:
             raise TargetError(f"Creating the ECR repository {name} failed: {exc}") from None
 
-    async def _pull_login(self) -> dict[str, str] | None:
+    async def pull_login(self) -> dict[str, str] | None:
         """What the agent pulls with: a Groundcrew pull token, or the own registry's login."""
         if self.own is None:
             return {
@@ -247,18 +253,40 @@ class AgentTarget:
         host = agent.hostname or self.conn.name
         exists = state is not None and state.found
         where = "Groundcrew registry" if self.own is None else self.own.registry
-        steps = [
-            ApplyStep(kind="image", name=image, action="push", detail=f"to the {where}"),
-            ApplyStep(
-                kind="container",
-                name=f"{host}/{service}",
-                action="update" if exists else "create",
-                detail="the agent pulls the image and recreates the container from it, keeping "
-                "its settings and volumes; it goes back to the current one if the new one is not "
+        runtime = service_runtime(self.conn, service)
+        if runtime == "kubernetes":
+            kind, detail = (
+                "Deployment",
+                "the agent sets the image and env values on the Deployment and waits for the "
+                "rollout; it puts the previous pod template back if the new pods do not run"
+                if exists
+                else f"the agent creates the Deployment (one replica) and a Service on port "
+                f"{spec.port} in the namespace its configuration names",
+            )
+        elif runtime == "ecs":
+            kind, detail = (
+                "ecs:Service",
+                "the agent registers a task definition revision with the image and env values "
+                "and updates the service; it goes back to the previous revision if the new tasks "
+                "do not run",
+            )
+        else:
+            kind, detail = (
+                "container",
+                "the agent pulls the image and recreates the container from it, keeping its "
+                "settings and volumes; it goes back to the current one if the new one is not "
                 "healthy"
                 if exists
                 else f"the agent creates the container and publishes port {spec.port} on the "
                 f"host, or the next free port above it if {spec.port} is in use",
+            )
+        steps = [
+            ApplyStep(kind="image", name=image, action="push", detail=f"to the {where}"),
+            ApplyStep(
+                kind=kind,
+                name=f"{host}/{service}",
+                action="update" if exists else "create",
+                detail=detail,
             ),
         ]
         return TargetPlan(
@@ -368,7 +396,7 @@ class AgentTarget:
                 "port": str(plan.port),
                 "health_path": plan.health_path or "",
             },
-            secrets={"registry": await self._pull_login(), "env": env},
+            secrets={"registry": await self.pull_login(), "env": env},
         )
         return Deployment(
             target="agent",

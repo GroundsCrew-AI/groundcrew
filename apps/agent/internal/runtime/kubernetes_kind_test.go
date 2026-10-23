@@ -74,6 +74,14 @@ func TestKubernetesOnALiveCluster(t *testing.T) {
 	if res, err := k.Deploy(ctx, fresh, DeployRequest{Image: img + ":good", Port: 80}); err != nil || !res.Created {
 		t.Fatalf("create: %+v %v", res, err)
 	}
+	// The pull secret a deploy with a login made is renewed in place.
+	login := &RegistryLogin{Server: "kind-registry:5000", Username: "u", Password: "p1"}
+	if _, err := k.Deploy(ctx, web, DeployRequest{Image: img + ":good2", Login: login}); err != nil {
+		t.Fatalf("deploy with a login: %v", err)
+	}
+	if renewed, err := k.RefreshPull(ctx, web, &RegistryLogin{Server: "kind-registry:5000", Username: "u", Password: "p2"}); err != nil || !renewed {
+		t.Fatalf("renew: %v %v", renewed, err)
+	}
 	// Its RBAC reaches gc-agent-live only.
 	other := config.Service{Name: "x", Runtime: config.Kubernetes,
 		Kubernetes: &config.KubernetesRef{Namespace: "kube-system", Deployment: "coredns"}}

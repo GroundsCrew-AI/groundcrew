@@ -208,7 +208,7 @@ async def test_an_agent_can_use_its_own_registry(
     target = AgentTarget(_settings(), None, sf, conn)  # type: ignore[arg-type]
     plan = await target.plan(_spec(conn, uuid.uuid4()))
     assert plan.image == "ghcr.io/acme/flask-app:abc123def456"
-    login = await target._pull_login()
+    login = await target.pull_login()
     assert login == {"server": "ghcr.io", "username": "bot", "password": "ghp_secret"}
 
     back = await client.delete(f"/connections/{conn_id}/agent/registry", headers=alice.headers)
@@ -224,3 +224,52 @@ def test_the_published_port_is_read_from_the_agents_result() -> None:
     )
     # An update keeps the container's ports; agents before 0.5.0 do not say.
     assert published_port("recreated the container from x; it is running") is None
+
+
+async def test_a_kubernetes_service_is_planned_as_a_deployment(
+    client: httpx.AsyncClient, session_factory: SessionFactory
+) -> None:
+    from app.remote_agents.signals import image_label
+    from tests.test_remote_agents import INVENTORY
+
+    sf = session_factory
+    alice = await _member(sf, 8305, "alice")
+    agent, conn_id = await _agent_with_services(client, sf, alice, allow=["deploy"])
+    kube = dict(
+        INVENTORY["services"][0], runtime="kubernetes", target="shop/flask", allow=["deploy"]
+    )
+    kube.pop("ports", None)
+    r = await agent.post(
+        "/agent/v1/inventory", {**INVENTORY, "services": [kube, *INVENTORY["services"][1:]]}
+    )
+    assert r.status_code == 200, r.text
+    conn = await _conn(sf, conn_id)
+    target = AgentTarget(_settings(**REGISTRY), None, sf, conn)  # type: ignore[arg-type]
+    plan = await target.plan(_spec(conn, uuid.uuid4()))
+    (_, step) = plan.steps
+    assert step.kind == "Deployment" and "Deployment" in (step.detail or "")
+    # A cluster image's "id" is its reference: the label is just the reference.
+    assert image_label("reg/api:2", "reg/api:2") == "reg/api:2"
+    assert image_label("web:1", "sha256:" + "a" * 64) == "web:1@" + "a" * 12
+
+
+async def test_an_agent_refreshes_its_pull_login(
+    client: httpx.AsyncClient, session_factory: SessionFactory
+) -> None:
+    """Clusters pull again when a pod or task starts; the agent keeps its pull secrets fresh."""
+    sf = session_factory
+    alice = await _member(sf, 8306, "alice")
+    agent, conn_id = await _agent_with_services(client, sf, alice, allow=["deploy"])
+    r = await agent.post("/agent/v1/registry-login", {})
+    assert r.status_code == 200, r.text
+    login = r.json()
+    conn = await _conn(sf, conn_id)
+    assert login["server"] == "api.gc.test" and login["username"] == registry.USERNAME
+    assert registry.token_namespace(_settings(**REGISTRY), login["password"]) == registry.namespace(
+        conn.workspace_id
+    )
+    # Watch-only agents get no login.
+    watcher, _ = await _agent_with_services(
+        client, sf, await _member(sf, 8307, "bob"), allow=["restart"]
+    )
+    assert (await watcher.post("/agent/v1/registry-login", {})).status_code == 401

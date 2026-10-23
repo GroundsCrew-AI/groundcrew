@@ -325,6 +325,9 @@ func (w *Watcher) previousImage(ctx context.Context, rt runtime.Runtime, name st
 }
 
 func imageLabel(st runtime.State) string {
+	if st.ImageID == st.Image {
+		return st.Image // Kubernetes and ECS: the image "id" is its reference
+	}
 	id := strings.TrimPrefix(st.ImageID, "sha256:")
 	if len(id) > 12 {
 		id = id[:12]

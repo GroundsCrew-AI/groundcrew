@@ -773,6 +773,23 @@ func (k *Kubernetes) pullSecret(ctx context.Context, ref *config.KubernetesRef, 
 	return name, nil
 }
 
+// RefreshPull replaces the service's pull secret with a fresh login, if a deploy made one.
+func (k *Kubernetes) RefreshPull(ctx context.Context, s config.Service, login *RegistryLogin) (bool, error) {
+	ref, err := kubeRef(s)
+	if err != nil || login == nil {
+		return false, err
+	}
+	var secret struct{}
+	path := "/api/v1/namespaces/" + url.PathEscape(ref.Namespace) + "/secrets/" + url.PathEscape("groundcrew-pull-"+ref.Deployment)
+	if err := k.get(ctx, path, &secret); isNotFound(err) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	_, err = k.pullSecret(ctx, ref, login)
+	return err == nil, err
+}
+
 func (k *Kubernetes) create(ctx context.Context, ref *config.KubernetesRef, req DeployRequest, pullSecret string) error {
 	name := ref.Container
 	if name == "" {

@@ -266,6 +266,30 @@ async def heartbeat(
     return HeartbeatOut(inventory_hash=held, command_key=key)
 
 
+@router.post("/registry-login")
+async def registry_login(
+    agent: SignedAgent, session: SessionDep, settings: SettingsDep, sessions: SessionFactoryDep
+) -> RegistryLoginOut | None:
+    """A fresh pull login for the images Groundcrew deploys through this agent (None: a public
+    repository needs none). Kubernetes and
+    ECS pull again whenever a pod or task starts, long after a deploy's own login expired, so
+    the agent refreshes its pull secrets with this (every few minutes)."""
+    from app.connectors.credentials import ConnectionCredentialsProvider
+    from app.targets.agent import AgentTarget, deployable_services
+    from app.targets.base import TargetError
+
+    conn = await _connection(session, agent)
+    if not deployable_services(conn):
+        raise _refused("No service on this agent allows deploy.")
+    credentials = await ConnectionCredentialsProvider.for_workspace(session, conn.workspace_id)
+    await session.commit()
+    try:
+        login = await AgentTarget(settings, credentials, sessions, conn).pull_login()
+    except TargetError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    return RegistryLoginOut(**login) if login else None
+
+
 @router.post("/inventory")
 async def inventory(body: inv.Inventory, agent: SignedAgent, session: SessionDep) -> InventoryOut:
     """The services the agent watches. A change is stored and starts a discovery of this

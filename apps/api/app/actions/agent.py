@@ -112,8 +112,9 @@ class AgentEmergencyActions:
         )
         if not state.image_id or not state.previous_image_id:
             raise EmergencyActionError(
-                f"{service} on {host} has no earlier image on the host to go back to (the agent "
-                "remembers the images a container ran while it watches it)."
+                f"{service} on {host} has no earlier image to go back to (the agent remembers the "
+                "images a container ran while it watches it; a Kubernetes Deployment's previous "
+                "ReplicaSet or an ECS service's previous revision gives one)."
             )
         current = image_label(state.image, state.image_id)
         desired = image_label(state.previous_image, state.previous_image_id)
