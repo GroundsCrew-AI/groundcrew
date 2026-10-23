@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/config"
+	"github.com/GroundsCrew-AI/groundcrew/apps/agent/internal/redact"
 )
 
 // How long a recreated container gets to run and pass its health check.
@@ -144,7 +145,32 @@ func (d *Docker) settle(ctx context.Context, s config.Service, healthy func(cont
 	if last == nil {
 		last = errors.New("it did not start in time")
 	}
-	return fmt.Errorf("the new container is not healthy (%v)", last)
+	return fmt.Errorf("the new container is not healthy (%v)%s", last, d.lastLines(ctx, s))
+}
+
+// FailedLogLines is how many of a failed container's last log lines go into the error, so
+// the reason survives the container's removal.
+const FailedLogLines = 15
+
+// lastLines is the container's last log lines (secrets redacted), for an error message.
+func (d *Docker) lastLines(ctx context.Context, s config.Service) string {
+	lines, err := d.Logs(ctx, s, time.Now().Add(-rollbackSettle-time.Minute))
+	if err != nil || len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > FailedLogLines {
+		lines = lines[len(lines)-FailedLogLines:]
+	}
+	var b strings.Builder
+	b.WriteString("; its last log lines:")
+	for _, l := range lines {
+		text := redact.Line(strings.TrimSpace(l.Text))
+		if len(text) > 300 {
+			text = text[:300] + "..."
+		}
+		b.WriteString("\n" + text)
+	}
+	return b.String()
 }
 
 // recreateBody is the create request for a copy of the inspected container

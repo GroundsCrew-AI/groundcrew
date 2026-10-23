@@ -144,6 +144,9 @@ class AppSpec(BaseModel):
     database: Database | None = None
     health_path: str | None = None
     has_dockerfile: bool = False
+    # The repository's Dockerfile, relative to the app folder, when it is not "Dockerfile":
+    # a Compose service's `build.dockerfile` (Dockerfile.prod, docker/api.Dockerfile).
+    dockerfile: str | None = None
     subpath: str | None = None
     # 0 to 1, computed from what is known and how well it is supported (not the model's word).
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)

@@ -378,6 +378,20 @@ async def test_a_repo_dockerfile_is_built_as_is_first(tmp_path: Path) -> None:
     assert (root / "Dockerfile").read_text() == repo_dockerfile
 
 
+async def test_a_compose_named_dockerfile_is_the_one_built(tmp_path: Path) -> None:
+    settings = _settings()
+    root, spec = _app(tmp_path, dockerfile="FROM scratch\n")
+    (root / "docker").mkdir()
+    (root / "docker" / "prod.Dockerfile").write_text("FROM python:3.12\nCMD python app.py\n")
+    spec = spec.model_copy(update={"dockerfile": "docker/prod.Dockerfile"})
+    sandbox = ScriptedSandbox(OK)
+    outcome, attempts, _, _ = await _run(
+        Builder(FakeLLM(settings=settings), sandbox, sleep=no_sleep), root, spec, settings
+    )
+    assert outcome.ok and attempts[0].dockerfile_source == "repo"
+    assert sandbox.builds[0][0] == root / "docker" / "prod.Dockerfile"
+
+
 async def test_a_failed_model_call_stops_the_builder(tmp_path: Path) -> None:
     settings = _settings()
     root, spec = _app(tmp_path)
