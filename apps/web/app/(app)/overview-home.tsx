@@ -4,6 +4,14 @@ import { Coins, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
+import {
+  AgentsPanel,
+  ConnectionsPanel,
+  DeploysPanel,
+  IncidentsPanel,
+  RunsPanel,
+  SpendPanel,
+} from "@/components/overview/dashboard";
 import { GettingStarted } from "@/components/overview/getting-started";
 import { formatUsd, SpendMeter } from "@/components/overview/usage";
 import { RunList } from "@/components/runs/run-list";
@@ -14,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { Summary } from "@/lib/api/client";
 import { AREAS, areaColor, type AreaKey } from "@/lib/areas";
 import { formatTokens } from "@/lib/format";
-import { useRuns, useSummary } from "@/lib/queries";
+import { useActivity, useRuns, useSummary } from "@/lib/queries";
 import { useWorkspace } from "@/lib/workspace";
 
 function Metric({
@@ -107,13 +115,14 @@ export function OverviewHome() {
   const { workspace, error: workspaceError, refetch } = useWorkspace();
   const summary = useSummary(workspace?.id);
   const runs = useRuns(workspace?.id, 6);
+  const activity = useActivity(workspace?.id);
   const recent = runs.data?.pages[0]?.items ?? [];
   const fixes = summary.data?.pending_permanent_fixes ?? 0;
 
   return (
     <>
       <PageHeader title="Overview" />
-      <PageBody className="max-w-5xl space-y-8">
+      <PageBody className="max-w-6xl space-y-6">
         <GettingStarted />
 
         {workspaceError || summary.error ? (
@@ -152,6 +161,18 @@ export function OverviewHome() {
             <span className="text-[12.5px] text-muted-foreground">Resolved by a rollback; the fix PR is not deployed</span>
           </Link>
         )}
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          <RunsPanel activity={activity.data} className="lg:col-span-2" />
+          <AgentsPanel activity={activity.data} />
+          <SpendPanel activity={activity.data} summary={summary.data} className="lg:col-span-2" />
+          <IncidentsPanel activity={activity.data} />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <DeploysPanel workspaceId={workspace?.id} />
+          <ConnectionsPanel workspaceId={workspace?.id} />
+        </div>
 
         <section aria-labelledby="recent-runs">
           <div className="mb-2 flex items-center justify-between">

@@ -120,6 +120,13 @@
   --status-failed: #b13330;
   --status-neutral: #5e626b;
 
+  /* Chart series (overview), validated as a categorical set on the card surface: discovery,
+   * deploy, medic, other. Marks only; text stays in text tokens. */
+  --series-1: #0d9488;
+  --series-2: #6d28d9;
+  --series-3: #be123c;
+  --series-4: #1d4ed8;
+
   --tier-nano: #1e6d6a;
   --tier-super: #6a55b5;
   --tier-ultra: #8d5426;
@@ -174,6 +181,11 @@
   --area-settings: #a1a1aa;
   --area-docs: #fb923c;
   --brand-gradient: linear-gradient(120deg, #6d8bff 0%, #a78bfa 52%, #2dd4bf 100%);
+
+  --series-1: #0f9e90;
+  --series-2: #8a68f0;
+  --series-3: #e84a68;
+  --series-4: #3d86e0;
 
   --status-running: #7592ff;
   --status-waiting: #e2a63c;

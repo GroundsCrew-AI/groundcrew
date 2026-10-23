@@ -1384,6 +1384,26 @@ export interface paths {
         patch: operations["update_workspace_workspaces__workspace_id__patch"];
         trace?: never;
     };
+    "/workspaces/{workspace_id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Activity
+         * @description Daily runs, outcomes, spend, and incidents for the overview, oldest day first.
+         */
+        get: operations["activity_workspaces__workspace_id__activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspace_id}/approvals": {
         parameters: {
             query?: never;
@@ -1700,6 +1720,45 @@ export interface components {
             /** Summary */
             summary: string;
         };
+        /** ActivityDay */
+        ActivityDay: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Failed */
+            failed: number;
+            /** Incidents Opened */
+            incidents_opened: number;
+            /** Incidents Resolved */
+            incidents_resolved: number;
+            /** Runs */
+            runs: {
+                [key: string]: number;
+            };
+            /** Succeeded */
+            succeeded: number;
+            /** Tokens */
+            tokens: number;
+            /** Usd */
+            usd: number;
+        };
+        /** AgentActivity */
+        AgentActivity: {
+            /** Agent */
+            agent: string;
+            /** Failed */
+            failed: number;
+            /** Median Seconds */
+            median_seconds: number | null;
+            /** Runs */
+            runs: number;
+            /** Succeeded */
+            succeeded: number;
+            /** Tokens */
+            tokens: number;
+        };
         /** AgentConnectIn */
         AgentConnectIn: {
             /**
@@ -1750,7 +1809,7 @@ export interface components {
             last_seen_at?: string | null;
             /**
              * Latest Version
-             * @default 0.3.0
+             * @default 0.4.0
              */
             latest_version: string;
             /** Online */
@@ -5243,6 +5302,22 @@ export interface components {
             /** Handled */
             handled: boolean;
         };
+        /**
+         * WorkspaceActivity
+         * @description GET /workspaces/{id}/activity: the overview's charts, every day of the window present.
+         */
+        WorkspaceActivity: {
+            /** Agents */
+            agents: components["schemas"]["AgentActivity"][];
+            /** Days */
+            days: components["schemas"]["ActivityDay"][];
+            /** Median Resolve Seconds */
+            median_resolve_seconds: number | null;
+            /** Open By Severity */
+            open_by_severity: {
+                [key: string]: number;
+            };
+        };
         /** WorkspaceConfig */
         WorkspaceConfig: {
             /** Daily Usd Cap */
@@ -7904,6 +7979,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activity_workspaces__workspace_id__activity_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceActivity"];
                 };
             };
             /** @description Validation Error */
