@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -62,13 +63,52 @@ type Rollbacker interface {
 	Rollback(ctx context.Context, s config.Service, image, ref string, healthy func(context.Context) error) error
 }
 
-// For picks the runtime of a service.
-func For(s config.Service, docker, systemd Runtime) Runtime {
-	if s.Runtime == config.Systemd {
-		return systemd
-	}
-	return docker
+// Set is every runtime the agent can use; For picks a service's.
+type Set struct {
+	Docker, Systemd, Kubernetes, ECS Runtime
 }
+
+// For picks the runtime of a service. One the agent cannot reach (Kubernetes outside a
+// cluster) reports every service as not found, with the reason.
+func (r Set) For(s config.Service) Runtime {
+	var rt Runtime
+	switch s.Runtime {
+	case config.Systemd:
+		rt = r.Systemd
+	case config.Kubernetes:
+		rt = r.Kubernetes
+	case config.ECS:
+		rt = r.ECS
+	default:
+		rt = r.Docker
+	}
+	if rt == nil {
+		return Unavailable{Why: "this agent cannot reach " + s.Runtime}
+	}
+	return rt
+}
+
+// Inspector is For as an inventory.Inspector.
+func (r Set) Inspector(s config.Service) inventory.Inspector { return r.For(s) }
+
+// Unavailable is a runtime the agent cannot reach: every service is missing, every action fails.
+type Unavailable struct{ Why string }
+
+func (u Unavailable) Inspect(_ context.Context, s config.Service) inventory.Service {
+	return inventory.Service{Problem: u.Why}
+}
+
+func (u Unavailable) State(_ context.Context, s config.Service) State {
+	return State{Name: s.Name, State: "unknown", Problem: u.Why}
+}
+
+func (u Unavailable) Logs(context.Context, config.Service, time.Time) ([]LogLine, error) {
+	return nil, errors.New(u.Why)
+}
+
+func (u Unavailable) Restart(context.Context, config.Service) error { return errors.New(u.Why) }
+
+func (u Unavailable) HasImage(context.Context, string) bool { return false }
 
 var healthClient = &http.Client{
 	// A health check judges the service, not where it redirects.

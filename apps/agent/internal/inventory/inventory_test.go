@@ -26,7 +26,13 @@ services:
 		"flask": {Found: true, Image: "ghcr.io/acme/flask-app:af37", Ports: []string{"9090/tcp", "8000/tcp"}},
 		"shop":  {Problem: "no container for Compose service web in project shop"},
 	}
-	inv := Collect(context.Background(), cfg, docker, stub{"nginx": {Found: true}})
+	systemd := stub{"nginx": {Found: true}}
+	inv := Collect(context.Background(), cfg, func(s config.Service) Inspector {
+		if s.Runtime == config.Systemd {
+			return systemd
+		}
+		return docker
+	})
 	flask, shop, nginx := inv.Services[0], inv.Services[1], inv.Services[2]
 	if flask.Name != "flask" || flask.Target != "flask-app" || flask.Ports[0] != "8000/tcp" ||
 		flask.HealthURL != "http://127.0.0.1:8000/health" || flask.Allow[0] != "restart" {

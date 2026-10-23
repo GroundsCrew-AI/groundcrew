@@ -50,8 +50,7 @@ func runner(t *testing.T, allow string) (*Runner, *fakeRuntime) {
 	return &Runner{
 		Config:  cfg,
 		AgentID: vectorAgent,
-		Docker:  rt,
-		Systemd: rt,
+		Runtimes: runtime.Set{Docker: rt, Systemd: rt},
 		Key:     func() ed25519.PublicKey { return key },
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		now:     func() time.Time { return time.Date(2026, 10, 22, 10, 1, 0, 0, time.UTC) },

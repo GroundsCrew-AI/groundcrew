@@ -28,8 +28,8 @@ const (
 type Agent struct {
 	Config  *config.Config
 	Client  *client.Client
-	Docker  inventory.Inspector
-	Systemd inventory.Inspector
+	// Inspector picks the runtime that reads a service.
+	Inspector func(config.Service) inventory.Inspector
 	Log     *slog.Logger
 	Version string
 	// Optional: where the command key is pinned, and the watcher to tune.
@@ -134,7 +134,7 @@ func (a *Agent) heartbeat(ctx context.Context) (heartbeatOut, error) {
 // reportInventory sends the inventory when it changed since the last one sent,
 // or when the resend interval is over.
 func (a *Agent) reportInventory(ctx context.Context) error {
-	inv := inventory.Collect(ctx, a.Config, a.Docker, a.Systemd)
+	inv := inventory.Collect(ctx, a.Config, a.Inspector)
 	hash := inv.Hash()
 	if hash == a.sentHash && time.Since(a.sentAt) < inventoryResend {
 		return nil

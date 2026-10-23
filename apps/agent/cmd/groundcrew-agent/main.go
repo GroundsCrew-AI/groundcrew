@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -100,15 +101,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func runtimes(cfg *config.Config) (agentrt.Runtime, agentrt.Runtime) {
-	return agentrt.NewDocker(cfg.Docker.Socket), agentrt.NewSystemd()
+func runtimes(cfg *config.Config) agentrt.Set {
+	set := agentrt.Set{Docker: agentrt.NewDocker(cfg.Docker.Socket), Systemd: agentrt.NewSystemd()}
+	// In a cluster, its API (the pod's ServiceAccount); elsewhere Kubernetes services are missing.
+	if k, err := agentrt.NewKubernetesInCluster(); err == nil {
+		set.Kubernetes = k
+	}
+	return set
 }
 
 func check(cfg *config.Config, w io.Writer) error {
-	docker, systemd := runtimes(cfg)
+	rts := runtimes(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	inv := inventory.Collect(ctx, cfg, docker, systemd)
+	inv := inventory.Collect(ctx, cfg, rts.Inspector)
 	fmt.Fprintf(w, "Configuration is valid. Groundcrew: %s\nHost: %s (%s/%s)\n",
 		cfg.Groundcrew.URL, inv.Host.Hostname, inv.Host.OS, inv.Host.Arch)
 	missing := 0
@@ -190,10 +196,25 @@ func enroll(cfg *config.Config, token string, w io.Writer) error {
 	return nil
 }
 
+// JoinTokenEnv names a file with a join token. In a container (Kubernetes, ECS) the agent
+// enrolls with it on its first start; its key and enrollment then stay on its state volume.
+const JoinTokenEnv = "GROUNDCREW_JOIN_TOKEN_FILE"
+
 func serve(cfg *config.Config) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	dir := state.Dir{Path: cfg.StateDir}
 	e, err := dir.Enrollment()
+	if errors.Is(err, state.ErrNotEnrolled) && os.Getenv(JoinTokenEnv) != "" {
+		raw, rerr := os.ReadFile(os.Getenv(JoinTokenEnv))
+		if rerr != nil {
+			return fmt.Errorf("not enrolled, and the join token is not readable: %w", rerr)
+		}
+		if err := enroll(cfg, strings.TrimSpace(string(raw)), io.Discard); err != nil {
+			return fmt.Errorf("%w (a join token works once: if this agent lost its state volume, make a new token in Groundcrew)", err)
+		}
+		log.Info("enrolled with the join token")
+		e, err = dir.Enrollment()
+	}
 	if err != nil {
 		return err
 	}
@@ -204,22 +225,21 @@ func serve(cfg *config.Config) error {
 	if e.URL != cfg.Groundcrew.URL {
 		return fmt.Errorf("enrolled with %s, but the configuration says %s: enroll again with a new token", e.URL, cfg.Groundcrew.URL)
 	}
-	docker, systemd := runtimes(cfg)
+	rts := runtimes(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	c := client.New(cfg.Groundcrew.URL, e.AgentID, key, userAgent())
 	w := &watch.Watcher{
-		Config: cfg, Docker: docker, Systemd: systemd, Client: c, Log: log,
+		Config: cfg, Runtimes: rts, Client: c, Log: log,
 		HistoryPath: filepath.Join(cfg.StateDir, "images.json"),
 	}
 	runner := &commands.Runner{
 		Config:  cfg,
 		AgentID: e.AgentID,
-		Client:  c,
-		Docker:  docker,
-		Systemd: systemd,
-		Log:     log,
-		After:   w.Kick,
+		Client:   c,
+		Runtimes: rts,
+		Log:      log,
+		After:    w.Kick,
 		Key: func() ed25519.PublicKey {
 			k, err := dir.CommandKey()
 			if err != nil {
@@ -230,11 +250,10 @@ func serve(cfg *config.Config) error {
 	}
 	a := &agent.Agent{
 		Config:  cfg,
-		Client:  c,
-		Docker:  docker,
-		Systemd: systemd,
-		Log:     log,
-		Version: version,
+		Client:    c,
+		Inspector: rts.Inspector,
+		Log:       log,
+		Version:   version,
 		State:   &dir,
 		Watcher: w,
 	}

@@ -25,6 +25,9 @@ const (
 	Docker  = "docker"
 	Compose = "compose"
 	Systemd = "systemd"
+	// Kubernetes and ECS: the agent runs inside the cluster (A5).
+	Kubernetes = "kubernetes"
+	ECS        = "ecs"
 )
 
 // Actions a service may allow. Nothing is allowed unless listed.
@@ -61,7 +64,11 @@ type Service struct {
 	// compose: the project and service.
 	Compose *ComposeRef `yaml:"compose"`
 	// systemd: the unit.
-	Unit   string        `yaml:"unit"`
+	Unit string `yaml:"unit"`
+	// kubernetes: the Deployment (the agent runs in that cluster).
+	Kubernetes *KubernetesRef `yaml:"kubernetes"`
+	// ecs: the service (the agent runs in that account and region).
+	ECS    *ECSRef       `yaml:"ecs"`
 	Health *Health       `yaml:"health"`
 	Logs   string        `yaml:"logs"`
 	Deploy *DeploySource `yaml:"deploy"`
@@ -72,6 +79,22 @@ type ComposeRef struct {
 	Project string `yaml:"project"`
 	Service string `yaml:"service"`
 }
+
+type KubernetesRef struct {
+	Namespace  string `yaml:"namespace"`
+	Deployment string `yaml:"deployment"`
+	// The app's container in the pod (default: the first one).
+	Container string `yaml:"container"`
+}
+
+type ECSRef struct {
+	Cluster string `yaml:"cluster"`
+	Service string `yaml:"service"`
+	// The app's container in the task definition (default: the first essential one).
+	Container string `yaml:"container"`
+}
+
+var kubeName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
 type Health struct {
 	URL      string        `yaml:"url"`
@@ -96,6 +119,14 @@ func (s Service) Target() string {
 		}
 	case Systemd:
 		return s.Unit
+	case Kubernetes:
+		if s.Kubernetes != nil {
+			return s.Kubernetes.Namespace + "/" + s.Kubernetes.Deployment
+		}
+	case ECS:
+		if s.ECS != nil {
+			return s.ECS.Cluster + "/" + s.ECS.Service
+		}
 	}
 	return ""
 }
@@ -194,11 +225,24 @@ func (c *Config) Validate() error {
 			if s.Unit == "" {
 				add("%s: a systemd service needs unit", where)
 			}
+		case Kubernetes:
+			k := s.Kubernetes
+			if k == nil || !kubeName.MatchString(k.Namespace) || !kubeName.MatchString(k.Deployment) {
+				add("%s: a kubernetes service needs kubernetes.namespace and kubernetes.deployment (Kubernetes names)", where)
+			} else if k.Container != "" && !kubeName.MatchString(k.Container) {
+				add("%s: kubernetes.container is not a Kubernetes name", where)
+			}
+		case ECS:
+			if e := s.ECS; e == nil || e.Cluster == "" || e.Service == "" {
+				add("%s: an ecs service needs ecs.cluster and ecs.service", where)
+			}
 		default:
-			add("%s: runtime must be docker, compose, or systemd", where)
+			add("%s: runtime must be docker, compose, systemd, kubernetes, or ecs", where)
 		}
-		if s.Runtime != Docker && s.Container != "" || s.Runtime != Compose && s.Compose != nil || s.Runtime != Systemd && s.Unit != "" {
-			add("%s: container, compose, and unit belong to the docker, compose, and systemd runtimes", where)
+		if s.Runtime != Docker && s.Container != "" || s.Runtime != Compose && s.Compose != nil ||
+			s.Runtime != Systemd && s.Unit != "" || s.Runtime != Kubernetes && s.Kubernetes != nil ||
+			s.Runtime != ECS && s.ECS != nil {
+			add("%s: container, compose, unit, kubernetes, and ecs each belong to their own runtime", where)
 		}
 		if h := s.Health; h != nil {
 			if u, err := url.Parse(h.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {

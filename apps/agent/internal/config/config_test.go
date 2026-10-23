@@ -79,7 +79,7 @@ services:
 		"a systemd service can allow restart only",
 		`not "reboot"`,
 		`service "bad name": name must be`,
-		"runtime must be docker, compose, or systemd",
+		"runtime must be docker, compose, systemd, kubernetes, or ecs",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %q in:\n%v", want, err)
@@ -90,5 +90,37 @@ services:
 func TestHTTPIsAllowedForLocalhostOnly(t *testing.T) {
 	if _, err := Parse([]byte("groundcrew:\n  url: http://localhost:8000\n")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClusterServices(t *testing.T) {
+	cfg, err := Parse([]byte(`
+groundcrew: {url: https://api.groundkrew.com}
+services:
+  - name: api
+    runtime: kubernetes
+    kubernetes: {namespace: shop, deployment: api, container: api}
+    allow: [restart, rollback, deploy]
+  - name: worker
+    runtime: ecs
+    ecs: {cluster: checkout, service: worker}
+    allow: [restart]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Services[0].Target() != "shop/api" || cfg.Services[1].Target() != "checkout/worker" {
+		t.Fatalf("targets %q %q", cfg.Services[0].Target(), cfg.Services[1].Target())
+	}
+	for _, bad := range []string{
+		"{name: a, runtime: kubernetes, kubernetes: {namespace: Shop, deployment: api}}",
+		"{name: a, runtime: kubernetes}",
+		"{name: a, runtime: ecs, ecs: {cluster: c}}",
+		"{name: a, runtime: docker, container: x, ecs: {cluster: c, service: s}}",
+		"{name: a, runtime: nomad}",
+	} {
+		if _, err := Parse([]byte("groundcrew: {url: https://api.groundkrew.com}\nservices: [" + bad + "]")); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
 	}
 }

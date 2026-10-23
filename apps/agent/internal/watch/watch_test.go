@@ -74,7 +74,7 @@ func TestReportsCarryStateChangesHealthAndRedactedErrorLines(t *testing.T) {
 	p := &poster{}
 	failing := true
 	w := &Watcher{
-		Config: cfg, Docker: rt, Systemd: rt, Client: p,
+		Config: cfg, Runtimes: runtime.Set{Docker: rt, Systemd: rt}, Client: p,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Probe: func(context.Context, string, time.Duration) error {
 			if failing {
@@ -142,7 +142,7 @@ func TestEventsAreKeptWhileGroundcrewIsUnreachable(t *testing.T) {
 	cfg, _ := config.Parse([]byte("groundcrew: {url: https://api.groundkrew.com}\nservices:\n  - {name: web, runtime: docker, container: web}\n"))
 	rt := &fakeRuntime{state: runtime.State{Found: true, State: "running"}}
 	p := &poster{}
-	w := &Watcher{Config: cfg, Docker: rt, Systemd: rt, Client: p, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	w := &Watcher{Config: cfg, Runtimes: runtime.Set{Docker: rt, Systemd: rt}, Client: p, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	ctx := context.Background()
 	_ = w.Report(ctx)
 	if !strings.Contains(p.raw[0], `"events":[]`) {

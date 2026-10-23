@@ -9,7 +9,8 @@
 # agent-src=apps/agent ... (infra/platform/host/bin/gc-release does).
 # Pinned by digest, the same image apps/agent/go.sh uses, so these builds match the signed release
 # byte for byte (apps/agent/release.sh sign).
-FROM golang:1.23-bookworm@sha256:167053a2bb901972bf2c1611f8f52c44d5fe7e762e5cab213708d82c421614db AS agent
+# Always the build machine's platform: it cross-compiles both binaries (also for agent-image arm64).
+FROM --platform=$BUILDPLATFORM golang:1.23-bookworm@sha256:167053a2bb901972bf2c1611f8f52c44d5fe7e762e5cab213708d82c421614db AS agent
 WORKDIR /src
 COPY --from=agent-src . .
 # apps/agent/VERSION is the agent's version (the API's AGENT_VERSION must match it). The build
@@ -34,6 +35,17 @@ RUN set -eu; mkdir -p /out; AGENT_VERSION=$(cat VERSION); \
 # Only the downloads (docker build --target agent-files -o DIR exports just these).
 FROM scratch AS agent-files
 COPY --from=agent /out /
+
+# The agent as a container, for Kubernetes and ECS: the same signed binary, CA certificates,
+# nothing else; non-root. docker build --target agent-image --platform linux/<arch>
+# (gc-release publishes it at <domain>/public/groundcrew-agent:<version>).
+FROM scratch AS agent-image
+ARG TARGETARCH
+COPY --from=agent /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=agent /out/groundcrew-agent-linux-${TARGETARCH} /groundcrew-agent
+USER 65532:65532
+ENTRYPOINT ["/groundcrew-agent"]
+CMD ["run", "--config", "/etc/groundcrew-agent/agent.yaml"]
 
 FROM node:22-alpine AS deps
 WORKDIR /app

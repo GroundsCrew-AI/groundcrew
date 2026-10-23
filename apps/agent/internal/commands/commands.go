@@ -63,8 +63,7 @@ type Runner struct {
 	Config  *config.Config
 	AgentID string
 	Client  *client.Client
-	Docker  runtime.Runtime
-	Systemd runtime.Runtime
+	Runtimes runtime.Set
 	Key     Keys
 	Log     *slog.Logger
 	// After runs after each command (the watcher reports at once).
@@ -176,7 +175,7 @@ func (r *Runner) check(c signed) (Command, config.Service, error) {
 }
 
 func (r *Runner) run(ctx context.Context, cmd Command, s config.Service) (bool, string) {
-	rt := runtime.For(s, r.Docker, r.Systemd)
+	rt := r.Runtimes.For(s)
 	switch cmd.Action {
 	case config.Restart:
 		if err := rt.Restart(ctx, s); err != nil {
@@ -195,7 +194,7 @@ func (r *Runner) run(ctx context.Context, cmd Command, s config.Service) (bool, 
 		image := cmd.Params["image"]
 		rb, ok := rt.(runtime.Rollbacker)
 		if !ok || image == "" {
-			return false, "a rollback needs a Docker or Compose service and the image to go back to"
+			return false, "a rollback needs a Docker, Compose, Kubernetes, or ECS service and the image to go back to"
 		}
 		var healthy func(context.Context) error
 		if s.Health != nil {
@@ -242,7 +241,7 @@ type secretsOut struct {
 func (r *Runner) deploy(ctx context.Context, cmd Command, s config.Service, rt runtime.Runtime) (bool, string) {
 	d, ok := rt.(runtime.Deployer)
 	if !ok {
-		return false, "a deploy needs a Docker or Compose service"
+		return false, "a deploy needs a Docker, Compose, Kubernetes, or ECS service"
 	}
 	var secrets secretsOut
 	if err := r.Client.Post(ctx, "/agent/v1/commands/"+cmd.ID+"/secrets", map[string]any{}, &secrets); err != nil {
@@ -266,6 +265,9 @@ func (r *Runner) deploy(ctx context.Context, cmd Command, s config.Service, rt r
 	if err != nil {
 		return false, err.Error()
 	}
+	if res.Created && res.HostPort == 0 {
+		return true, fmt.Sprintf("created %s from %s; it is running", s.Target(), cmd.Params["image"])
+	}
 	if res.Created {
 		// "published on host port N": Groundcrew reads the port back from this sentence.
 		taken := ""
@@ -274,6 +276,9 @@ func (r *Runner) deploy(ctx context.Context, cmd Command, s config.Service, rt r
 		}
 		return true, fmt.Sprintf("created the container from %s, app port %d published on host port %d%s; it is running",
 			cmd.Params["image"], port, res.HostPort, taken)
+	}
+	if s.Runtime == config.Kubernetes || s.Runtime == config.ECS {
+		return true, fmt.Sprintf("rolled out %s on %s; it is running", cmd.Params["image"], s.Target())
 	}
 	return true, "recreated the container from " + cmd.Params["image"] + "; it is running"
 }

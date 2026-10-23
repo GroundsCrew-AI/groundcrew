@@ -51,8 +51,7 @@ func TestRunSendsTheInventoryAndHeartbeats(t *testing.T) {
 	a := &Agent{
 		Config:  cfg,
 		Client:  client.New(srv.URL, "agent-1", key, "test"),
-		Docker:  stub{},
-		Systemd: stub{},
+		Inspector: func(config.Service) inventory.Inspector { return stub{} },
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Version: "test",
 	}

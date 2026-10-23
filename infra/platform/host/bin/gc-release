@@ -92,6 +92,15 @@ build() { # build SHA < tar
   docker build -q --label "groundcrew.release=$sha" --build-arg "NEXT_PUBLIC_API_URL=$API_URL" \
     --build-context "agent-src=$dir/apps/agent" \
     -t "groundcrew/web:$sha" "$dir/apps/web" >/dev/null
+  # The agent's container image (Kubernetes, ECS), both CPUs, published after the roll-out.
+  local arch
+  for arch in amd64 arm64; do
+    docker build -q --label "groundcrew.release=$sha" --platform "linux/$arch" --target agent-image \
+      --build-arg "NEXT_PUBLIC_API_URL=$API_URL" --build-context "agent-src=$dir/apps/agent" \
+      -t "groundcrew/agent:$sha-$arch" "$dir/apps/web" >/dev/null
+  done
+  install -d -m 0700 "$STATE"
+  tr -d '[:space:]' <"$dir/apps/agent/VERSION" >"$STATE/agent-version-$sha"
   # Each release brings its own Compose file; going back uses the old one.
   install -d -m 0700 "$STATE"
   install -m 0644 "$dir/infra/platform/host/compose.yml" "$STATE/compose-$sha.yml"
@@ -104,13 +113,28 @@ record() { # record SHA: newest first, unique
   mv "$STATE/history.new" "$STATE/history"
 }
 
+publish_agent() { # publish_agent SHA: the agent image at <domain>/public/groundcrew-agent:<version>
+  local sha=$1 version repo=127.0.0.1:5000/public/groundcrew-agent arch refs=()
+  version=$(cat "$STATE/agent-version-$sha" 2>/dev/null) || { log "no agent image in $sha"; return 0; }
+  for arch in amd64 arm64; do
+    docker tag "groundcrew/agent:$sha-$arch" "$repo:$version-$arch" &&
+      docker push -q "$repo:$version-$arch" >/dev/null || { log "agent image $arch not published"; return 1; }
+    refs+=("$repo:$version-$arch")
+  done
+  docker manifest rm "$repo:$version" >/dev/null 2>&1 || true
+  docker manifest create --insecure "$repo:$version" "${refs[@]}" >/dev/null &&
+    docker manifest push --insecure --purge "$repo:$version" >/dev/null || { log "agent image list not published"; return 1; }
+  log "agent image $version published"
+}
+
 prune() { # keep the images of the last $KEEP releases
   local keep sha
   keep=$(head -n "$KEEP" "$STATE/history" | cut -d' ' -f1)
   for sha in $(docker images --filter label=groundcrew.release --format '{{.Tag}}' | sort -u); do
     echo "$keep" | grep -qx "$sha" && continue
-    docker rmi -f "groundcrew/api:$sha" "groundcrew/web:$sha" >/dev/null 2>&1 || true
-    rm -f "$STATE/compose-$sha.yml"
+    docker rmi -f "groundcrew/api:$sha" "groundcrew/web:$sha" "groundcrew/agent:$sha-amd64" \
+      "groundcrew/agent:$sha-arm64" >/dev/null 2>&1 || true
+    rm -f "$STATE/compose-$sha.yml" "$STATE/agent-version-$sha"
     log "removed release $sha"
   done
 }
@@ -121,6 +145,8 @@ deploy() {
   log "rolling out $sha (previous: ${previous:-none})"
   if roll_out "$sha"; then
     record "$sha"; prune; log "release $sha is live"
+    # A failed publish leaves the release live; the previous agent image stays where it was.
+    publish_agent "$sha" || log "WARNING: the agent image was not published (Kubernetes and ECS installs keep the previous one)"
   else
     if [ -n "$previous" ]; then
       log "rolling back to $previous"
