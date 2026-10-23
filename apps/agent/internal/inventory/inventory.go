@@ -60,17 +60,10 @@ type Inspector interface {
 }
 
 // Collect describes the host and every configured service.
-func Collect(ctx context.Context, cfg *config.Config, docker, systemd Inspector) Inventory {
+func Collect(ctx context.Context, cfg *config.Config, pick func(config.Service) Inspector) Inventory {
 	inv := Inventory{Host: HostFacts(), Services: []Service{}}
 	for _, s := range cfg.Services {
-		var found Service
-		switch s.Runtime {
-		case config.Docker, config.Compose:
-			found = docker.Inspect(ctx, s)
-		case config.Systemd:
-			found = systemd.Inspect(ctx, s)
-		}
-		inv.Services = append(inv.Services, merge(s, found))
+		inv.Services = append(inv.Services, merge(s, pick(s).Inspect(ctx, s)))
 	}
 	return inv
 }

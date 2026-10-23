@@ -5,13 +5,15 @@ import { Callout, Code, DocSection, DocsArticle, Inline, Step, Steps, Table } fr
 export const metadata: Metadata = {
   title: "Install an agent",
   description:
-    "Install the Groundcrew agent on a server or VM. It reports the services you list and connects out to Groundcrew.",
+    "Install the Groundcrew agent on a server or VM, in a Kubernetes cluster, or on Amazon ECS. It reports the services you list and connects out to Groundcrew.",
 };
 
 const TOC = [
   { id: "why", title: "When to use the agent" },
   { id: "install", title: "Install and enroll" },
   { id: "services", title: "List your services" },
+  { id: "kubernetes", title: "In a Kubernetes cluster" },
+  { id: "ecs", title: "On Amazon ECS" },
   { id: "reads", title: "What the agent reads and sends" },
   { id: "fixes", title: "Incidents and fixes" },
   { id: "deploys", title: "Deploys" },
@@ -65,7 +67,9 @@ export default function ConnectAgentPage() {
             <p>Copy the command from the dialog and run it on the server. It looks like this:</p>
             <Code>{"curl -fsSL https://groundkrew.com/agent/install.sh | sudo sh -s -- --token gcj_..."}</Code>
             <p>
-              It downloads the agent for your CPU, checks it against <Inline>SHA256SUMS</Inline>, installs it to{" "}
+              It downloads the agent for your CPU, checks that <Inline>SHA256SUMS</Inline> carries Groundcrew&apos;s
+              release signature and that the agent matches it (it stops if either check fails; it needs OpenSSL 3,
+              which current Linux distributions have), installs it to{" "}
               <Inline>/usr/local/bin</Inline>, creates the <Inline>groundcrew-agent</Inline> user and service, then
               enrolls and starts it. The dialog shows <strong>Connected</strong> when the agent has enrolled.
             </p>
@@ -88,10 +92,12 @@ export default function ConnectAgentPage() {
         <Table
           head={["Setting", "Meaning"]}
           rows={[
-            [<Inline key="r">runtime</Inline>, "docker, compose, or systemd."],
+            [<Inline key="r">runtime</Inline>, "docker, compose, or systemd; kubernetes or ecs when the agent runs in that cluster."],
             [<Inline key="c">container</Inline>, "Docker: the container name."],
             [<Inline key="p">compose</Inline>, "Compose: the project and the service."],
             [<Inline key="u">unit</Inline>, "systemd: the unit name."],
+            [<Inline key="k">kubernetes</Inline>, "Kubernetes: the namespace, the Deployment, and optionally the container."],
+            [<Inline key="e">ecs</Inline>, "ECS: the cluster, the service, and optionally the container."],
             [<Inline key="h">health.url</Inline>, "A health check the agent calls on the server."],
             [<Inline key="d">deploy.image</Inline>, "Optional: the only image repository deploys may come from."],
             [
@@ -104,6 +110,51 @@ export default function ConnectAgentPage() {
           Then check the file and restart the agent: <Inline>sudo groundcrew-agent check</Inline> finds each service and
           says what is missing, and <Inline>sudo systemctl restart groundcrew-agent</Inline> loads the change. The
           services appear on the map under the server.
+        </p>
+      </DocSection>
+
+      <DocSection id="kubernetes" title="In a Kubernetes cluster">
+        <p>
+          The agent runs inside the cluster and connects out, so it also works for private clusters with no public API.
+          In the install dialog choose <strong>Kubernetes</strong>, name the namespaces with your apps, and decide whether
+          it may restart, roll back, and deploy there. The dialog writes one <Inline>kubectl apply</Inline> command:
+        </p>
+        <Steps>
+          <Step title="What it creates">
+            <p>
+              The namespace <Inline>groundcrew-agent</Inline> with the agent (one pod, non-root, read-only file system), a
+              1 GiB volume for its key, its configuration, and the one-time join token. In each namespace you named, a
+              Role and RoleBinding: reading Deployments, ReplicaSets, pods, and their logs, plus, if you allowed it,
+              updating Deployments and writing the image pull secret. Nothing anywhere else.
+            </p>
+          </Step>
+          <Step title="List the Deployments">
+            <p>
+              Add each one to the configuration (<Inline>runtime: kubernetes</Inline> with the namespace and Deployment),
+              then restart the agent. After it shows Connected, delete the join token Secret.
+            </p>
+          </Step>
+        </Steps>
+        <p>
+          A deploy sets the image and env values on the Deployment and waits until the new pods run steadily; if they
+          crash or never start, the pod template before the deploy goes back and the error carries the pods&apos; last
+          log lines. A Deployment that does not exist yet is created with a Service on the app&apos;s port.
+        </p>
+      </DocSection>
+
+      <DocSection id="ecs" title="On Amazon ECS">
+        <p>
+          In the install dialog choose <strong>Amazon ECS</strong>, download the CloudFormation template, and create the
+          stack with the parameters the dialog shows. It runs the agent as one Fargate task in your cluster, keeps its key
+          on an encrypted EFS volume, and gives it a task role: reading services, tasks, and logs, plus, with{" "}
+          <Inline>AllowActions</Inline> set to yes, updating services tagged{" "}
+          <Inline>groundcrew:managed=true</Inline>.
+        </p>
+        <p>
+          A deploy registers a task definition revision with the new image and env values and updates the service; if
+          the new tasks keep failing, the revision before goes back. Images from the Groundcrew registry need the
+          stack&apos;s <Inline>PullLoginReadPolicyArn</Inline> on the service&apos;s task execution role; the agent keeps
+          that pull login fresh. Images in ECR need nothing more.
         </p>
       </DocSection>
 
@@ -249,7 +300,9 @@ export default function ConnectAgentPage() {
 
       <DocSection id="change" title="Upgrade, reinstall, or remove">
         <p>
-          To upgrade, run the install command again without a token: the configuration is kept and the agent restarts.
+          To upgrade, run <Inline>sudo groundcrew-agent update</Inline> (agent 0.6.0 and later), or the install
+          command again without a token. Either way the configuration is kept, the agent restarts, and nothing is
+          installed unless it carries Groundcrew&apos;s release signature.
           To move the agent to a new server or reinstall it, choose <strong>New join token</strong> and install with it;
           the new key replaces the old one.
         </p>

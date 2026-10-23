@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -79,7 +81,7 @@ services:
 		"a systemd service can allow restart only",
 		`not "reboot"`,
 		`service "bad name": name must be`,
-		"runtime must be docker, compose, or systemd",
+		"runtime must be docker, compose, systemd, kubernetes, or ecs",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %q in:\n%v", want, err)
@@ -90,5 +92,72 @@ services:
 func TestHTTPIsAllowedForLocalhostOnly(t *testing.T) {
 	if _, err := Parse([]byte("groundcrew:\n  url: http://localhost:8000\n")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClusterServices(t *testing.T) {
+	cfg, err := Parse([]byte(`
+groundcrew: {url: https://api.groundkrew.com}
+services:
+  - name: api
+    runtime: kubernetes
+    kubernetes: {namespace: shop, deployment: api, container: api}
+    allow: [restart, rollback, deploy]
+  - name: worker
+    runtime: ecs
+    ecs: {cluster: checkout, service: worker}
+    allow: [restart]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Services[0].Target() != "shop/api" || cfg.Services[1].Target() != "checkout/worker" {
+		t.Fatalf("targets %q %q", cfg.Services[0].Target(), cfg.Services[1].Target())
+	}
+	for _, bad := range []string{
+		"{name: a, runtime: kubernetes, kubernetes: {namespace: Shop, deployment: api}}",
+		"{name: a, runtime: kubernetes}",
+		"{name: a, runtime: ecs, ecs: {cluster: c}}",
+		"{name: a, runtime: docker, container: x, ecs: {cluster: c, service: s}}",
+		"{name: a, runtime: nomad}",
+	} {
+		if _, err := Parse([]byte("groundcrew: {url: https://api.groundkrew.com}\nservices: [" + bad + "]")); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
+	}
+}
+
+func TestTheConfigurationCanComeFromTheEnvironment(t *testing.T) {
+	t.Setenv(ConfigEnv, "groundcrew: {url: https://api.groundkrew.com}\nservices: [{name: api, runtime: ecs, ecs: {cluster: c, service: api}}]\n")
+	cfg, err := Load("/does/not/exist")
+	if err != nil || cfg.Services[0].Target() != "c/api" {
+		t.Fatalf("%+v %v", cfg, err)
+	}
+}
+
+// The configuration the ECS template writes (packaging/ecs-agent.yaml) parses as the agent's.
+func TestTheECSTemplatesConfigurationParses(t *testing.T) {
+	raw, err := os.ReadFile("../../packaging/ecs-agent.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?s)Name: GROUNDCREW_AGENT_CONFIG\s+Value: !Sub \|\n(.*?)\n          Secrets:`).FindSubmatch(raw)
+	if m == nil {
+		t.Fatal("no GROUNDCREW_AGENT_CONFIG in the template")
+	}
+	var lines []string
+	for _, l := range strings.Split(string(m[1]), "\n") {
+		lines = append(lines, strings.TrimPrefix(l, "                "))
+	}
+	text := strings.NewReplacer(
+		"${GroundcrewApiUrl}", "https://api.groundkrew.com",
+		"${Services}", "[{name: api, runtime: ecs, ecs: {cluster: checkout, service: api}, allow: [restart, deploy]}]",
+	).Replace(strings.Join(lines, "\n"))
+	cfg, err := Parse([]byte(text))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, text)
+	}
+	if cfg.StateDir != "/var/lib/groundcrew-agent" || cfg.Services[0].Target() != "checkout/api" {
+		t.Fatalf("%+v", cfg)
 	}
 }

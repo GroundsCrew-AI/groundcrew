@@ -27,7 +27,8 @@ CONFIG_KEY = "inventory"
 HASH_KEY = "inventory_hash"
 MAX_SERVICES = 100
 
-Runtime = Literal["docker", "compose", "systemd"]
+# kubernetes and ecs: the agent runs in that cluster (docs/agent-plan.md "A5 plan").
+Runtime = Literal["docker", "compose", "systemd", "kubernetes", "ecs"]
 Action = Literal["restart", "rollback", "deploy"]
 
 
@@ -46,7 +47,8 @@ class HostFacts(_Strict):
 class ServiceFacts(_Strict):
     name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     runtime: Runtime
-    # docker: container name; compose: "<project>/<service>"; systemd: unit name.
+    # docker: container name; compose: "<project>/<service>"; systemd: unit name;
+    # kubernetes: "<namespace>/<deployment>"; ecs: "<cluster>/<service>".
     target: str = Field(max_length=300)
     # Docker and Compose: the image reference the container runs and its digest, if known.
     image: str | None = Field(default=None, max_length=500)

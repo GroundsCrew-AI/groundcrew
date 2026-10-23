@@ -11,7 +11,8 @@
 #                   let the agent restart these systemd units (and only these), through a
 #                   polkit rule; each restart still needs your approval in Groundcrew
 #
-# What it does: downloads groundcrew-agent for this CPU and checks it against SHA256SUMS,
+# What it does: downloads groundcrew-agent for this CPU, checks SHA256SUMS against Groundcrew's
+# release signature (Ed25519, OpenSSL 3) and the binary against SHA256SUMS,
 # installs it to /usr/local/bin, creates the system user groundcrew-agent, writes
 # /etc/groundcrew-agent/agent.yaml (only if missing), installs the systemd unit, then enrolls
 # and starts the agent. Run it again to upgrade; the configuration is kept.
@@ -31,6 +32,11 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+
+# The Groundcrew release key (apps/agent/internal/release/release.pub; a test keeps them equal).
+RELEASE_PUB='-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAPH6bU6yPzXj9E+v1xibTOmyimYVs8fbMsVEpCq6A454=
+-----END PUBLIC KEY-----'
 
 say() { printf '%s\n' "groundcrew: $*"; }
 die() { printf '%s\n' "groundcrew: $*" >&2; exit 1; }
@@ -57,7 +63,15 @@ BIN=groundcrew-agent-linux-$ARCH
 say "downloading $BIN"
 fetch "$DOWNLOADS/$BIN" "$TMP/$BIN"
 fetch "$DOWNLOADS/SHA256SUMS" "$TMP/SHA256SUMS"
+fetch "$DOWNLOADS/SHA256SUMS.sig" "$TMP/SHA256SUMS.sig"
+# The signature first: the sums are only trusted once they are Groundcrew's own.
+command -v openssl >/dev/null || die "openssl is required to check the release signature"
+printf '%s\n' "$RELEASE_PUB" >"$TMP/release.pub"
+openssl pkeyutl -verify -pubin -inkey "$TMP/release.pub" -rawin -in "$TMP/SHA256SUMS" \
+  -sigfile "$TMP/SHA256SUMS.sig" >/dev/null 2>&1 ||
+  die "SHA256SUMS is not signed with the Groundcrew release key (needs OpenSSL 3); not installing"
 (cd "$TMP" && grep " $BIN\$" SHA256SUMS | sha256sum -c - >/dev/null) || die "checksum mismatch for $BIN"
+say "signature and checksum verified"
 install -m 0755 "$TMP/$BIN" /usr/local/bin/groundcrew-agent
 
 if ! id groundcrew-agent >/dev/null 2>&1; then

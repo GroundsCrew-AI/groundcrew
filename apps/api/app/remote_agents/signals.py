@@ -93,6 +93,9 @@ def describe(s: ServiceState) -> str:
 def image_label(ref: str | None, image_id: str | None) -> str:
     """ "web:2@0a1b2c3d4e5f": the reference and the short local id (the same text the agent
     uses in its image change events)."""
+    if image_id and image_id == ref:
+        # Kubernetes and ECS: the "id" is the reference itself (the registry holds the image).
+        return ref
     short = (image_id or "").removeprefix("sha256:")[:12]
     return f"{ref or '?'}@{short}"
 

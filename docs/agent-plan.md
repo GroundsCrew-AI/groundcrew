@@ -162,7 +162,8 @@ rule's thresholds). Rules live on the server so they can change without upgradin
   verify after the fix. Medic proposes them like the cloud fixes.
 - **A4 Deploys.** `AgentTarget`: deploy a built image from the Deploy page through the agent,
   with health check and automatic return to the previous digest.
-- **A5 Packaging.** Signed release builds, a Kubernetes and an ECS packaging of the same agent.
+- **A5 Packaging.** Signed release builds, a Kubernetes and an ECS packaging of the same agent
+  (one milestone, decided 2026-10-23; plan below in "A5 plan").
 
 ## What you do by hand
 
@@ -174,3 +175,114 @@ rule's thresholds). Rules live on the server so they can change without upgradin
 
 - Join tokens work once, for 1 hour (AGENT_JOIN_TOKEN_MINUTES). Agents count as connections, so
   the workspace's connection quota caps them. Event retention: 7 days (A2).
+
+## A5 plan (2026-10-23)
+
+Decisions (2026-10-23): releases are signed with an Ed25519 key the owner holds; Kubernetes and
+ECS come in one milestone; Groundcrew as an MCP server is planned separately (`docs/mcp-plan.md`).
+
+### 1. Signed releases
+
+Today the web image builds the agent on the server and `install.sh` checks only SHA-256 sums
+served next to the binaries: anyone who can change what groundkrew.com serves can change both.
+
+- **Key.** One Ed25519 key pair, made with `openssl genpkey -algorithm ed25519`. The private key
+  stays in `ops/agent-release.key` (git-ignored, on the owner's machine only). The public key is
+  committed (`apps/agent/packaging/release.pub`), embedded in `install.sh`, and compiled into
+  the agent.
+- **Reproducible builds.** The binaries are built in a golang image pinned by digest, with
+  `-trimpath -buildvcs=false -ldflags "-s -w -buildid= -X main.version=..."`, so the same source
+  gives the same bytes on any machine.
+- **Signing, on the owner's machine:** `make agent-release` builds both binaries, writes
+  `apps/agent/release/SHA256SUMS`, and signs it to `SHA256SUMS.sig` with the private key. Both
+  files are committed with the version bump. Nothing secret is committed.
+- **Serving.** The web image builds the binaries again and **fails the build** if its sums
+  differ from the committed `SHA256SUMS`. So the server can only serve exactly what was signed.
+  It serves the committed `SHA256SUMS` and `SHA256SUMS.sig` next to the binaries and a container
+  image (below).
+- **Checking.** `install.sh` verifies `SHA256SUMS.sig` with the embedded public key
+  (`openssl pkeyutl -verify -rawin`, OpenSSL 3, on every current distribution) before it trusts
+  any sum, and refuses on any mismatch. An installed agent checks a new release with its compiled-in
+  key (`groundcrew-agent update`), so an older agent never runs an unsigned newer one.
+- **Key loss or leak:** a new key needs a new agent release signed with the old key that carries
+  both public keys, then a release with the new key only. Written down in the runbook.
+
+### 2. The agent's container image
+
+Kubernetes and ECS run the agent as a container: `groundcrew-agent:<version>` (distroless static
+base, non-root, the same signed binary). It is served from the Groundcrew registry under a
+read-only public path, `api.groundkrew.com/public/groundcrew-agent`: anonymous `GET`/`HEAD`
+for that repository only (nginx), pushes only from the release step on the server. Every other
+repository keeps its token checks. The release step pushes it and records its digest, and the
+manifests and template pin the digest.
+
+### 3. Kubernetes
+
+The agent runs inside the cluster and dials out, so private clusters with no public API work.
+
+- **Runtime `kubernetes`**, a service is `namespace` + `deployment` (StatefulSets later):
+
+  ```yaml
+  services:
+    - name: checkout-api
+      runtime: kubernetes
+      kubernetes: {namespace: shop, deployment: api, container: api}
+      health: {url: http://api.shop.svc:8000/health}
+      allow: [restart, rollback, deploy]
+  ```
+
+- **Reads:** the Deployment, its ReplicaSets and Pods: ready and available replicas, restarts,
+  OOM kills, last exit code, the image and digest, the ReplicaSet before it (the rollback
+  target), pod logs (redacted on the way). Plain REST to the API server with the
+  ServiceAccount token: no client-go, so the binary stays small.
+- **Actions,** each only if `allow` lists it:
+  - `restart`: the `kubectl rollout restart` annotation, then waits for the rollout.
+  - `rollback`: sets the container image back to the previous ReplicaSet's, waits for the rollout.
+  - `deploy`: sets the image (with an image pull secret made from the one-time registry login,
+    in that namespace only), waits for rollout and health, and goes back to the previous image if
+    it fails. A missing Deployment is created from a minimal template (the app's port, one
+    replica, a ClusterIP Service), like the agent does for a missing container.
+- **Packaging:** `kubernetes/agent.yaml` (served at groundkrew.com/agent/): a Namespace
+  `groundcrew-agent`, a ServiceAccount, a Deployment with one replica, a 1 GiB PVC for the
+  agent's key and state, a ConfigMap holding `agent.yaml`, and per watched namespace a Role
+  plus RoleBinding. Read verbs are always granted. `patch` on deployments, and `create` on
+  deployments, services and secrets, are granted only for namespaces whose services allow
+  `deploy` or `rollback`. The install dialog writes the file with the join token as a one-time
+  Secret.
+- **Tests:** a fake API server for unit tests; a live run on the kind cluster (`GC_KIND_TEST=1`)
+  that enrolls, reports, restarts, deploys, and rolls back a Deployment.
+
+### 4. ECS
+
+- **Runtime `ecs`**, a service is `cluster` + `service`. Reads: the service, its deployments,
+  running and pending counts, task stops and exit codes, the task definition's image, the
+  revision before it, and CloudWatch log lines through the task definition's log
+  configuration. Actions: `restart` (force a new deployment), `rollback` (the service back to the
+  previous task definition revision), `deploy` (a new revision with the new image, then
+  `UpdateService`, wait for steady state and health, back to the previous revision on failure).
+- **Calls:** AWS APIs with SigV4 signed in the agent (standard library, about 150 lines).
+  Credentials come from the task role through the ECS credentials endpoint; the agent never
+  holds keys.
+- **Packaging:** `ecs/agent.yaml`, a CloudFormation template (Quick-create link like the AWS
+  connection) that makes a Fargate service in the chosen cluster, the task role, the log group,
+  and the join token in Secrets Manager (read once). The task role can only describe, read logs,
+  and `UpdateService` / `RegisterTaskDefinition` / `iam:PassRole` for services tagged
+  `groundcrew:managed=true`, so it can't touch anything else in the account.
+- **Tests:** SigV4 against AWS's published test vectors; a fake ECS endpoint for the actions;
+  a live run in account 881050425883 only with the owner's OK (AWS writes).
+
+### 5. Server side
+
+The API changes little: services report the same states and take the same commands. New parts
+are the runtime and kind columns on the Map and the connection, `AgentTarget` plans that name
+the Deployment or ECS service instead of a container, and the install dialog's Kubernetes and
+ECS tabs. Medic's agent fixes already go through the runtime-neutral commands.
+
+### What the owner does
+
+- Make the release key once: `make agent-release-key` (writes `ops/agent-release.key` and
+  prints the public key to commit), and keep a copy somewhere safe offline.
+- Approve the first production release that serves the image, and the nginx change for the
+  public image path.
+- OK the live ECS test in 881050425883 (a Fargate service for about 10 minutes).
+

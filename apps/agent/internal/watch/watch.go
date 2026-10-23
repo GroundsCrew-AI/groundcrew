@@ -60,11 +60,10 @@ type health struct {
 }
 
 type Watcher struct {
-	Config  *config.Config
-	Docker  runtime.Runtime
-	Systemd runtime.Runtime
-	Client  Poster
-	Log     *slog.Logger
+	Config   *config.Config
+	Runtimes runtime.Set
+	Client   Poster
+	Log      *slog.Logger
 	// Probe runs health checks (replaced in tests).
 	Probe func(ctx context.Context, url string, timeout time.Duration) error
 	// HistoryPath keeps the images each service ran across agent restarts ("" = memory only).
@@ -197,7 +196,7 @@ func (w *Watcher) Report(ctx context.Context) error {
 	now := time.Now()
 	states := make([]runtime.State, 0, len(w.Config.Services))
 	for _, s := range w.Config.Services {
-		rt := runtime.For(s, w.Docker, w.Systemd)
+		rt := w.Runtimes.For(s)
 		st := rt.State(ctx, s)
 		w.previousImage(ctx, rt, s.Name, &st)
 		w.mu.Lock()
@@ -326,6 +325,9 @@ func (w *Watcher) previousImage(ctx context.Context, rt runtime.Runtime, name st
 }
 
 func imageLabel(st runtime.State) string {
+	if st.ImageID == st.Image {
+		return st.Image // Kubernetes and ECS: the image "id" is its reference
+	}
 	id := strings.TrimPrefix(st.ImageID, "sha256:")
 	if len(id) > 12 {
 		id = id[:12]
