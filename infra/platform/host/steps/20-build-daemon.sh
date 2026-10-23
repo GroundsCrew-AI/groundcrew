@@ -63,4 +63,4 @@ rm -rf "$HOME_/.local/share/docker"
 
 D="as_build docker --host unix:///run/user/$UID_/docker.sock"
 $D info --format 'build daemon: rootless={{range .SecurityOptions}}{{if eq . "name=rootless"}}yes{{end}}{{end}} default-runtime={{.DefaultRuntime}} data={{.DockerRootDir}}'
-for image in moby/buildkit:v0.25.1-rootless curlimages/curl:8.17.0; do $D pull -q "$image" >/dev/null; done
+for image in moby/buildkit:v0.25.1 curlimages/curl:8.17.0; do $D pull -q "$image" >/dev/null; done
