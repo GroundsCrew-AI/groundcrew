@@ -47,9 +47,11 @@ Not offered: approving, rejecting, reading secret values, deleting anything.
 
 ## Milestones
 
-1. **M1** Tokens (model, Settings UI, audit), the `/mcp` endpoint, read tools, docs page
-   "Use Groundcrew from your assistant" with Claude Code / Cursor setup snippets.
-2. **M2** Write tools (`start_deploy`, `report_incident`, `retry_fix`) with approval links.
+1. **M1** (done 2026-10-23) Tokens (model, Settings UI, audit), the `/mcp` endpoint, read tools,
+   docs page "Use Groundcrew from your assistant" with Claude Code / Cursor setup snippets.
+2. **M2** (done 2026-10-23) `list_targets`, `start_deploy`, `change_settings` (plain values only),
+   `report_incident`, `retry_fix`, each ending at an approval link. No secret value ever passes
+   through an assistant.
 3. **Later** Groundcrew as an MCP *client*: workspaces add read-only MCP servers (Sentry,
    Datadog, their own runbooks) that Medic queries for evidence.
 

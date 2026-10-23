@@ -157,3 +157,77 @@ async def test_only_owners_make_tokens_and_a_member_who_leaves_takes_them_along(
         await session.commit()
     denied = await _rpc(client, token, "tools/list")
     assert denied.status_code == 401 and "left the workspace" in denied.text
+
+
+async def test_starting_work_needs_an_approver_token_and_ends_at_an_approval_link(
+    client: httpx.AsyncClient,  # noqa: F811
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import get_settings
+    from app.db.models import Connection, Resource
+    from app.security.crypto import generate_key
+
+    # Deploys seal their env values with SECRETS_KEY.
+    monkeypatch.setenv("SECRETS_KEY", generate_key())
+    get_settings.cache_clear()
+
+    alice = await _member(session_factory, 7106, "alice")
+    async with session_factory() as session:
+        github = Connection(
+            workspace_id=alice.workspace_id,
+            kind="github",
+            name="acme",
+            status="connected",
+            config={"installation_id": 1, "repos": ["acme/shop"]},
+        )
+        cluster = Connection(
+            workspace_id=alice.workspace_id,
+            kind="k8s",
+            name="prod-cluster",
+            status="connected",
+            config={"cluster": "prod"},
+        )
+        session.add_all([github, cluster])
+        await session.flush()
+        api = Resource(
+            workspace_id=alice.workspace_id,
+            connection_id=cluster.id,
+            provider="k8s",
+            type="k8s:deployment",
+            external_id="k8s:prod/shop/api",
+            name="api",
+        )
+        session.add(api)
+        await session.commit()
+
+    reader = (await _token(client, alice))["token"]
+    refused = await _call(client, reader, "report_incident", resource_ids=[str(api.id)], title="x")
+    assert "can only read" in refused["data"]["error"]
+
+    worker = (await _token(client, alice, role="approver"))["token"]
+    targets = await _call(client, worker, "list_targets")
+    assert targets["data"]["repositories"] == ["acme/shop"]
+    assert [t["name"] for t in targets["data"]["targets"]] == ["prod-cluster"]
+
+    started = await _call(
+        client,
+        worker,
+        "start_deploy",
+        repository="acme/shop",
+        target="prod-cluster",
+        service_folder="api",
+    )
+    deploy_id = started["data"]["deploy_id"]
+    assert started["data"]["link"].endswith(f"/deploy/{deploy_id}")
+    detail = (await client.get(f"/deploys/{deploy_id}", headers=alice.headers)).json()
+    assert detail["source"]["repo"] == "acme/shop" and detail["source"]["path"] == "api"
+    assert detail["status"] == "queued"  # nothing runs on infrastructure before an approval
+
+    missing = await _call(client, worker, "start_deploy", repository="acme/shop", target="nope")
+    assert "No target named nope" in missing["data"]["error"]
+
+    reported = await _call(
+        client, worker, "report_incident", resource_ids=[str(api.id)], title="api returns 500s"
+    )
+    assert reported["data"]["link"].endswith(f"/incidents/{reported['data']['incident_id']}")

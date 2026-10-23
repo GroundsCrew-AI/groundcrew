@@ -69,7 +69,10 @@ async def _api(method: str, path: str, **kw: Any) -> Any:
     ctx = _ctx()
     token = create_internal_token(ctx.user_id, get_settings())
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://groundcrew-api", timeout=60
+        # A route's crash comes back as a 500 to show, not an exception in the tool.
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://groundcrew-api",
+        timeout=60,
     ) as client:
         response = await client.request(
             method, path, headers={"Authorization": f"Bearer {token}"}, **kw
@@ -208,7 +211,149 @@ def make_server() -> FastMCP:
         """One resource: its details, what it connects to, recent changes and incidents."""
         return _result(await _api("GET", f"/resources/{uuid.UUID(resource_id)}"))
 
+    # --- starting work (approver tokens): every change still waits for a person ---------------
+
+    @server.tool()
+    async def list_targets() -> str:
+        """Where deploys can go (servers with the agent, Kubernetes clusters, AWS accounts with
+        deploys on) and the GitHub repositories they can come from. Use before start_deploy."""
+        conns = await _api("GET", "/connections", params={"workspace_id": str(_ctx().workspace_id)})
+        if not isinstance(conns, list):
+            return _result(conns)
+        targets: list[dict[str, Any]] = []
+        repos: list[str] = []
+        for c in conns:
+            agent = c.get("agent") or {}
+            if c["kind"] == "github":
+                repos += c.get("repos") or []
+            elif c["kind"] in ("k8s", "agent") or (
+                c["kind"] == "aws" and c.get("tier") == "deploy"
+            ):
+                targets.append(
+                    {
+                        "name": c["name"],
+                        "kind": c["kind"],
+                        "status": c["status"],
+                        "services": agent.get("deploy_services") if c["kind"] == "agent" else None,
+                    }
+                )
+        return _result({"targets": targets, "repositories": sorted(set(repos))})
+
+    @server.tool()
+    async def start_deploy(
+        repository: str,
+        target: str,
+        ref: str = "main",
+        service_folder: str | None = None,
+        server_service: str | None = None,
+    ) -> str:
+        """Start a deploy of a GitHub repository (owner/name) at ref to a target (a name from
+        list_targets). service_folder: the folder of one service in a repo with several (api,
+        web); server_service: the service on a server agent. Groundcrew reads, builds, and plans
+        it, then waits for a person to approve the plan: give the user the link. Env values are
+        set on the approval card, never here."""
+        if problem := _cannot_start():
+            return _result({"error": problem})
+        ws = str(_ctx().workspace_id)
+        conns = await _api("GET", "/connections", params={"workspace_id": ws})
+        if not isinstance(conns, list):
+            return _result(conns)
+        github = [c for c in conns if c["kind"] == "github" and c["status"] == "connected"]
+        source = next((c for c in github if repository in (c.get("repos") or [])), None) or (
+            github[0] if github else None
+        )
+        dest = next((c for c in conns if target in (c["name"], c["id"])), None)
+        if source is None:
+            return _result({"error": "No GitHub connection in this workspace."})
+        if dest is None:
+            return _result({"error": f"No target named {target}: see list_targets."})
+        repo: dict[str, Any] = {"connection_id": source["id"], "repo": repository, "ref": ref}
+        if service_folder:
+            repo["path"] = service_folder
+        body: dict[str, Any] = {
+            "workspace_id": ws,
+            "repo": repo,
+            "target_connection_id": dest["id"],
+            "env": [],
+        }
+        if server_service:
+            body["target_service"] = server_service
+        data = await _api("POST", "/deploys", json=body)
+        if isinstance(data, dict) and data.get("deploy_id"):
+            data["link"] = _link(f"/deploy/{data['deploy_id']}")
+            data["next"] = "Groundcrew builds and plans it; a person approves the plan at the link."
+        return _result(data)
+
+    @server.tool()
+    async def change_settings(
+        deploy_id: str, set_values: dict[str, str] | None = None, remove: list[str] | None = None
+    ) -> str:
+        """Change plain (not secret) env vars of a live deploy without a rebuild: set_values
+        adds or updates them, remove takes names off. Every other value stays as it is. The
+        change waits for a person's approval: give the user the link. Secrets are changed in
+        Groundcrew (Change settings on the deploy), never through an assistant."""
+        if problem := _cannot_start():
+            return _result({"error": problem})
+        body = {
+            "env": [
+                {"name": k, "value": v, "secret": False} for k, v in (set_values or {}).items()
+            ],
+            "remove": list(remove or []),
+        }
+        data = await _api("POST", f"/deploys/{uuid.UUID(deploy_id)}/settings", json=body)
+        if isinstance(data, dict) and data.get("deploy_id"):
+            data["link"] = _link(f"/deploy/{data['deploy_id']}")
+        return _result(data)
+
+    @server.tool()
+    async def report_incident(
+        resource_ids: list[str],
+        title: str,
+        description: str | None = None,
+        severity: str | None = None,
+    ) -> str:
+        """Open an incident for resources that look broken (ids from list_resources) and have
+        Medic investigate. severity: low, medium, high, critical. Any fix Medic proposes waits
+        for a person's approval."""
+        if problem := _cannot_start():
+            return _result({"error": problem})
+        body: dict[str, Any] = {
+            "workspace_id": str(_ctx().workspace_id),
+            "resource_ids": [str(uuid.UUID(r)) for r in resource_ids],
+            "title": title,
+        }
+        if description:
+            body["description"] = description
+        if severity:
+            body["severity"] = severity
+        data = await _api("POST", "/incidents", json=body)
+        if isinstance(data, dict) and data.get("incident_id"):
+            data["link"] = _link(f"/incidents/{data['incident_id']}")
+        return _result(data)
+
+    @server.tool()
+    async def retry_fix(incident_id: str, fix_id: str) -> str:
+        """Ask Medic to try a failed fix of an incident again. The fix still needs approval."""
+        if problem := _cannot_start():
+            return _result({"error": problem})
+        data = await _api(
+            "POST", f"/incidents/{uuid.UUID(incident_id)}/fixes/{uuid.UUID(fix_id)}/retry"
+        )
+        if isinstance(data, dict) and "error" not in data:
+            data["link"] = _link(f"/incidents/{incident_id}")
+        return _result(data)
+
     return server
+
+
+def _cannot_start() -> str | None:
+    """Why this token may not start work, or None (approver tokens may; viewers read)."""
+    if _ctx().role != "approver":
+        return (
+            "This token can only read. An owner can make a 'Read and start work' token in "
+            "Settings, Assistant access."
+        )
+    return None
 
 
 async def _deny(send: Send, status: int, message: str) -> None:

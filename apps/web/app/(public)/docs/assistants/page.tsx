@@ -78,6 +78,24 @@ export default function AssistantsPage() {
             [<Inline key="m">list_resources, get_resource</Inline>, "The Map: what runs where and how it connects."],
           ]}
         />
+        <p>
+          With a <strong>Read and start work</strong> token, it can also start work. Each of these ends at a plan that a
+          person approves in Groundcrew, and the assistant gets the link:
+        </p>
+        <Table
+          head={["Tool", "What it starts"]}
+          rows={[
+            [<Inline key="t">list_targets</Inline>, "Where deploys can go, and the repositories they can come from."],
+            [<Inline key="s">start_deploy</Inline>, "A deploy of a repository (or one service folder of it) to a target."],
+            [<Inline key="c">change_settings</Inline>, "Plain env var changes on a live deploy, without a rebuild."],
+            [<Inline key="r">report_incident</Inline>, "An incident for resources that look broken; Medic investigates."],
+            [<Inline key="f">retry_fix</Inline>, "Another try of a failed fix."],
+          ]}
+        />
+        <p>
+          Secrets never pass through an assistant: deploys started from one take no env values, and secret values are set
+          on the approval card or with Change settings in Groundcrew.
+        </p>
       </DocSection>
 
       <DocSection id="safety" title="Safety">

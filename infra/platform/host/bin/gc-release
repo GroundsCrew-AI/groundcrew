@@ -95,7 +95,9 @@ build() { # build SHA < tar
   # The agent's container image (Kubernetes, ECS), both CPUs, published after the roll-out.
   local arch
   for arch in amd64 arm64; do
-    docker build -q --label "groundcrew.release=$sha" --platform "linux/$arch" --target agent-image \
+    # No provenance or SBOM attestations: each push stays one image, so the image list can name them.
+    docker build -q --provenance=false --sbom=false --label "groundcrew.release=$sha" \
+      --platform "linux/$arch" --target agent-image \
       --build-arg "NEXT_PUBLIC_API_URL=$API_URL" --build-context "agent-src=$dir/apps/agent" \
       -t "groundcrew/agent:$sha-$arch" "$dir/apps/web" >/dev/null
   done
@@ -130,7 +132,7 @@ publish_agent() { # publish_agent SHA: the agent image at <domain>/public/ground
 prune() { # keep the images of the last $KEEP releases
   local keep sha
   keep=$(head -n "$KEEP" "$STATE/history" | cut -d' ' -f1)
-  for sha in $(docker images --filter label=groundcrew.release --format '{{.Tag}}' | sort -u); do
+  for sha in $(docker images --filter label=groundcrew.release --filter reference='groundcrew/api' --format '{{.Tag}}' | sort -u); do
     echo "$keep" | grep -qx "$sha" && continue
     docker rmi -f "groundcrew/api:$sha" "groundcrew/web:$sha" "groundcrew/agent:$sha-amd64" \
       "groundcrew/agent:$sha-arm64" >/dev/null 2>&1 || true
