@@ -34,7 +34,9 @@ while [ $# -gt 0 ]; do
 done
 
 # The Groundcrew release key (apps/agent/internal/release/release.pub; a test keeps them equal).
-RELEASE_PUB=''
+RELEASE_PUB='-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAPH6bU6yPzXj9E+v1xibTOmyimYVs8fbMsVEpCq6A454=
+-----END PUBLIC KEY-----'
 
 say() { printf '%s\n' "groundcrew: $*"; }
 die() { printf '%s\n' "groundcrew: $*" >&2; exit 1; }
