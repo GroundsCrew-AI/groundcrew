@@ -277,6 +277,14 @@ CROSS_TENANT: dict[tuple[str, str], Request] = {
         },
     ),
     ("GET", "/deploys"): ("GET", lambda t: f"/deploys?workspace_id={t.workspace}", _none),
+    ("GET", "/deploys/services"): (
+        "GET",
+        lambda t: (
+            f"/deploys/services?workspace_id={t.workspace}&connection_id={t.vercel}"
+            "&repo=a/b&ref=main"
+        ),
+        _none,
+    ),
     ("POST", "/deploys"): (
         "POST",
         lambda t: "/deploys",
