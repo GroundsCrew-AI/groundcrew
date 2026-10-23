@@ -7,10 +7,13 @@ gcbuild user no route to the metadata service, the app's own containers, or priv
 its systemd slice caps memory, tasks, and CPU, and one build runs at a time.
 
 Per run:
-- **build**: a BuildKit container of its own (`gcb-bk-<run>`, BuildKit's rootless image,
-  unprivileged, no host mounts), driven by `docker buildx` through the remote driver, the image
-  loaded back into the daemon. Builder retries of the same run reuse its cache. A build that
-  times out takes the BuildKit container with it, so it really stops.
+- **build**: a BuildKit container of its own (`gcb-bk-<run>`, no host mounts, ports, or host
+  network), driven by `docker buildx` through the remote driver, the image loaded back into the
+  daemon. BuildKit runs as that container's root and privileged, which in the rootless daemon
+  under gVisor means gcbuild's sub-uids and gVisor's kernel, not the host's: it needs that to
+  keep file owners (an image's `appuser` owns its home) and to mount its snapshots. Builder
+  retries of the same run reuse its cache. A build that times out takes the BuildKit container
+  with it, so it really stops.
 - **smoke**: the app container publishes no port. A probe container on the same network asks it
   over HTTP from inside the daemon (Docker's embedded DNS does not work under gVisor, so the
   probe uses the app container's address).
@@ -89,8 +92,14 @@ class IsolatedSandbox(DockerSandbox):
                     f"{LABEL}=1",
                     "--label",
                     f"{RUN_LABEL}={run_id}",
+                    # Privileged inside the rootless daemon and gVisor only: BuildKit needs
+                    # it to mount its snapshots and to chown files to an image's own users
+                    # (the rootless image collapsed every owner to root). No host mounts,
+                    # ports, or host network.
+                    "--privileged",
                     "--env",
-                    "BUILDKITD_FLAGS=--oci-worker-no-process-sandbox",
+                    "BUILDKITD_FLAGS=--oci-worker-no-process-sandbox "
+                    "--oci-worker-snapshotter=native",
                     self.settings.sandbox_buildkit_image,
                 ],
                 timeout=120,

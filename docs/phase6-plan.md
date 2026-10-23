@@ -333,10 +333,17 @@ IMDS (instance role credentials), other builds, or the host's files; and it must
   slice instead** (3.5 GB memory, 4096 tasks, 2 CPUs); with one build at a time that is the per-build
   limit. Checked: a 6 GB memory bomb and a fork bomb were held at the slice ceilings and the host and
   the main daemon were unaffected.
-- BuildKit runs inside gVisor from its rootless image with `--oci-worker-no-process-sandbox`; a
-  pip-installing Python image built in 30 to 46 s, and `RUN` steps see gVisor's kernel. buildx's own
-  container driver starts BuildKit **privileged**, so it is not used: the sandbox starts an unprivileged
-  BuildKit container itself and drives it with buildx's `remote` driver.
+- BuildKit runs inside gVisor with `--oci-worker-no-process-sandbox`; a pip-installing Python image
+  built in 30 to 46 s, and `RUN` steps see gVisor's kernel. The sandbox starts the BuildKit container
+  itself and drives it with buildx's `remote` driver.
+- **Changed 2026-10-23:** the rootless BuildKit image lost every file owner (an image's `appuser` got a
+  root-owned home with mode 700, so apps that write or read their home failed: asyncpg's
+  `PermissionError` on `~/.postgresql`). A check in the build daemon (`useradd` plus `chown`, three
+  ways) showed only BuildKit's standard image, as the container's root, **privileged**, with the
+  `native` snapshotter keeps owners (`/home/appuser` 1000:1000). Without `--privileged` it cannot
+  mount its snapshots. Privileged here means inside the rootless daemon (gcbuild's sub-uids) and inside
+  gVisor (its kernel), never the host's; no host mounts, ports, or host network. `gc-isolation-check`
+  must pass after the change.
 - Docker's embedded DNS does not work under gVisor on user-defined networks, so build and smoke
   containers use the daemon's default bridge with public resolvers, and the probe reaches the app by
   address. Builds run one at a time, so no other run shares that network.

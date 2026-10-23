@@ -190,8 +190,8 @@ class Settings(BaseSettings):
     # on the daemon's host, which the worker reaches as SANDBOX_SMOKE_HOST (dind in Compose).
     # `isolated`: the platform host's rootless, gVisor build daemon (app/sandbox/isolated.py).
     sandbox_provider: Literal["docker", "isolated", "nebius"] = "docker"
-    # Images the isolated sandbox runs per build: BuildKit (rootless image) and the smoke probe.
-    sandbox_buildkit_image: str = "moby/buildkit:v0.25.1-rootless"
+    # Images the isolated sandbox runs per build: BuildKit and the smoke probe.
+    sandbox_buildkit_image: str = "moby/buildkit:v0.25.1"
     sandbox_probe_image: str = "curlimages/curl:8.17.0"
     sandbox_smoke_host: str = "localhost"
     sandbox_build_timeout_seconds: float = 900.0
