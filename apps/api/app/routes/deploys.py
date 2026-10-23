@@ -9,7 +9,6 @@ import base64
 import binascii
 import uuid
 from datetime import datetime
-from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -17,7 +16,7 @@ from sqlalchemy import and_, or_, select
 
 from app import queue, quotas
 from app.accounts import NotFoundError, member_workspace
-from app.agents.scout.detectors import is_manifest, service_dirs
+from app.agents.scout.detectors import COMPOSE_FILES, service_markers
 from app.audit import record
 from app.connectors.github import GitHubError, get_github_app
 from app.db.models import (
@@ -110,19 +109,22 @@ async def repo_services(
     conn = await _connection(session, workspace_id, connection_id)
     if conn.kind != "github":
         raise HTTPException(status.HTTP_409_CONFLICT, "The source connection is not GitHub.")
+    github = get_github_app()
+    installation = int(conn.config["installation_id"])
     try:
-        paths, _ = await get_github_app().tree_paths(int(conn.config["installation_id"]), repo, ref)
+        paths, _ = await github.tree_paths(installation, repo, ref)
+        # Compose files at the root name their services' build folders outright.
+        compose = {
+            rel: await github.file_text(installation, repo, rel, ref)
+            for rel in paths
+            if rel in COMPOSE_FILES
+        }
     except (GitHubError, ValueError) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
-    dirs = service_dirs(paths)
-    manifests: dict[str, list[str]] = {d: [] for d in dirs}
-    for rel in paths:
-        path = PurePosixPath(rel)
-        if is_manifest(path.name) and path.parent.as_posix() in manifests:
-            manifests[path.parent.as_posix()].append(path.name)
+    markers = service_markers(paths, compose.get)
     return RepoServices(
-        services=[RepoService(path=d, manifests=sorted(manifests[d])) for d in dirs],
-        choose="." not in dirs and len(dirs) > 1,
+        services=[RepoService(path=d, manifests=m) for d, m in markers.items()],
+        choose="." not in markers and len(markers) > 1,
     )
 
 

@@ -8,7 +8,13 @@ import pytest
 
 from app.agents.scout.accuracy import field_matches, load_golden
 from app.agents.scout.appspec import Evidence, ScoutDraft
-from app.agents.scout.detectors import detect, find_subpath, is_secret_name, service_dirs
+from app.agents.scout.detectors import (
+    detect,
+    find_subpath,
+    is_secret_name,
+    service_dirs,
+    service_markers,
+)
 from app.agents.scout.repo_view import RepoView
 from app.agents.scout.scout import PROMPT_TOKEN_CAP, build_prompt, merge, scout
 from app.agents.scout.summary import ResourceSummary, summarize_system
@@ -385,3 +391,56 @@ def test_service_dirs_across_languages() -> None:
         "worker",
     ]
     assert service_dirs(["package.json", "apps/api/go.mod"]) == [".", "apps/api"]
+
+
+def test_dockerfile_only_folders_are_services() -> None:
+    files = [
+        "api/go.mod",
+        "site/Dockerfile",  # a static site: no manifest, its own image
+        "site/index.html",
+        "docker/Dockerfile",  # builds another folder: not a service by itself
+        "api/Dockerfile",
+    ]
+    assert service_markers(files) == {
+        "api": ["Dockerfile", "go.mod"],
+        "site": ["Dockerfile"],
+    }
+
+
+def test_compose_names_its_build_folders() -> None:
+    compose = """
+services:
+  api: {build: ./backend/services/api/server}  # deeper than manifests are looked for
+  web:
+    build: {context: frontend, dockerfile: Dockerfile.prod}
+  db: {image: postgres:16}
+  remote: {build: "https://github.com/acme/x.git"}
+  escape: {build: ../outside}
+  worker: {build: ./frontend/worker}  # inside web, but Compose builds it on its own
+"""
+    files = ["docker-compose.yml", "frontend/package.json", "README.md"]
+    read = {"docker-compose.yml": compose}.get
+    assert service_markers(files, read) == {
+        "backend/services/api/server": ["docker-compose.yml"],
+        "frontend": ["docker-compose.yml", "package.json"],
+        "frontend/worker": ["docker-compose.yml"],
+    }
+    # Without the file's text the manifest is all there is.
+    assert service_dirs(files) == ["frontend"]
+    # A broken Compose file is ignored.
+    assert service_dirs(files, {"docker-compose.yml": "services: [:"}.get) == ["frontend"]
+
+
+def test_compose_building_the_root_makes_it_the_app(tmp_path: Path) -> None:
+    _write(tmp_path, "compose.yaml", "services:\n  app:\n    build: .\n")
+    _write(tmp_path, "worker/requirements.txt", "celery\n")
+    _write(tmp_path, "admin/package.json", "{}")
+    # The root is the app: no service has to be chosen.
+    assert find_subpath(RepoView(tmp_path)) == (None, [])
+
+
+def test_a_dockerfile_only_service_is_described_from_its_dockerfile(tmp_path: Path) -> None:
+    _write(tmp_path, "Dockerfile", "FROM nginx:1.27\nCOPY . /usr/share/nginx/html\nEXPOSE 80\n")
+    found = detect(RepoView(tmp_path))
+    assert found.has_dockerfile is not None
+    assert found.value("port") == 80

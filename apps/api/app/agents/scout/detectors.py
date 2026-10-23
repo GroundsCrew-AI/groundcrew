@@ -9,10 +9,12 @@ A stronger finding replaces a weaker one; on a tie the first one stays.
 import json
 import re
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
+
+import yaml
 
 from app.agents.scout.appspec import EnvVar, Evidence, FieldName
 from app.agents.scout.repo_view import RepoView
@@ -207,32 +209,88 @@ def detect(view: RepoView) -> Detection:
 NOT_SERVICES = frozenset(
     {"test", "tests", "__tests__", "spec", "fixtures", "testdata", "example", "examples", "docs"}
 )
+# Folders whose Dockerfile usually builds another folder (docker/Dockerfile with context ..):
+# a Dockerfile there alone does not make a service.
+DOCKERFILE_ONLY_SKIP = frozenset({"docker", "deploy", "deployment", "ci", "build", "scripts"})
 SERVICE_DEPTH = 3
+COMPOSE_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 
 
-def service_dirs(files: Iterable[str]) -> list[str]:
-    """The deployable folders of a repository from its file paths: "." when the root has a
-    manifest, then every folder up to SERVICE_DEPTH deep with its own manifest (apps/api,
-    services/billing/web). A folder inside another service is part of it, not a service."""
-    dirs: set[str] = set()
+def _compose_contexts(rel: str, text: str) -> list[str]:
+    """The build contexts of a Compose file's services, as repository folders ("." for the
+    root). Contexts outside the repository, or remote ones (git URLs), are left out."""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return []
+    services = data.get("services") if isinstance(data, dict) else None
+    out: list[str] = []
+    for service in services.values() if isinstance(services, dict) else []:
+        build = service.get("build") if isinstance(service, dict) else None
+        context = build.get("context", ".") if isinstance(build, dict) else build
+        if not isinstance(context, str) or "://" in context or context.startswith("git@"):
+            continue
+        parts: list[str] = []
+        for part in (PurePosixPath(rel).parent / context).parts:
+            if part == "..":
+                if not parts:
+                    break
+                parts.pop()
+            elif part not in (".", "/"):
+                parts.append(part)
+        else:
+            if not context.startswith("/"):
+                out.append("/".join(parts) or ".")
+    return out
+
+
+def service_markers(
+    files: Iterable[str], read: Callable[[str], str | None] | None = None
+) -> dict[str, list[str]]:
+    """The deployable folders of a repository and what marks each one ("." is the root):
+    - a manifest (package.json, go.mod, pom.xml, ...) up to SERVICE_DEPTH folders deep;
+    - a Dockerfile, for services with no manifest (a static site, a prebuilt binary);
+    - a build context in a Compose file at the root (`read` gives its text), which names its
+      services outright, at any depth.
+    A folder inside another service is part of it, not a service. Test, example, and dependency
+    folders are skipped unless Compose names them."""
+    markers: dict[str, set[str]] = {}
+    named: set[str] = set()
     for rel in files:
         path = PurePosixPath(rel)
-        if not is_manifest(path.name):
-            continue
         parent = path.parent
+        if read is not None and rel in COMPOSE_FILES:
+            for context in _compose_contexts(rel, read(rel) or ""):
+                markers.setdefault(context, set()).add(path.name)
+                named.add(context)
+            continue
+        manifest = is_manifest(path.name)
+        if not manifest and path.name != "Dockerfile":
+            continue
         if len(parent.parts) > SERVICE_DEPTH:
             continue
         if any(p in SKIP_DIRS or p in NOT_SERVICES or p.startswith(".") for p in parent.parts):
             continue
-        dirs.add(parent.as_posix())
-    nested = [d for d in sorted(dirs) if d != "."]
-    out = [d for d in nested if not any(d.startswith(f"{o}/") for o in nested)]
-    return [".", *out] if "." in dirs else out
+        if not manifest and parent.parts and parent.parts[-1] in DOCKERFILE_ONLY_SKIP:
+            continue
+        markers.setdefault(parent.as_posix(), set()).add(path.name)
+    # A folder inside another service belongs to it, unless Compose builds it on its own.
+    nested = [d for d in sorted(markers) if d != "."]
+    keep = [d for d in nested if d in named or not any(d.startswith(f"{o}/") for o in nested)]
+    order = [".", *keep] if "." in markers else keep
+    return {d: sorted(markers[d]) for d in order}
+
+
+def service_dirs(
+    files: Iterable[str], read: Callable[[str], str | None] | None = None
+) -> list[str]:
+    """The deployable folders of a repository (see service_markers)."""
+    return list(service_markers(files, read))
 
 
 def find_subpath(view: RepoView) -> tuple[str | None, list[str]]:
     """For a monorepo with no manifest at the root: the one app directory, or the candidates."""
-    dirs = service_dirs(view.files)
+    dirs = service_dirs(view.files, view.text)
     if "." in dirs:
         return None, []
     return (dirs[0], dirs) if len(dirs) == 1 else (None, dirs)
