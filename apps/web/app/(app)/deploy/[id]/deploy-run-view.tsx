@@ -194,10 +194,14 @@ export function DeployRunView({ deployId }: { deployId: string }) {
                 {d.source.path && d.source.path !== "." && <span className="text-muted-foreground"> {d.source.path}/</span>}
             </Fact>
             <Fact label="Target">{targetLabel(d.target.kind)}</Fact>
-            <Fact label="Build attempts">
-              {view.attempts.length}
-              {view.automaticFix && <span className="text-muted-foreground">, fixed</span>}
-            </Fact>
+            {d.kind === "settings" ? (
+              <Fact label="Change">Settings only, nothing built</Fact>
+            ) : (
+              <Fact label="Build attempts">
+                {view.attempts.length}
+                {view.automaticFix && <span className="text-muted-foreground">, fixed</span>}
+              </Fact>
+            )}
             <Fact label="Tokens / cost">
               <span className="font-mono">{formatTokens(totalTokens(run))}</span>
               {cost && <span className="text-muted-foreground"> / {cost}</span>}

@@ -238,6 +238,8 @@ class DeploySummary(BaseModel):
     live_url: str | None
     build_attempts: int
     automatic_fix: bool
+    # "settings": a settings change of a live deploy (POST /deploys/{id}/settings), no build.
+    kind: Literal["deploy", "settings"] = "deploy"
     cost_usd: float | None
     ultra_equiv_usd: float | None
     error: str | None

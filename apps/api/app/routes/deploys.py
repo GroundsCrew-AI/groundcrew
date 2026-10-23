@@ -312,6 +312,7 @@ def summary(run: Run) -> DeploySummary:
         live_url=(state.get("final") or {}).get("live_url") or record.get("live_url"),
         build_attempts=int(build.get("attempts") or 0),
         automatic_fix=bool(build.get("automatic_fix")),
+        kind="settings" if request.get("settings") else "deploy",
         cost_usd=float(run.cost_usd) if run.cost_usd is not None else None,
         ultra_equiv_usd=float(run.ultra_equiv_usd) if run.ultra_equiv_usd is not None else None,
         error=run.error,
@@ -499,6 +500,8 @@ async def change_settings(
     build = dict(state.get("build") or {})
     # The image already in the registry: nothing is built or pushed (the sandbox one is gone).
     build["image_ref"] = record_.get("image") or (state.get("target_plan") or {}).get("image")
+    # Nothing is built: the live deploy's attempts and fixes are not this run's.
+    build["attempts"], build["automatic_fix"] = 0, False
     request = {
         **source_request,
         "env": [

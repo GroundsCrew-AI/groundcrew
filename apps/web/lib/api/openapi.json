@@ -2182,6 +2182,15 @@
             "title": "Id",
             "type": "string"
           },
+          "kind": {
+            "default": "deploy",
+            "enum": [
+              "deploy",
+              "settings"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "live_url": {
             "anyOf": [
               {
@@ -2969,6 +2978,15 @@
           "id": {
             "format": "uuid",
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "deploy",
+            "enum": [
+              "deploy",
+              "settings"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "live_url": {

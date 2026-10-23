@@ -2591,6 +2591,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Kind
+             * @default deploy
+             * @enum {string}
+             */
+            kind: "deploy" | "settings";
             /** Live Url */
             live_url: string | null;
             plan: components["schemas"]["DeployPlan"] | null;
@@ -2868,6 +2874,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Kind
+             * @default deploy
+             * @enum {string}
+             */
+            kind: "deploy" | "settings";
             /** Live Url */
             live_url: string | null;
             /**

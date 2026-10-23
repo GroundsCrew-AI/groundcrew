@@ -858,6 +858,9 @@ async def test_settings_change_reuses_the_image_and_keeps_untouched_values(
     assert not any(e.startswith(("push", "smoke", "build")) for e in stack.events[events:])
     detail = (await client.get(f"/deploys/{change_id}", headers=alice.headers)).json()
     assert detail["plan"]["resources"][0]["action"] == "unchanged"
+    # A settings change, with none of the live deploy's build attempts.
+    assert detail["kind"] == "settings" and detail["build_attempts"] == 0
+    assert not detail["automatic_fix"]
     changes = {v["name"]: v["change"] for v in detail["env"]}
     assert changes == {
         "API_TOKEN": "add",

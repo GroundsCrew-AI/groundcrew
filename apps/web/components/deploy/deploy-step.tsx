@@ -200,7 +200,9 @@ export function DeployStep({ step, rounds = 1 }: { step: Step; rounds?: number }
             {data.status === "succeeded" && data.live_url ? "Deployed" : "Deploy ended"}
           </p>
           <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-            {data.build_attempts} build {data.build_attempts === 1 ? "attempt" : "attempts"}
+            {data.build_attempts === 0
+              ? "Settings change, nothing built"
+              : `${data.build_attempts} build ${data.build_attempts === 1 ? "attempt" : "attempts"}`}
             {data.automatic_fix && ", fixed automatically"}
             {data.duration_ms !== null && `, ${formatDuration(data.duration_ms)}`}
             {cost && `, ${cost} in model calls`}
