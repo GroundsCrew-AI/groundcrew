@@ -428,7 +428,7 @@
             "title": "Last Seen At"
           },
           "latest_version": {
-            "default": "0.4.0",
+            "default": "0.5.1",
             "title": "Latest Version",
             "type": "string"
           },

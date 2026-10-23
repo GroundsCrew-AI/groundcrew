@@ -383,7 +383,7 @@ class Builder:
         """Write (or take the repo's) Dockerfile, build, and fix it until it builds. With
         `check`, each built image is smoke-tested too, and a failed smoke test is fixed like a
         failed build (the last attempt keeps its result in outcome.smoke)."""
-        repo_dockerfile = root / "Dockerfile"
+        repo_dockerfile = root / (spec.dockerfile or "Dockerfile")
         use_repo = spec.has_dockerfile and repo_dockerfile.is_file()
         source: Literal["repo", "generated", "fixed"]
         model_call: AttemptModelCall | None = None

@@ -47,7 +47,7 @@ func TestDeployOnARealDockerEngine(t *testing.T) {
 	docker("tag", "nginx:1.27-alpine", good)
 	docker("push", "-q", good)
 	build := exec.Command("docker", "build", "-q", "-t", host+"/w0/web:bad", "-")
-	build.Stdin = strings.NewReader("FROM nginx:1.27-alpine\nCMD [\"sh\", \"-c\", \"exit 3\"]\n")
+	build.Stdin = strings.NewReader("FROM nginx:1.27-alpine\nCMD [\"sh\", \"-c\", \"echo boom: cannot reach db token=abc123; exit 3\"]\n")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v %s", err, out)
 	}
@@ -82,6 +82,10 @@ func TestDeployOnARealDockerEngine(t *testing.T) {
 	_, err = d.Deploy(ctx, s, DeployRequest{Image: host + "/w0/web:bad", Port: hostPort})
 	if err == nil || !strings.Contains(err.Error(), "previous container was started again") {
 		t.Fatalf("bad deploy: %v", err)
+	}
+	// The failed container is removed; its last words are kept in the error.
+	if !strings.Contains(err.Error(), "its last log lines:") || !strings.Contains(err.Error(), "token=[REDACTED]") {
+		t.Fatalf("no logs in %v", err)
 	}
 	if st := d.State(ctx, s); !st.Running() || st.Image != good {
 		t.Fatalf("not kept: %+v", st)

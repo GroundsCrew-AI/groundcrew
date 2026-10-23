@@ -37,7 +37,7 @@ def test_the_isolated_provider_is_chosen_by_setting() -> None:
     assert isinstance(get_sandbox(_settings(sandbox_provider="isolated")), IsolatedSandbox)
 
 
-async def test_build_starts_an_unprivileged_buildkit_and_loads_the_image(tmp_path: Path) -> None:
+async def test_build_starts_a_contained_buildkit_and_loads_the_image(tmp_path: Path) -> None:
     fake = FakeDocker(
         replies={
             "inspect": CommandResult(1, "", "no such container"),
@@ -49,9 +49,15 @@ async def test_build_starts_an_unprivileged_buildkit_and_loads_the_image(tmp_pat
     (start,) = [c for c in fake.find("run")]
     assert start.args[:3] == ["run", "--detach", "--name"]
     assert start.args[3] == f"gcb-bk-{RUN}"
-    assert "BUILDKITD_FLAGS=--oci-worker-no-process-sandbox" in start.args
-    assert start.args[-1] == "moby/buildkit:v0.25.1-rootless"
-    for forbidden in ("--privileged", "-v", "--volume", "--mount", "--network=host", "-p"):
+    assert (
+        "BUILDKITD_FLAGS=--oci-worker-no-process-sandbox --oci-worker-snapshotter=native"
+        in start.args
+    )
+    assert start.args[-1] == "moby/buildkit:v0.25.1"
+    # Privileged only inside the rootless gVisor daemon (file owners and snapshot mounts);
+    # never anything that reaches the host.
+    assert "--privileged" in start.args
+    for forbidden in ("-v", "--volume", "--mount", "--network=host", "-p", "--pid=host"):
         assert forbidden not in start.args
     calls = _flat(fake)
     assert (

@@ -35,6 +35,7 @@ from app.agents.scout.detectors import (
     detect,
     find_subpath,
     is_secret_name,
+    use_compose_dockerfile,
 )
 from app.agents.scout.repo_view import RepoView
 from app.llm.budget import RunBudget
@@ -312,6 +313,7 @@ def merge(view: RepoView, detection: Detection, draft: ScoutDraft | None) -> App
         **values,
         env_vars=env_vars,
         has_dockerfile=detection.has_dockerfile is not None,
+        dockerfile=detection.dockerfile,
         subpath=detection.subpath,
         evidence=sorted(evidence, key=lambda e: (e.field, e.file, e.line)),
         sources=sources,
@@ -371,6 +373,7 @@ async def scout(
             raise RepoFileError(f"Subpath {chosen!r} is not a directory in the repository.")
     view = RepoView(app_root)
     detection = detect(view)
+    use_compose_dockerfile(RepoView(root), view, detection, chosen or ".")
     detection.subpath = chosen
     notes.extend(detection.notes)
 

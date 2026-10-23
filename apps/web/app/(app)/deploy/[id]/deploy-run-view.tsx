@@ -202,7 +202,7 @@ export function DeployRunView({ deployId }: { deployId: string }) {
             </Fact>
             <Fact label={run.finished_at ? "Duration" : "Elapsed"}>{formatDuration(elapsed)}</Fact>
           </dl>
-          {view.liveUrl && (
+          {view.liveUrl?.url && (
             <p className="flex items-center gap-2 text-[13px]">
               <span className="text-muted-foreground">Live at</span>
               <a href={view.liveUrl.url} target="_blank" rel="noreferrer"

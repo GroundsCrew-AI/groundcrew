@@ -158,16 +158,19 @@ export function DeployStep({ step, rounds = 1 }: { step: Step; rounds?: number }
       return (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-[color-mix(in_oklab,var(--status-ok)_40%,var(--border))] bg-card px-3 py-2.5">
           <span className="text-[13px] font-medium">Live on {targetLabel(data.target)}</span>
-          <a
-            href={data.url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 font-mono text-[12.5px] underline-offset-4 hover:underline"
-          >
-            {data.url}
-            <ExternalLink aria-hidden="true" className="size-3" />
-            <span className="sr-only">(opens in a new tab)</span>
-          </a>
+          {/* A server deploy has no public URL of its own: no empty link. */}
+          {data.url && (
+            <a
+              href={data.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 font-mono text-[12.5px] underline-offset-4 hover:underline"
+            >
+              {data.url}
+              <ExternalLink aria-hidden="true" className="size-3" />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          )}
           <Link
             href={data.resource_id ? `/map?resource=${data.resource_id}` : "/map"}
             className="ml-auto inline-flex items-center gap-1 text-[12.5px] text-muted-foreground hover:text-foreground"

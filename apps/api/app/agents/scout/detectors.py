@@ -52,6 +52,8 @@ class Detection:
     values: dict[str, Finding] = field(default_factory=dict)
     env_vars: dict[str, tuple[EnvVar, Evidence]] = field(default_factory=dict)
     has_dockerfile: Evidence | None = None
+    # A Dockerfile not named "Dockerfile" (from Compose), relative to the app folder.
+    dockerfile: str | None = None
     subpath: str | None = None
     notes: list[str] = field(default_factory=list)
     # Whether code reads each env var without a default. Code decides `required`; a name only
@@ -216,19 +218,22 @@ SERVICE_DEPTH = 3
 COMPOSE_FILES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 
 
-def _compose_contexts(rel: str, text: str) -> list[str]:
-    """The build contexts of a Compose file's services, as repository folders ("." for the
-    root). Contexts outside the repository, or remote ones (git URLs), are left out."""
+def _compose_builds(rel: str, text: str) -> list[tuple[str, str | None]]:
+    """(build context, dockerfile) of a Compose file's services: the context as a repository
+    folder ("." for the root), the dockerfile as written (relative to the context; None when
+    it is the default). Contexts outside the repository, or remote ones (git URLs), are left
+    out."""
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError:
         return []
     services = data.get("services") if isinstance(data, dict) else None
-    out: list[str] = []
+    out: list[tuple[str, str | None]] = []
     for service in services.values() if isinstance(services, dict) else []:
         build = service.get("build") if isinstance(service, dict) else None
         context = build.get("context", ".") if isinstance(build, dict) else build
-        if not isinstance(context, str) or "://" in context or context.startswith("git@"):
+        dockerfile = build.get("dockerfile") if isinstance(build, dict) else None
+        if not isinstance(context, str) or "://" in context or context.startswith(("git@", "/")):
             continue
         parts: list[str] = []
         for part in (PurePosixPath(rel).parent / context).parts:
@@ -239,8 +244,8 @@ def _compose_contexts(rel: str, text: str) -> list[str]:
             elif part not in (".", "/"):
                 parts.append(part)
         else:
-            if not context.startswith("/"):
-                out.append("/".join(parts) or ".")
+            named = dockerfile if isinstance(dockerfile, str) and dockerfile else None
+            out.append(("/".join(parts) or ".", None if named == "Dockerfile" else named))
     return out
 
 
@@ -260,7 +265,7 @@ def service_markers(
         path = PurePosixPath(rel)
         parent = path.parent
         if read is not None and rel in COMPOSE_FILES:
-            for context in _compose_contexts(rel, read(rel) or ""):
+            for context, _ in _compose_builds(rel, read(rel) or ""):
                 markers.setdefault(context, set()).add(path.name)
                 named.add(context)
             continue
@@ -299,17 +304,50 @@ def find_subpath(view: RepoView) -> tuple[str | None, list[str]]:
 # --- Dockerfile and Procfile ---------------------------------------------------------------
 
 
-def _dockerfile(view: RepoView, found: Detection) -> None:
-    if not view.exists("Dockerfile"):
+def _dockerfile(
+    view: RepoView, found: Detection, name: str = "Dockerfile", reason: str = ""
+) -> None:
+    if not view.exists(name):
         return
     found.has_dockerfile = Evidence(
-        field="has_dockerfile", file="Dockerfile", line=1, reason="Dockerfile at the app root"
+        field="has_dockerfile",
+        file=name,
+        line=1,
+        reason=reason or ("Dockerfile at the app root" if name == "Dockerfile" else name),
     )
-    for number, text in enumerate(view.lines("Dockerfile") or [], start=1):
+    found.dockerfile = None if name == "Dockerfile" else name
+    for number, text in enumerate(view.lines(name) or [], start=1):
         match = re.match(r"\s*EXPOSE\s+(\d+)", text, re.IGNORECASE)
         if match:
-            found.set("port", int(match.group(1)), EXPLICIT, "Dockerfile", number, "EXPOSE")
+            found.set("port", int(match.group(1)), EXPLICIT, name, number, "EXPOSE")
             break
+
+
+def use_compose_dockerfile(repo: RepoView, view: RepoView, found: Detection, app: str) -> None:
+    """A root Compose file that builds the app folder with its own `dockerfile:` names the
+    Dockerfile to build with. It wins over a plain Dockerfile; several different ones for the
+    same folder leave the choice to the plain one."""
+    names: set[tuple[str, str]] = set()
+    for rel in COMPOSE_FILES:
+        text = repo.text(rel)
+        if text is None:
+            continue
+        for context, dockerfile in _compose_builds(rel, text):
+            if context == app and dockerfile:
+                names.add((rel, dockerfile))
+    files = {dockerfile for _, dockerfile in names}
+    if len(files) != 1:
+        if len(files) > 1:
+            found.notes.append(
+                f"Compose builds this folder with several Dockerfiles: {sorted(files)}"
+            )
+        return
+    (rel, name), *_ = sorted(names)
+    clean = PurePosixPath(name)
+    if clean.is_absolute() or ".." in clean.parts or not view.exists(clean.as_posix()):
+        found.notes.append(f"{rel} names {name}, which is not a file inside the app folder")
+        return
+    _dockerfile(view, found, clean.as_posix(), f"{rel} builds this folder with {name}")
 
 
 def _procfile(view: RepoView, found: Detection) -> None:

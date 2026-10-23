@@ -444,3 +444,45 @@ def test_a_dockerfile_only_service_is_described_from_its_dockerfile(tmp_path: Pa
     found = detect(RepoView(tmp_path))
     assert found.has_dockerfile is not None
     assert found.value("port") == 80
+
+
+def test_compose_names_the_dockerfile_to_build(tmp_path: Path) -> None:
+    from app.agents.scout.detectors import use_compose_dockerfile
+
+    _write(
+        tmp_path,
+        "docker-compose.yml",
+        "services:\n"
+        "  api:\n    build: {context: ./api, dockerfile: docker/prod.Dockerfile}\n"
+        "  web: {build: ./web}\n",
+    )
+    _write(tmp_path, "api/requirements.txt", "fastapi\n")
+    _write(tmp_path, "api/Dockerfile", "FROM python:3.12\n")
+    _write(tmp_path, "api/docker/prod.Dockerfile", "FROM python:3.12-slim\nEXPOSE 9000\n")
+    _write(tmp_path, "web/package.json", "{}")
+    view = RepoView(tmp_path / "api")
+    found = detect(view)
+    use_compose_dockerfile(RepoView(tmp_path), view, found, "api")
+    assert found.dockerfile == "docker/prod.Dockerfile"
+    assert found.has_dockerfile is not None and "docker-compose.yml" in found.has_dockerfile.reason
+    # The web service has no dockerfile of its own: its plain Dockerfile (none here) is used.
+    web = RepoView(tmp_path / "web")
+    found = detect(web)
+    use_compose_dockerfile(RepoView(tmp_path), web, found, "web")
+    assert found.dockerfile is None and found.has_dockerfile is None
+
+
+def test_a_compose_dockerfile_outside_the_app_folder_is_not_used(tmp_path: Path) -> None:
+    from app.agents.scout.detectors import use_compose_dockerfile
+
+    _write(
+        tmp_path,
+        "compose.yaml",
+        "services:\n  api: {build: {context: api, dockerfile: ../x.Dockerfile}}\n",
+    )
+    _write(tmp_path, "api/go.mod", "module x\n")
+    _write(tmp_path, "x.Dockerfile", "FROM golang\n")
+    view = RepoView(tmp_path / "api")
+    found = detect(view)
+    use_compose_dockerfile(RepoView(tmp_path), view, found, "api")
+    assert found.dockerfile is None and any("not a file inside" in n for n in found.notes)
