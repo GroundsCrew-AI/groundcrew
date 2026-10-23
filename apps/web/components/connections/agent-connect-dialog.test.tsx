@@ -111,6 +111,19 @@ describe("AgentConnectDialog", () => {
     expect(command()).toContain("namespace: shop");
     expect(command()).toContain("verbs: [patch, create, delete]");
   });
+
+  it("gives the ECS template and the parameters to enter", async () => {
+    render(<AgentConnectDialog open onOpenChange={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText("Name"), "ecs-1");
+    await userEvent.click(screen.getByRole("button", { name: "Create join token" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Amazon ECS" }));
+    expect(screen.getByRole("link", { name: "Download ecs-agent.yaml" })).toHaveAttribute(
+      "href",
+      expect.stringMatching(/\/agent\/ecs-agent\.yaml$/),
+    );
+    expect(screen.getByText("gcj_secret")).toBeInTheDocument();
+    expect(screen.getByText(/\/public\/groundcrew-agent:0\.3\.0$/)).toBeInTheDocument();
+  });
 });
 
 describe("ConnectionRow for an agent", () => {

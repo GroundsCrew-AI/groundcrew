@@ -48,12 +48,12 @@ func runner(t *testing.T, allow string) (*Runner, *fakeRuntime) {
 	key, _ := base64.StdEncoding.DecodeString(vectorKey)
 	rt := &fakeRuntime{}
 	return &Runner{
-		Config:  cfg,
-		AgentID: vectorAgent,
+		Config:   cfg,
+		AgentID:  vectorAgent,
 		Runtimes: runtime.Set{Docker: rt, Systemd: rt},
-		Key:     func() ed25519.PublicKey { return key },
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		now:     func() time.Time { return time.Date(2026, 10, 22, 10, 1, 0, 0, time.UTC) },
+		Key:      func() ed25519.PublicKey { return key },
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:      func() time.Time { return time.Date(2026, 10, 22, 10, 1, 0, 0, time.UTC) },
 	}, rt
 }
 

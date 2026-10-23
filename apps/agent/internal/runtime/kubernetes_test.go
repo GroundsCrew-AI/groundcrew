@@ -21,7 +21,7 @@ import (
 // pod waits in CrashLoopBackOff, like a crashing app.
 type fakeKube struct {
 	mu          sync.Mutex
-	deployments map[string]map[string]any // ns/name -> object
+	deployments map[string]map[string]any   // ns/name -> object
 	history     map[string][]map[string]any // ns/name -> pod template per revision
 	secrets     map[string]map[string]any
 	services    map[string]bool

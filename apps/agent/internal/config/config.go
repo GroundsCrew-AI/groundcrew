@@ -141,8 +141,15 @@ func (s Service) Allows(action string) bool {
 	return false
 }
 
-// Load reads and checks the file at path.
+// ConfigEnv holds the whole configuration instead of the file, where a file is awkward to
+// provide (an ECS task: CloudFormation passes it as an environment variable).
+const ConfigEnv = "GROUNDCREW_AGENT_CONFIG"
+
+// Load reads and checks the file at path, or the configuration in ConfigEnv when it is set.
 func Load(path string) (*Config, error) {
+	if env := os.Getenv(ConfigEnv); env != "" {
+		return Parse([]byte(env))
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

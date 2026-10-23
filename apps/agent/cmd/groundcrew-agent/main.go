@@ -107,6 +107,10 @@ func runtimes(cfg *config.Config) agentrt.Set {
 	if k, err := agentrt.NewKubernetesInCluster(); err == nil {
 		set.Kubernetes = k
 	}
+	// In an ECS task, the task role; elsewhere ECS services are missing.
+	if e, err := agentrt.NewECSInTask(); err == nil {
+		set.ECS = e
+	}
 	return set
 }
 
@@ -196,20 +200,42 @@ func enroll(cfg *config.Config, token string, w io.Writer) error {
 	return nil
 }
 
-// JoinTokenEnv names a file with a join token. In a container (Kubernetes, ECS) the agent
-// enrolls with it on its first start; its key and enrollment then stay on its state volume.
-const JoinTokenEnv = "GROUNDCREW_JOIN_TOKEN_FILE"
+// JoinTokenEnv names a file with a join token, JoinTokenValueEnv holds one. In a container
+// (Kubernetes, ECS) the agent enrolls with it on its first start; its key and enrollment then
+// stay on its state volume.
+const (
+	JoinTokenEnv      = "GROUNDCREW_JOIN_TOKEN_FILE"
+	JoinTokenValueEnv = "GROUNDCREW_JOIN_TOKEN"
+)
+
+// joinToken is the container's join token, or "".
+func joinToken() (string, error) {
+	if v := strings.TrimSpace(os.Getenv(JoinTokenValueEnv)); v != "" {
+		return v, nil
+	}
+	if path := os.Getenv(JoinTokenEnv); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("not enrolled, and the join token is not readable: %w", err)
+		}
+		return strings.TrimSpace(string(raw)), nil
+	}
+	return "", nil
+}
 
 func serve(cfg *config.Config) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	dir := state.Dir{Path: cfg.StateDir}
 	e, err := dir.Enrollment()
-	if errors.Is(err, state.ErrNotEnrolled) && os.Getenv(JoinTokenEnv) != "" {
-		raw, rerr := os.ReadFile(os.Getenv(JoinTokenEnv))
-		if rerr != nil {
-			return fmt.Errorf("not enrolled, and the join token is not readable: %w", rerr)
+	if errors.Is(err, state.ErrNotEnrolled) {
+		token, terr := joinToken()
+		if terr != nil {
+			return terr
 		}
-		if err := enroll(cfg, strings.TrimSpace(string(raw)), io.Discard); err != nil {
+		if token == "" {
+			return err
+		}
+		if err := enroll(cfg, token, io.Discard); err != nil {
 			return fmt.Errorf("%w (a join token works once: if this agent lost its state volume, make a new token in Groundcrew)", err)
 		}
 		log.Info("enrolled with the join token")
@@ -234,8 +260,8 @@ func serve(cfg *config.Config) error {
 		HistoryPath: filepath.Join(cfg.StateDir, "images.json"),
 	}
 	runner := &commands.Runner{
-		Config:  cfg,
-		AgentID: e.AgentID,
+		Config:   cfg,
+		AgentID:  e.AgentID,
 		Client:   c,
 		Runtimes: rts,
 		Log:      log,
@@ -249,13 +275,13 @@ func serve(cfg *config.Config) error {
 		},
 	}
 	a := &agent.Agent{
-		Config:  cfg,
+		Config:    cfg,
 		Client:    c,
 		Inspector: rts.Inspector,
 		Log:       log,
 		Version:   version,
-		State:   &dir,
-		Watcher: w,
+		State:     &dir,
+		Watcher:   w,
 	}
 	go w.Run(ctx)
 	go runner.Run(ctx)

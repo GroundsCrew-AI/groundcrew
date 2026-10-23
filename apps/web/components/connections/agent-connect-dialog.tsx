@@ -151,6 +151,7 @@ export function AgentConnectDialog({ open, onOpenChange, connection }: DialogPro
               <TabsList aria-label="Where the agent runs">
                 <TabsTrigger value="server">Server</TabsTrigger>
                 <TabsTrigger value="kubernetes">Kubernetes</TabsTrigger>
+                <TabsTrigger value="ecs">Amazon ECS</TabsTrigger>
               </TabsList>
               <TabsContent value="server" className="pt-3">
                 <SetupSteps>
@@ -180,6 +181,9 @@ export function AgentConnectDialog({ open, onOpenChange, connection }: DialogPro
               </TabsContent>
               <TabsContent value="kubernetes" className="pt-3">
                 <KubernetesSetup join={join} origin={origin} />
+              </TabsContent>
+              <TabsContent value="ecs" className="pt-3">
+                <EcsSetup join={join} origin={origin} />
               </TabsContent>
             </Tabs>
             <p
@@ -274,6 +278,50 @@ function KubernetesSetup({ join, origin }: { join: AgentJoin; origin: string }) 
         <p>
           Once it shows <Ui>Connected</Ui>, delete the token:{" "}
           <code className="font-mono text-[12.5px]">kubectl -n {AGENT_NAMESPACE} delete secret groundcrew-agent-join</code>
+        </p>
+      </SetupStep>
+    </SetupSteps>
+  );
+}
+
+const ECS_SERVICES_EXAMPLE = "[{name: api, runtime: ecs, ecs: {cluster: checkout, service: api}, allow: [restart, rollback, deploy]}]";
+
+/** Amazon ECS: a CloudFormation stack (uploaded in the console) that runs the agent on Fargate in
+ * your account, with its key on a small EFS volume and a task role limited to what it may do. */
+function EcsSetup({ join, origin }: { join: AgentJoin; origin: string }) {
+  const version = join.connection.agent?.latest_version;
+  return (
+    <SetupSteps>
+      <SetupStep n={1} title="Create the stack in your AWS account">
+        <p>
+          Download the template, then in CloudFormation choose <Ui>Create stack</Ui>, <Ui>Upload a template file</Ui>,
+          and enter these parameters. Pick the cluster, a VPC, and a subnet with outbound internet access.
+        </p>
+        <a
+          href={`${origin}/agent/ecs-agent.yaml`}
+          download
+          className="inline-flex text-[13px] text-foreground underline underline-offset-4"
+        >
+          Download ecs-agent.yaml
+        </a>
+        <CopyField label="JoinToken" value={join.token} />
+        {version && <CopyField label="AgentImage" value={agentImage(origin, version)} />}
+        <CopyField label="GroundcrewApiUrl" value={join.api_url} />
+        <CopyField label="Services (example)" value={ECS_SERVICES_EXAMPLE} />
+        <SetupNote tone="warn">
+          The token works once, until {expiresAt(join.expires_at)}. CloudFormation keeps it in Secrets Manager; the
+          agent reads it on its first start and keeps its own key on an encrypted EFS volume.
+        </SetupNote>
+      </SetupStep>
+      <SetupStep n={2} title="Let it act, if you want">
+        <p>
+          With <Ui>AllowActions</Ui> set to <Ui>yes</Ui>, the agent may update only ECS services tagged{" "}
+          <code className="font-mono text-[12.5px]">groundcrew:managed=true</code>, and each restart, rollback, or deploy
+          still needs your approval here. With <Ui>no</Ui> it only reads services, tasks, and their logs.
+        </p>
+        <p>
+          For deploys from the Groundcrew registry, attach the stack&apos;s <Ui>PullLoginReadPolicyArn</Ui> output to
+          each service&apos;s task execution role. Images in ECR need nothing more.
         </p>
       </SetupStep>
     </SetupSteps>

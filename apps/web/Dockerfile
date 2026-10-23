@@ -30,7 +30,8 @@ RUN set -eu; mkdir -p /out; AGENT_VERSION=$(cat VERSION); \
       exit 1; \
     fi; \
     cp /src/release/SHA256SUMS.sig /out/; \
-    cp /src/packaging/install.sh /src/packaging/groundcrew-agent.service /src/packaging/agent.example.yaml /out/
+    cp /src/packaging/install.sh /src/packaging/groundcrew-agent.service /src/packaging/agent.example.yaml \
+      /src/packaging/ecs-agent.yaml /out/
 
 # Only the downloads (docker build --target agent-files -o DIR exports just these).
 FROM scratch AS agent-files

@@ -60,12 +60,12 @@ type resultIn struct {
 type Keys func() ed25519.PublicKey
 
 type Runner struct {
-	Config  *config.Config
-	AgentID string
-	Client  *client.Client
+	Config   *config.Config
+	AgentID  string
+	Client   *client.Client
 	Runtimes runtime.Set
-	Key     Keys
-	Log     *slog.Logger
+	Key      Keys
+	Log      *slog.Logger
 	// After runs after each command (the watcher reports at once).
 	After func()
 

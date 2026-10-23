@@ -10,7 +10,7 @@ Brief: `docs/prompts/agent.md`. Plan: `docs/agent-plan.md`.
 | A3 Approved fixes (restart) | live (release `88e2de779068`) | #63 |
 | A4a Rollback, systemd restarts | live (release `9b12c7a2be14`) | #63 |
 | A4b Deploys through the agent | live (release `4025f698754b`) | #63 |
-| A5 Packaging | | |
+| A5 Packaging (signed releases, Kubernetes, ECS) | built 2026-10-23; not live: needs the release key and a signed release first | (draft) |
 
 ## A1 Enroll and report (2026-10-22)
 
@@ -194,3 +194,46 @@ Checked:
 
 Rollout (2026-10-22): `push-host 50-app`, `push-host 40-nginx`, release `4025f698754b`; live checks:
 `/v2/` 401 with the Basic challenge, push 403, `/internal` 404, registry container healthy.
+
+## A5 Signed releases, Kubernetes, ECS (2026-10-23)
+
+Plan: docs/agent-plan.md "A5 plan". Agent 0.6.0.
+
+- **Signed releases.** `apps/agent/release.sh key` makes the Ed25519 key in `ops/agent-release.key`
+  (never committed) and writes the public key into the agent and `install.sh`; `release.sh sign`
+  builds both binaries reproducibly (golang image pinned by digest) and signs `SHA256SUMS`. The
+  web image rebuilds them and stops unless they match the signed sums. `install.sh` and
+  `groundcrew-agent update` refuse anything not signed with the key.
+- **Kubernetes.** Runtime over the in-cluster API (plain REST): Deployments, ReplicaSets, pods,
+  logs; restart, rollback, deploy (pull secret, env), create a missing Deployment and Service.
+  A rollout counts only when the newest ReplicaSet runs the current template steadily with no
+  new restarts; on failure the previous template goes back. Install: the dialog's Kubernetes tab
+  writes one manifest (namespace, ServiceAccount, Roles only in the namespaces named, read-only
+  unless allowed to act, 1 GiB state volume, join token Secret).
+- **ECS.** Runtime over the ECS, CloudWatch Logs, and Secrets Manager APIs with SigV4 in the
+  agent (checked against AWS's published signatures) and the task role's credentials: services,
+  revisions, stopped tasks, logs; restart, rollback and deploy through task definition
+  revisions, the previous one put back on failure. Install: `ecs-agent.yaml` (CloudFormation):
+  Fargate task, key on encrypted EFS, task role read-only unless AllowActions=yes, then only
+  services tagged `groundcrew:managed=true` and `groundcrew/pull/*` secrets.
+- **Pull logins stay fresh.** `POST /agent/v1/registry-login`; the agent renews the pull
+  secrets its cluster deploys made every 10 minutes (pods and tasks pull again later).
+- **Agent image.** A scratch image per CPU from the signed binaries; `gc-release` publishes it at
+  `<domain>/public/groundcrew-agent:<version>`, the only repository nginx serves anonymously.
+
+Checked:
+- Go: release verification, update refusing forged or tampered releases, SigV4 against AWS's
+  examples, fake Kubernetes and ECS APIs (deploy, put back, rollback, restart, renewals).
+- Live on kind with the manifest's own RBAC: deploy, a crashing image put back with its logs,
+  rollback, restart, create, renewal, 403 outside its namespaces. The live run found three
+  rollout-timing bugs the fakes did not (summary counts, a reused ReplicaSet's revision, a
+  crashing pod briefly available); all fixed.
+- The manifest passes a server-side dry run on kind; the ECS template passes cfn-lint.
+- A web build with a real code change and no new signature fails; a signed one matches.
+
+Open (needs your hands or OK):
+- Make the release key and sign 0.6.0 (`apps/agent/release.sh key`, then `sign`, commit
+  `apps/agent/release/`), or the next release's web build stops by design.
+- Release, then `push-host 40-nginx` for the public image path.
+- A live ECS run in 881050425883 (a Fargate task for about 10 minutes): needs your OK.
+

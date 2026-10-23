@@ -49,11 +49,11 @@ func TestRunSendsTheInventoryAndHeartbeats(t *testing.T) {
 	}
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	a := &Agent{
-		Config:  cfg,
-		Client:  client.New(srv.URL, "agent-1", key, "test"),
+		Config:    cfg,
+		Client:    client.New(srv.URL, "agent-1", key, "test"),
 		Inspector: func(config.Service) inventory.Inspector { return stub{} },
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Version: "test",
+		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Version:   "test",
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()

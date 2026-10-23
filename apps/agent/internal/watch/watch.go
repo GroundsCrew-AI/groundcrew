@@ -60,10 +60,10 @@ type health struct {
 }
 
 type Watcher struct {
-	Config  *config.Config
+	Config   *config.Config
 	Runtimes runtime.Set
-	Client  Poster
-	Log     *slog.Logger
+	Client   Poster
+	Log      *slog.Logger
 	// Probe runs health checks (replaced in tests).
 	Probe func(ctx context.Context, url string, timeout time.Duration) error
 	// HistoryPath keeps the images each service ran across agent restarts ("" = memory only).

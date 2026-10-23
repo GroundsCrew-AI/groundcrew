@@ -26,12 +26,12 @@ const (
 )
 
 type Agent struct {
-	Config  *config.Config
-	Client  *client.Client
+	Config *config.Config
+	Client *client.Client
 	// Inspector picks the runtime that reads a service.
 	Inspector func(config.Service) inventory.Inspector
-	Log     *slog.Logger
-	Version string
+	Log       *slog.Logger
+	Version   string
 	// Optional: where the command key is pinned, and the watcher to tune.
 	State   *state.Dir
 	Watcher *watch.Watcher

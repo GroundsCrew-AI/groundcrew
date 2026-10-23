@@ -1794,7 +1794,7 @@ export interface components {
             last_seen_at?: string | null;
             /**
              * Latest Version
-             * @default 0.5.1
+             * @default 0.6.0
              */
             latest_version: string;
             /** Online */
