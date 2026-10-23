@@ -82,6 +82,16 @@ def deployable_services(conn: Connection) -> list[str]:
     return [s.name for s in (stored.services if stored else []) if commands.DEPLOY in s.allow]
 
 
+_PUBLISHED = re.compile(r"published on host port (\d+)")
+
+
+def published_port(result: str) -> int | None:
+    """The host port a new container was published on, from the agent's result (0.5.0 and
+    later move to the next free port when the app's own port is in use)."""
+    match = _PUBLISHED.search(result)
+    return int(match.group(1)) if match else None
+
+
 class AgentTarget:
     kind: TargetKind = "agent"
 
@@ -247,7 +257,8 @@ class AgentTarget:
                 "its settings and volumes; it goes back to the current one if the new one is not "
                 "healthy"
                 if exists
-                else f"the agent creates the container and publishes port {spec.port}",
+                else f"the agent creates the container and publishes port {spec.port} on the "
+                f"host, or the next free port above it if {spec.port} is in use",
             ),
         ]
         return TargetPlan(
@@ -347,7 +358,7 @@ class AgentTarget:
             {"name": k, "value": v}
             for k, v in {**plain_values(spec), **secret_values(spec)}.items()
         ]
-        await self._send(
+        result = await self._send(
             agent,
             commands.DEPLOY,
             service,
@@ -368,7 +379,7 @@ class AgentTarget:
             revision=plan.image,
             previous_revision=plan.previous_revision,
             location=f"{agent.hostname or self.conn.name}/{service}",
-            port=plan.port,
+            port=published_port(result) or plan.port,
             health_path=plan.health_path,
             external_id=inv.service_id(self.conn, service),
         )
