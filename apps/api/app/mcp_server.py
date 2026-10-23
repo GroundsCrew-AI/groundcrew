@@ -11,12 +11,10 @@ What a tool returns is data: incident titles, logs, and repository text can cont
 written by anyone, so every result says so.
 """
 
-import contextvars
 import json
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -26,6 +24,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import select
 from starlette.types import Receive, Scope, Send
 
+from app.assistant_context import TokenContext, current
 from app.config import get_settings
 from app.db.models import WorkspaceMember, WorkspaceToken
 from app.db.session import SessionFactory, get_session_factory
@@ -41,17 +40,7 @@ UNTRUSTED = (
 )
 
 
-@dataclass(frozen=True)
-class TokenContext:
-    token_id: uuid.UUID
-    workspace_id: uuid.UUID
-    user_id: uuid.UUID
-    role: str
-
-
-_current: contextvars.ContextVar[TokenContext | None] = contextvars.ContextVar(
-    "groundcrew_mcp_token", default=None
-)
+_current = current
 
 
 def _ctx() -> TokenContext:
@@ -253,6 +242,7 @@ def make_server() -> FastMCP:
         it, then waits for a person to approve the plan: give the user the link. Env values are
         set on the approval card, never here."""
         if problem := _cannot_start():
+            await _audit("start_deploy", {}, {"error": problem})
             return _result({"error": problem})
         ws = str(_ctx().workspace_id)
         conns = await _api("GET", "/connections", params={"workspace_id": ws})
@@ -279,6 +269,11 @@ def make_server() -> FastMCP:
         if server_service:
             body["target_service"] = server_service
         data = await _api("POST", "/deploys", json=body)
+        await _audit(
+            "start_deploy",
+            {"repository": repository, "ref": ref, "target": target, "folder": service_folder},
+            data,
+        )
         if isinstance(data, dict) and data.get("deploy_id"):
             data["link"] = _link(f"/deploy/{data['deploy_id']}")
             data["next"] = "Groundcrew builds and plans it; a person approves the plan at the link."
@@ -293,6 +288,7 @@ def make_server() -> FastMCP:
         change waits for a person's approval: give the user the link. Secrets are changed in
         Groundcrew (Change settings on the deploy), never through an assistant."""
         if problem := _cannot_start():
+            await _audit("change_settings", {}, {"error": problem})
             return _result({"error": problem})
         body = {
             "env": [
@@ -301,6 +297,12 @@ def make_server() -> FastMCP:
             "remove": list(remove or []),
         }
         data = await _api("POST", f"/deploys/{uuid.UUID(deploy_id)}/settings", json=body)
+        # Names only: values stay out of the audit log.
+        await _audit(
+            "change_settings",
+            {"deploy": deploy_id, "set": sorted(set_values or {}), "removed": list(remove or [])},
+            data,
+        )
         if isinstance(data, dict) and data.get("deploy_id"):
             data["link"] = _link(f"/deploy/{data['deploy_id']}")
         return _result(data)
@@ -316,6 +318,7 @@ def make_server() -> FastMCP:
         Medic investigate. severity: low, medium, high, critical. Any fix Medic proposes waits
         for a person's approval."""
         if problem := _cannot_start():
+            await _audit("report_incident", {}, {"error": problem})
             return _result({"error": problem})
         body: dict[str, Any] = {
             "workspace_id": str(_ctx().workspace_id),
@@ -327,6 +330,9 @@ def make_server() -> FastMCP:
         if severity:
             body["severity"] = severity
         data = await _api("POST", "/incidents", json=body)
+        await _audit(
+            "report_incident", {"title": title[:200], "resources": len(resource_ids)}, data
+        )
         if isinstance(data, dict) and data.get("incident_id"):
             data["link"] = _link(f"/incidents/{data['incident_id']}")
         return _result(data)
@@ -335,15 +341,43 @@ def make_server() -> FastMCP:
     async def retry_fix(incident_id: str, fix_id: str) -> str:
         """Ask Medic to try a failed fix of an incident again. The fix still needs approval."""
         if problem := _cannot_start():
+            await _audit("retry_fix", {}, {"error": problem})
             return _result({"error": problem})
         data = await _api(
             "POST", f"/incidents/{uuid.UUID(incident_id)}/fixes/{uuid.UUID(fix_id)}/retry"
         )
+        await _audit("retry_fix", {"incident": incident_id, "fix": fix_id}, data)
         if isinstance(data, dict) and "error" not in data:
             data["link"] = _link(f"/incidents/{incident_id}")
         return _result(data)
 
     return server
+
+
+async def _audit(tool: str, detail: dict[str, Any], outcome: Any) -> None:
+    """The audit log's entry for a start-work tool call: which tool, its non-secret arguments,
+    and how it ended. The action it started has its own entry, marked as the assistant's."""
+    from app.audit import record
+    from app.db.models import User
+
+    ctx = _ctx()
+    ok = isinstance(outcome, dict) and "error" not in outcome
+    factory = endpoint.session_factory or get_session_factory()
+    async with factory() as session:
+        user = await session.get(User, ctx.user_id)
+        record(
+            session,
+            workspace_id=ctx.workspace_id,
+            actor=user,
+            action=f"assistant.{tool}",
+            target_type="token",
+            target_id=ctx.token_id,
+            detail={
+                **detail,
+                "result": "started" if ok else str((outcome or {}).get("error", "failed"))[:300],
+            },
+        )
+        await session.commit()
 
 
 def _cannot_start() -> str | None:
@@ -409,7 +443,7 @@ class MCPEndpoint:
             if row.last_used_at is None or now - row.last_used_at > timedelta(minutes=1):
                 row.last_used_at = now
                 await session.commit()
-            return TokenContext(row.id, row.workspace_id, row.user_id, row.role)
+            return TokenContext(row.id, row.name, row.workspace_id, row.user_id, row.role)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":  # pragma: no cover

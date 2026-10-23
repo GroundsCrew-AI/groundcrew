@@ -164,6 +164,13 @@ const AUDIT_ACTIONS: Record<string, string> = {
   "deploy.started": "started a deploy",
   "incident.reported": "reported an incident",
   "run.stopped": "stopped a run",
+  "deploy.settings": "changed a deploy's settings",
+  "token.created": "made an assistant token",
+  "token.revoked": "revoked an assistant token",
+  "assistant.start_deploy": "asked to deploy",
+  "assistant.change_settings": "asked to change settings",
+  "assistant.report_incident": "asked to report an incident",
+  "assistant.retry_fix": "asked to retry a fix",
 };
 
 /** One line for an audit event: "approved target_apply (write)", "changed a role: viewer to approver". */
@@ -181,6 +188,14 @@ export function auditSummary(event: Pick<AuditEvent, "action" | "detail">): stri
   }
   if (event.action === "workspace.updated" && Array.isArray(d.changed)) return `${verb}: ${(d.changed as string[]).join(", ")}`;
   if (event.action === "deploy.started" && text("source")) return `${verb} of ${text("source")}`;
+  if (event.action.startsWith("token.") && text("name")) return `${verb}: ${text("name")}`;
+  if (event.action.startsWith("assistant.")) {
+    // Refusals say why; started ones say what.
+    const result = text("result");
+    const what = text("repository") ?? text("title") ?? text("deploy") ?? text("incident");
+    if (result && result !== "started") return `${verb}, refused: ${result}`;
+    return what ? `${verb}: ${what}` : verb;
+  }
   return verb;
 }
 

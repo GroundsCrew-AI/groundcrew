@@ -104,8 +104,9 @@ export default function AssistantsPage() {
           <li>No tool approves anything. Changes to your infrastructure still wait for a person in Groundcrew.</li>
           <li>Secret values never appear: env vars are listed by name, secrets are masked.</li>
           <li>
-            Revoke a token in Settings at any time; it stops at once. Every token use is limited to 120 calls a minute,
-            and making or revoking one is in the activity log.
+            Revoke a token in Settings at any time; it stops at once. Every token use is limited to 120 calls a minute.
+            The activity log in Settings records making and revoking tokens, every request an assistant makes to start
+            work (refused ones too), and marks what it started as &quot;via assistant&quot; with the token&apos;s name.
           </li>
         </ul>
         <Callout kind="safety">

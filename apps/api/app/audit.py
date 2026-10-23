@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts import display_name
+from app.assistant_context import current
 from app.db.models import AuditEvent, User
 
 
@@ -33,11 +34,17 @@ def record(
     detail: dict[str, Any] | None = None,
     ip: str | None = None,
 ) -> AuditEvent:
-    """Add one event to the session (the caller commits with its change)."""
+    """Add one event to the session (the caller commits with its change). An event an
+    assistant caused (through an MCP workspace token) says so, and names the token."""
+    label = actor_label(actor)
+    assistant = current.get()
+    if assistant is not None:
+        label = f"{label} via assistant ({assistant.token_name})"
+        detail = {**(detail or {}), "assistant_token": str(assistant.token_id)}
     event = AuditEvent(
         workspace_id=workspace_id,
         actor_id=actor.id if actor else None,
-        actor_label=actor_label(actor),
+        actor_label=label[:320],
         action=action,
         target_type=target_type,
         target_id=str(target_id) if target_id is not None else None,
