@@ -3,21 +3,33 @@
 # build argument (the API's public URL, where the browser opens live run streams).
 #
 # The image also serves the Groundcrew agent at /agent/ (binaries for linux/amd64 and arm64,
-# SHA256SUMS, install.sh, the systemd unit, an example configuration). Its source comes in as
+# SHA256SUMS and its release signature SHA256SUMS.sig, install.sh, the systemd unit, an example
+# configuration). Its source comes in as
 # the named build context `agent-src` (apps/agent): docker build --build-context
 # agent-src=apps/agent ... (infra/platform/host/bin/gc-release does).
-FROM golang:1.23-bookworm AS agent
+# Pinned by digest, the same image apps/agent/go.sh uses, so these builds match the signed release
+# byte for byte (apps/agent/release.sh sign).
+FROM golang:1.23-bookworm@sha256:167053a2bb901972bf2c1611f8f52c44d5fe7e762e5cab213708d82c421614db AS agent
 WORKDIR /src
 COPY --from=agent-src . .
-# apps/agent/VERSION is the agent's version (the API's AGENT_VERSION must match it).
+# apps/agent/VERSION is the agent's version (the API's AGENT_VERSION must match it). The build
+# stops unless the binaries are exactly those in the signed apps/agent/release/SHA256SUMS: the
+# server only serves what the release key's holder signed.
 RUN set -eu; mkdir -p /out; AGENT_VERSION=$(cat VERSION); \
     for arch in amd64 arm64; do \
       CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -buildvcs=false \
-        -ldflags "-s -w -X main.version=$AGENT_VERSION" \
+        -ldflags "-s -w -buildid= -X main.version=$AGENT_VERSION" \
         -o /out/groundcrew-agent-linux-$arch ./cmd/groundcrew-agent; \
     done; \
-    cp packaging/install.sh packaging/groundcrew-agent.service packaging/agent.example.yaml /out/; \
-    cd /out && sha256sum groundcrew-agent-linux-* > SHA256SUMS
+    cd /out && sha256sum groundcrew-agent-linux-* > SHA256SUMS; \
+    if ! cmp -s SHA256SUMS /src/release/SHA256SUMS; then \
+      echo "The agent binaries do not match the signed release (apps/agent/release/SHA256SUMS)."; \
+      echo "Built:"; cat SHA256SUMS; echo "Signed:"; cat /src/release/SHA256SUMS 2>/dev/null || echo "(none)"; \
+      echo "Run apps/agent/release.sh sign after any agent change, and commit the result."; \
+      exit 1; \
+    fi; \
+    cp /src/release/SHA256SUMS.sig /out/; \
+    cp /src/packaging/install.sh /src/packaging/groundcrew-agent.service /src/packaging/agent.example.yaml /out/
 
 # Only the downloads (docker build --target agent-files -o DIR exports just these).
 FROM scratch AS agent-files

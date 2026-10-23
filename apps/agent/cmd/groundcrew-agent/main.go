@@ -5,6 +5,7 @@
 //	groundcrew-agent check  [--config FILE]   check the file and find each service
 //	groundcrew-agent enroll --token TOKEN     join the workspace (once, with the token from Groundcrew)
 //	groundcrew-agent run    [--config FILE]   report until stopped (the systemd service runs this)
+//	groundcrew-agent update [--downloads URL] install the latest signed release and restart (root)
 //	groundcrew-agent version
 package main
 
@@ -49,6 +50,7 @@ func usage(w io.Writer) {
   groundcrew-agent check  [--config FILE]
   groundcrew-agent enroll --token TOKEN [--config FILE]
   groundcrew-agent run    [--config FILE]
+  groundcrew-agent update [--downloads URL]
   groundcrew-agent version
 `)
 }
@@ -63,6 +65,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	path := fs.String("config", config.DefaultPath, "configuration file")
 	token := fs.String("token", "", "join token from the Connections page (enroll only)")
+	downloads := fs.String("downloads", DefaultDownloads, "where releases are served (update only)")
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "groundcrew-agent %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
@@ -70,6 +73,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "help", "--help", "-h":
 		usage(stdout)
 		return nil
+	case "update":
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		return update(*downloads, stdout)
 	case "check", "enroll", "run":
 	default:
 		usage(stderr)

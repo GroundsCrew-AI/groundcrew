@@ -65,7 +65,9 @@ export default function ConnectAgentPage() {
             <p>Copy the command from the dialog and run it on the server. It looks like this:</p>
             <Code>{"curl -fsSL https://groundkrew.com/agent/install.sh | sudo sh -s -- --token gcj_..."}</Code>
             <p>
-              It downloads the agent for your CPU, checks it against <Inline>SHA256SUMS</Inline>, installs it to{" "}
+              It downloads the agent for your CPU, checks that <Inline>SHA256SUMS</Inline> carries Groundcrew&apos;s
+              release signature and that the agent matches it (it stops if either check fails; it needs OpenSSL 3,
+              which current Linux distributions have), installs it to{" "}
               <Inline>/usr/local/bin</Inline>, creates the <Inline>groundcrew-agent</Inline> user and service, then
               enrolls and starts it. The dialog shows <strong>Connected</strong> when the agent has enrolled.
             </p>
@@ -249,7 +251,9 @@ export default function ConnectAgentPage() {
 
       <DocSection id="change" title="Upgrade, reinstall, or remove">
         <p>
-          To upgrade, run the install command again without a token: the configuration is kept and the agent restarts.
+          To upgrade, run <Inline>sudo groundcrew-agent update</Inline> (agent 0.6.0 and later), or the install
+          command again without a token. Either way the configuration is kept, the agent restarts, and nothing is
+          installed unless it carries Groundcrew&apos;s release signature.
           To move the agent to a new server or reinstall it, choose <strong>New join token</strong> and install with it;
           the new key replaces the old one.
         </p>
