@@ -889,3 +889,80 @@ async def test_settings_change_reuses_the_image_and_keeps_untouched_values(
     old = (await client.get(f"/deploys/{deploy_id}/settings", headers=alice.headers)).json()
     assert old["blocked"] and "newer deploy" in old["blocked"]
     assert "t0ken-value" not in await _everything_stored(session_factory, change_id)
+
+
+async def test_an_assistant_changes_settings_only_through_an_approval(
+    client: httpx.AsyncClient, alice: Member, session_factory: SessionFactory
+) -> None:
+    """ "Change LOG_LEVEL to debug on my web deploy" from a 'Read and start work' token: the
+    assistant gets a link, and the target keeps the old value until a person approves."""
+    from app.mcp_server import endpoint
+    from tests.test_mcp import _call, _token
+
+    stack = Stack(session_factory, alice)
+    k8s = await _connection(session_factory, alice.workspace_id, "k8s", "kind", {"cluster": "k"})
+    deploy_id = await _start(client, alice, k8s, [{"name": "LOG_LEVEL", "value": "info"}])
+    await stack.drain()
+    first = next(
+        s for s in await _steps(session_factory, deploy_id) if s.kind == "approval_requested"
+    )
+    await client.post(
+        f"/approvals/{first.approval_id}/decide",
+        json={"decision": "approve"},
+        headers=alice.headers,
+    )
+    await stack.drain()
+    ns = "gc-py-build-trap"
+
+    def live_log_level() -> str:
+        deployment = stack.kube.objects[("deployments", ns, "py-build-trap")]
+        env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        return str(next(e["value"] for e in env if e["name"] == "LOG_LEVEL"))
+
+    assert live_log_level() == "info"
+
+    endpoint.session_factory = session_factory
+    try:
+        async with endpoint.running():
+            reader = (await _token(client, alice))["token"]
+            refused = await _call(
+                client,
+                reader,
+                "change_settings",
+                deploy_id=deploy_id,
+                set_values={"LOG_LEVEL": "debug"},
+            )
+            assert "can only read" in refused["data"]["error"]
+
+            worker = (await _token(client, alice, role="approver"))["token"]
+            deploys = await _call(client, worker, "list_deploys")
+            assert deploy_id in json.dumps(deploys["data"])
+            changed = await _call(
+                client,
+                worker,
+                "change_settings",
+                deploy_id=deploy_id,
+                set_values={"LOG_LEVEL": "debug"},
+            )
+    finally:
+        endpoint.session_factory = None
+    change_id = changed["data"]["deploy_id"]
+    assert changed["data"]["link"].endswith(f"/deploy/{change_id}")
+
+    # Planned, then waiting for a person: the target still runs with info.
+    await stack.drain()
+    run = await _run(session_factory, change_id)
+    assert run.status == RunStatus.waiting_approval, run.error
+    assert live_log_level() == "info"
+    detail = (await client.get(f"/deploys/{change_id}", headers=alice.headers)).json()
+    assert {v["name"]: v["change"] for v in detail["env"]}["LOG_LEVEL"] == "update"
+
+    plan = next(
+        s for s in await _steps(session_factory, change_id) if s.kind == "approval_requested"
+    )
+    await client.post(
+        f"/approvals/{plan.approval_id}/decide", json={"decision": "approve"}, headers=alice.headers
+    )
+    await stack.drain()
+    assert (await _run(session_factory, change_id)).status == RunStatus.succeeded
+    assert live_log_level() == "debug"
