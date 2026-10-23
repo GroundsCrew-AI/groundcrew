@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 from sqlalchemy import func, select, update
@@ -46,6 +46,8 @@ from app.agents.deployer import (
     plan_summary,
 )
 from app.agents.scout.appspec import AppSpec
+from app.agents.scout.detectors import find_subpath
+from app.agents.scout.repo_view import RepoView
 from app.agents.scout.scout import scout
 from app.config import Settings, get_settings
 from app.connectors.credentials import ConnectionCredentialsProvider, CredentialsProvider
@@ -576,11 +578,30 @@ class _Job:
                     error=summarize(f"Could not read the repository: {exc}", 500),
                 )
             commit = getattr(source, "commit", None)
+            # The service folder to deploy: Scout reads only it and Builder builds only it, so
+            # another service's env vars, port, or start command never reach this deploy.
+            path = request["source"].get("path")
+            subpath = None if path in (None, ".") else path
+            if path is None:
+                chosen, candidates = await asyncio.to_thread(find_subpath, RepoView(root))
+                if chosen is None and len(candidates) > 1:
+                    message = (
+                        f"This repository has several services ({', '.join(candidates)}). "
+                        "Choose the one to deploy."
+                    )
+                    await self.stage_end("scout", "scout", started, "failed", message)
+                    await self.finish(RunStatus.failed, StopReason.error, error=message)
             found = await scout(
-                root, self.deps.llm, await self.budget(), on_call=self.recorder("scout")
+                root,
+                self.deps.llm,
+                await self.budget(),
+                subpath=subpath,
+                on_call=self.recorder("scout"),
             )
             spec = found.spec
             app = slug(request["source"]["repo"].rsplit("/", 1)[-1])
+            if spec.subpath:
+                app = slug(f"{app}-{PurePosixPath(spec.subpath).name}")
             self.state.update(spec=spec.model_dump(mode="json"), app=app, commit=commit)
             facts = [str(spec.framework or spec.language or "unknown app")]
             if spec.port:
@@ -590,7 +611,8 @@ class _Job:
             await self.stage_end("scout", "scout", started, "succeeded", ", ".join(facts))
 
             await self.check_not_stopped()
-            outcome = await self.build(root, spec, app, commit)
+            app_root = root / spec.subpath if spec.subpath else root
+            outcome = await self.build(app_root, spec, app, commit)
         finally:
             await asyncio.to_thread(source.cleanup)
 

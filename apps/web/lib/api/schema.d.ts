@@ -953,6 +953,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deploys/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Repo Services
+         * @description The folders of a repository that deploy on their own (api/, web/, services/billing/),
+         *     read from GitHub without cloning. The deploy form asks which one when there are several.
+         */
+        get: operations["repo_services_deploys_services_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/deploys/{deploy_id}": {
         parameters: {
             query?: never;
@@ -1750,7 +1771,7 @@ export interface components {
             last_seen_at?: string | null;
             /**
              * Latest Version
-             * @default 0.3.0
+             * @default 0.4.0
              */
             latest_version: string;
             /** Online */
@@ -2636,6 +2657,8 @@ export interface components {
              * @enum {string}
              */
             kind: "github" | "fixture";
+            /** Path */
+            path?: string | null;
             /** Ref */
             ref: string | null;
             /** Repo */
@@ -3046,6 +3069,8 @@ export interface components {
              * @example py-build-trap
              */
             fixture: string;
+            /** Path */
+            path?: string | null;
         };
         /**
          * FollowUp
@@ -3221,6 +3246,11 @@ export interface components {
              * Format: uuid
              */
             connection_id: string;
+            /**
+             * Path
+             * @example api
+             */
+            path?: string | null;
             /**
              * Ref
              * @example main
@@ -4317,6 +4347,23 @@ export interface components {
             server: string;
             /** Username */
             username: string;
+        };
+        /** RepoService */
+        RepoService: {
+            /** Manifests */
+            manifests: string[];
+            /** Path */
+            path: string;
+        };
+        /**
+         * RepoServices
+         * @description GET /deploys/services: the folders of a repository that can be deployed on their own.
+         */
+        RepoServices: {
+            /** Choose */
+            choose: boolean;
+            /** Services */
+            services: components["schemas"]["RepoService"][];
         };
         /** ResearchDone */
         ResearchDone: {
@@ -7012,6 +7059,49 @@ export interface operations {
                 };
             };
             /** @description Target is AWS observe tier, or the source is not GitHub. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    repo_services_deploys_services_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+                connection_id: string;
+                repo: string;
+                ref: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoServices"];
+                };
+            };
+            /** @description The connection is not GitHub, or GitHub refused. */
             409: {
                 headers: {
                     [name: string]: unknown;

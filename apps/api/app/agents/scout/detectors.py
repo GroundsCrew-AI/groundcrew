@@ -9,12 +9,14 @@ A stronger finding replaces a weaker one; on a tie the first one stays.
 import json
 import re
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
 from app.agents.scout.appspec import EnvVar, Evidence, FieldName
 from app.agents.scout.repo_view import RepoView
+from app.repos.files import SKIP_DIRS
 
 MANIFESTS = (
     "package.json",
@@ -201,17 +203,38 @@ def detect(view: RepoView) -> Detection:
     return found
 
 
+# Folders that hold manifests but are not services to deploy.
+NOT_SERVICES = frozenset(
+    {"test", "tests", "__tests__", "spec", "fixtures", "testdata", "example", "examples", "docs"}
+)
+SERVICE_DEPTH = 3
+
+
+def service_dirs(files: Iterable[str]) -> list[str]:
+    """The deployable folders of a repository from its file paths: "." when the root has a
+    manifest, then every folder up to SERVICE_DEPTH deep with its own manifest (apps/api,
+    services/billing/web). A folder inside another service is part of it, not a service."""
+    dirs: set[str] = set()
+    for rel in files:
+        path = PurePosixPath(rel)
+        if not is_manifest(path.name):
+            continue
+        parent = path.parent
+        if len(parent.parts) > SERVICE_DEPTH:
+            continue
+        if any(p in SKIP_DIRS or p in NOT_SERVICES or p.startswith(".") for p in parent.parts):
+            continue
+        dirs.add(parent.as_posix())
+    nested = [d for d in sorted(dirs) if d != "."]
+    out = [d for d in nested if not any(d.startswith(f"{o}/") for o in nested)]
+    return [".", *out] if "." in dirs else out
+
+
 def find_subpath(view: RepoView) -> tuple[str | None, list[str]]:
     """For a monorepo with no manifest at the root: the one app directory, or the candidates."""
-    if any(is_manifest(f) for f in view.files if "/" not in f):
+    dirs = service_dirs(view.files)
+    if "." in dirs:
         return None, []
-    dirs = sorted(
-        {
-            str(PurePosixPath(f).parent)
-            for f in view.files
-            if is_manifest(PurePosixPath(f).name) and 1 <= len(PurePosixPath(f).parts) - 1 <= 2
-        }
-    )
     return (dirs[0], dirs) if len(dirs) == 1 else (None, dirs)
 
 

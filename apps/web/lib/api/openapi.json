@@ -331,7 +331,7 @@
             "title": "Last Seen At"
           },
           "latest_version": {
-            "default": "0.3.0",
+            "default": "0.4.0",
             "title": "Latest Version",
             "type": "string"
           },
@@ -2696,6 +2696,17 @@
             "title": "Kind",
             "type": "string"
           },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
           "ref": {
             "anyOf": [
               {
@@ -3683,6 +3694,19 @@
             "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
             "title": "Fixture",
             "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "pattern": "^(\\.|[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*){0,5})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
           }
         },
         "required": [
@@ -4094,6 +4118,22 @@
             "format": "uuid",
             "title": "Connection Id",
             "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "pattern": "^(\\.|[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*){0,5})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "api"
+            ],
+            "title": "Path"
           },
           "ref": {
             "examples": [
@@ -7160,6 +7200,49 @@
           "password"
         ],
         "title": "RegistryLoginOut",
+        "type": "object"
+      },
+      "RepoService": {
+        "properties": {
+          "manifests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Manifests",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "manifests"
+        ],
+        "title": "RepoService",
+        "type": "object"
+      },
+      "RepoServices": {
+        "description": "GET /deploys/services: the folders of a repository that can be deployed on their own.",
+        "properties": {
+          "choose": {
+            "title": "Choose",
+            "type": "boolean"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/RepoService"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "services",
+          "choose"
+        ],
+        "title": "RepoServices",
         "type": "object"
       },
       "ResearchDone": {
@@ -13159,6 +13242,100 @@
           }
         },
         "summary": "Create Deploy",
+        "tags": [
+          "deploys"
+        ]
+      }
+    },
+    "/deploys/services": {
+      "get": {
+        "description": "The folders of a repository that deploy on their own (api/, web/, services/billing/),\nread from GitHub without cloning. The deploy form asks which one when there are several.",
+        "operationId": "repo_services_deploys_services_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "maxLength": 140,
+              "title": "Repo",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "title": "Ref",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoServices"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The connection is not GitHub, or GitHub refused."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Repo Services",
         "tags": [
           "deploys"
         ]

@@ -9,6 +9,7 @@ export type DeployCreated = Schemas["DeployCreated"];
 export type DeploySummary = Schemas["DeploySummary"];
 export type DeployDetail = Schemas["DeployDetail"];
 export type DeployPage = Schemas["DeployPage"];
+export type RepoServices = Schemas["RepoServices"];
 export type DeployState = DeploySummary["status"];
 export type DeployStage = Schemas["StageStarted"]["stage"];
 export type TargetKind = Schemas["DeployPlan"]["target"];
@@ -76,6 +77,31 @@ export function useDeploy(deployId: string) {
     queryKey: deployKeys.detail(deployId),
     queryFn: async (): Promise<DeployDetail> =>
       unwrap(await api.GET("/deploys/{deploy_id}", { params: { path: { deploy_id: deployId } } })),
+  });
+}
+
+/**
+ * The folders of a repository that deploy on their own (api/, web/), read from GitHub. With
+ * several and no app at the root, the deploy form asks which one; Scout and Builder then read
+ * and build only that folder.
+ */
+export function useRepoServices(
+  workspaceId: string,
+  connectionId: string | undefined,
+  repo: string,
+  ref: string,
+) {
+  return useQuery({
+    queryKey: ["repo-services", workspaceId, connectionId, repo, ref] as const,
+    enabled: Boolean(connectionId && repo && ref),
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async (): Promise<RepoServices> =>
+      unwrap(
+        await api.GET("/deploys/services", {
+          params: { query: { workspace_id: workspaceId, connection_id: connectionId!, repo, ref } },
+        }),
+      ),
   });
 }
 

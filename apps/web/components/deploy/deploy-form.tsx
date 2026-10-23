@@ -3,7 +3,7 @@
 import { cn } from "cn";
 import { Plus, Rocket, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { type FormEvent, useId, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { Connection } from "@/lib/discovery";
-import type { DeployCreate, TargetKind } from "@/lib/deploys";
+import { type DeployCreate, type TargetKind, useRepoServices } from "@/lib/deploys";
 
 export type EnvRow = { key: number; name: string; value: string; secret: boolean; touched: boolean };
 
@@ -24,6 +24,8 @@ export type DeploySubmit = DeployCreate;
 const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 // The Select value that switches to typing owner/name (a repo the connection has not listed).
 const OTHER_REPO = "__other__";
+// The repository root as a service folder.
+const ROOT = ".";
 
 type Target = { connection: Connection; kind: TargetKind; disabled: boolean };
 
@@ -84,6 +86,9 @@ export function DeployForm({
   const [repo, setRepo] = useState("");
   const [typedRepo, setTypedRepo] = useState("");
   const [ref, setRef] = useState("main");
+  // The ref the service lookup uses: settles 400 ms after typing stops.
+  const [lookupRef, setLookupRef] = useState("main");
+  const [path, setPath] = useState("");
   const [targetId, setTargetId] = useState<string>(() => targets.find((t) => !t.disabled)?.connection.id ?? "");
   const [service, setService] = useState("");
   const [rows, setRows] = useState<EnvRow[]>([]);
@@ -95,6 +100,21 @@ export function DeployForm({
   const typing = repo === OTHER_REPO || (Boolean(source) && repos.length === 0);
   const chosenRepo = typing ? typedRepo.trim() : repo && repos.includes(repo) ? repo : (repos[0] ?? "");
   const repoInvalid = typing && !REPO_NAME.test(chosenRepo);
+  useEffect(() => {
+    const timer = setTimeout(() => setLookupRef(ref.trim()), 400);
+    return () => clearTimeout(timer);
+  }, [ref]);
+  const lookup = useRepoServices(workspaceId, source?.id, repoInvalid ? "" : chosenRepo, lookupRef);
+  const repoServices = lookup.data?.services ?? [];
+  // A choice only matters with several services; one service (or none found) is Scout's call.
+  const pickService = repoServices.length > 1;
+  const mustPick = pickService && Boolean(lookup.data?.choose);
+  const chosenPath = repoServices.some((s) => s.path === path)
+    ? path
+    : pickService && !mustPick
+      ? ROOT
+      : "";
+  const pathMissing = mustPick && !chosenPath;
   const target = targets.find((t) => t.connection.id === targetId && !t.disabled);
   const services = target?.kind === "agent" ? (target.connection.agent?.deploy_services ?? []) : [];
   const chosenService = services.includes(service) ? service : (services[0] ?? "");
@@ -103,7 +123,13 @@ export function DeployForm({
   const repoError = attempted && repoInvalid;
   const refError = attempted && !ref.trim();
   const ready = Boolean(
-    source && chosenRepo && !repoInvalid && ref.trim() && target && Object.keys(errors).length === 0,
+    source &&
+      chosenRepo &&
+      !repoInvalid &&
+      ref.trim() &&
+      !pathMissing &&
+      target &&
+      Object.keys(errors).length === 0,
   );
 
   function update(key: number, patch: Partial<EnvRow>) {
@@ -124,7 +150,12 @@ export function DeployForm({
     if (!ready || !source || !target) return;
     onSubmit({
       workspace_id: workspaceId,
-      repo: { connection_id: source.id, repo: chosenRepo, ref: ref.trim() },
+      repo: {
+        connection_id: source.id,
+        repo: chosenRepo,
+        ref: ref.trim(),
+        ...(pickService && chosenPath ? { path: chosenPath } : {}),
+      },
       target_connection_id: target.connection.id,
       ...(target.kind === "agent" ? { target_service: chosenService } : {}),
       env: rows.map((r) => ({ name: r.name.trim(), value: r.value, secret: r.secret })),
@@ -153,7 +184,7 @@ export function DeployForm({
           <div className="grid gap-3 sm:grid-cols-[1fr_1.4fr_0.8fr]">
             <div className="space-y-1.5">
               <Label htmlFor={`${id}-gh`}>GitHub</Label>
-              <Select value={sourceId} onValueChange={(v) => { setSourceId(v); setRepo(""); }}>
+              <Select value={sourceId} onValueChange={(v) => { setSourceId(v); setRepo(""); setPath(""); }}>
                 <SelectTrigger id={`${id}-gh`} className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {github.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
@@ -163,7 +194,7 @@ export function DeployForm({
             <div className="space-y-1.5">
               <Label htmlFor={`${id}-repo`}>Repository</Label>
               {repos.length > 0 && (
-                <Select value={typing ? OTHER_REPO : chosenRepo} onValueChange={setRepo}>
+                <Select value={typing ? OTHER_REPO : chosenRepo} onValueChange={(v) => { setRepo(v); setPath(""); }}>
                   <SelectTrigger id={`${id}-repo`} className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -201,6 +232,48 @@ export function DeployForm({
                 </p>
               )}
             </div>
+          </div>
+        )}
+        {lookup.isFetching && !lookup.data && (
+          <p className="text-[12px] text-muted-foreground">Looking for services in the repository…</p>
+        )}
+        {lookup.isError && (
+          <p className="text-[12px] text-muted-foreground">
+            Could not list the repository&apos;s services. Scout will look when the deploy starts.
+          </p>
+        )}
+        {pickService && (
+          <div className="max-w-sm space-y-1.5">
+            <Label htmlFor={`${id}-path`}>Service in the repository</Label>
+            <Select value={chosenPath} onValueChange={setPath}>
+              <SelectTrigger
+                id={`${id}-path`}
+                className="w-full"
+                aria-invalid={attempted && pathMissing}
+                aria-describedby={`${id}-path-help`}
+              >
+                <SelectValue placeholder="Choose a service" />
+              </SelectTrigger>
+              <SelectContent>
+                {repoServices.map((s) => (
+                  <SelectItem key={s.path} value={s.path}>
+                    <span className="font-mono">{s.path === ROOT ? "Repository root" : `${s.path}/`}</span>
+                    <span className="text-muted-foreground">{s.manifests.join(", ")}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p
+              id={`${id}-path-help`}
+              className={cn(
+                "text-[12px]",
+                attempted && pathMissing ? "text-[var(--status-failed)]" : "text-muted-foreground",
+              )}
+            >
+              {attempted && pathMissing
+                ? "This repository has several services. Choose the one to deploy."
+                : "Scout reads only this folder, so its env vars, port, and start command are the ones in the plan."}
+            </p>
           </div>
         )}
       </fieldset>

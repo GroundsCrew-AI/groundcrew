@@ -9,6 +9,7 @@ import base64
 import binascii
 import uuid
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -16,7 +17,9 @@ from sqlalchemy import and_, or_, select
 
 from app import queue, quotas
 from app.accounts import NotFoundError, member_workspace
+from app.agents.scout.detectors import is_manifest, service_dirs
 from app.audit import record
+from app.connectors.github import GitHubError, get_github_app
 from app.db.models import (
     Approval,
     ApprovalStatus,
@@ -42,6 +45,8 @@ from app.routes.deploy_schemas import (
     DeploySummary,
     DeployTargetOut,
     FixtureSource,
+    RepoService,
+    RepoServices,
     StageOut,
 )
 from app.routes.deps import ClientIp, CurrentUser, SessionDep, SettingsDep
@@ -87,6 +92,40 @@ async def _deploy_run(
     return run
 
 
+@router.get(
+    "/services",
+    responses={409: {"description": "The connection is not GitHub, or GitHub refused."}},
+)
+async def repo_services(
+    user: CurrentUser,
+    session: SessionDep,
+    workspace_id: Annotated[uuid.UUID, Query()],
+    connection_id: Annotated[uuid.UUID, Query()],
+    repo: Annotated[str, Query(max_length=140)],
+    ref: Annotated[str, Query(min_length=1, max_length=255)],
+) -> RepoServices:
+    """The folders of a repository that deploy on their own (api/, web/, services/billing/),
+    read from GitHub without cloning. The deploy form asks which one when there are several."""
+    await _check_member(session, user, workspace_id)
+    conn = await _connection(session, workspace_id, connection_id)
+    if conn.kind != "github":
+        raise HTTPException(status.HTTP_409_CONFLICT, "The source connection is not GitHub.")
+    try:
+        paths, _ = await get_github_app().tree_paths(int(conn.config["installation_id"]), repo, ref)
+    except (GitHubError, ValueError) as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    dirs = service_dirs(paths)
+    manifests: dict[str, list[str]] = {d: [] for d in dirs}
+    for rel in paths:
+        path = PurePosixPath(rel)
+        if is_manifest(path.name) and path.parent.as_posix() in manifests:
+            manifests[path.parent.as_posix()].append(path.name)
+    return RepoServices(
+        services=[RepoService(path=d, manifests=sorted(manifests[d])) for d in dirs],
+        choose="." not in dirs and len(dirs) > 1,
+    )
+
+
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
@@ -112,6 +151,7 @@ async def create_deploy(
             "kind": "fixture",
             "repo": body.repo.fixture,
             "ref": None,
+            "path": body.repo.path,
             "connection_id": None,
         }
         label = f"fixture {body.repo.fixture}"
@@ -123,9 +163,12 @@ async def create_deploy(
             "kind": "github",
             "repo": body.repo.repo,
             "ref": body.repo.ref,
+            "path": body.repo.path,
             "connection_id": str(repo_conn.id),
         }
         label = f"{body.repo.repo}@{body.repo.ref}"
+    if body.repo.path not in (None, "."):
+        label += f" ({body.repo.path})"
     target = await _connection(session, body.workspace_id, body.target_connection_id)
     if target.kind == "aws":
         if (target.config.get("tier") or "observe") != "deploy":
@@ -252,6 +295,7 @@ def summary(run: Run) -> DeploySummary:
             kind=kind,
             repo=str(source.get("repo") or ""),
             ref=source.get("ref"),
+            path=source.get("path"),
             connection_id=uuid.UUID(conn) if conn else None,
             commit=state.get("commit"),
         ),

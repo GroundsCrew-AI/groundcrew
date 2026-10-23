@@ -6,12 +6,23 @@ import { connection } from "@/tests/discovery-fixtures";
 
 import { DeployForm, deployTargets, envErrors } from "./deploy-form";
 
+// The services GitHub lists for the repository (GET /deploys/services); none by default.
+const services = vi.hoisted(() => ({ current: undefined as unknown }));
+vi.mock("@/lib/deploys", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/deploys")>()),
+  useRepoServices: () => ({ data: services.current, isFetching: false, isError: false }),
+}));
+
 // jsdom has no ResizeObserver; radix Switch and Checkbox measure themselves with it.
 globalThis.ResizeObserver ??= class {
   observe() {}
   unobserve() {}
   disconnect() {}
 };
+// Radix Select needs these in jsdom.
+Element.prototype.hasPointerCapture ??= () => false;
+Element.prototype.releasePointerCapture ??= () => {};
+Element.prototype.scrollIntoView ??= () => {};
 
 const github = connection({ id: "gh", kind: "github", name: "GroundsCrew-AI", repos: ["GroundsCrew-AI/legacy-flask-app"], tier: null });
 const kind = connection({ id: "k8s", kind: "k8s", name: "kind groundcrew", tier: null });
@@ -45,7 +56,8 @@ function agentConnection(deployServices: string[]) {
   };
 }
 
-function setup(connections = [github, kind, observe, deployTier]) {
+function setup(connections = [github, kind, observe, deployTier], found?: unknown) {
+  services.current = found;
   const onSubmit = vi.fn();
   render(<DeployForm workspaceId="ws-1" connections={connections} submitting={false} onSubmit={onSubmit} />);
   return onSubmit;
@@ -125,6 +137,41 @@ describe("DeployForm", () => {
   it("asks for a GitHub connection when there is none", () => {
     setup([kind]);
     expect(screen.getByRole("link", { name: "Connect GitHub" })).toBeInTheDocument();
+  });
+});
+
+describe("DeployForm in a repository with several services", () => {
+  const found = {
+    services: [
+      { path: "api", manifests: ["pyproject.toml"] },
+      { path: "web", manifests: ["package.json"] },
+    ],
+    choose: true,
+  };
+
+  it("asks which service to deploy before submitting", async () => {
+    const onSubmit = setup(undefined, found);
+    await userEvent.click(screen.getByRole("button", { name: /^deploy$/i }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText(/several services\. Choose the one to deploy/)).toBeInTheDocument();
+  });
+
+  it("sends the chosen service folder", async () => {
+    const onSubmit = setup(undefined, found);
+    await userEvent.click(screen.getByRole("combobox", { name: "Service in the repository" }));
+    await userEvent.click(screen.getByRole("option", { name: /web\// }));
+    await userEvent.click(screen.getByRole("button", { name: /^deploy$/i }));
+    expect(onSubmit.mock.calls[0][0].repo).toEqual({
+      connection_id: "gh",
+      repo: "GroundsCrew-AI/legacy-flask-app",
+      ref: "main",
+      path: "web",
+    });
+  });
+
+  it("has no service choice for a repository with one app", () => {
+    setup(undefined, { services: [{ path: ".", manifests: ["go.mod"] }], choose: false });
+    expect(screen.queryByRole("combobox", { name: "Service in the repository" })).toBeNull();
   });
 });
 

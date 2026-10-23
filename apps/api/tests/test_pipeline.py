@@ -3,6 +3,7 @@
 graph sink, with FakeLLM, a scripted sandbox, and K8sTarget on a fake Kubernetes API."""
 
 import json
+import shutil
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -700,3 +701,79 @@ async def test_an_app_that_answers_but_is_unhealthy_in_the_sandbox_goes_on(
     assert [s.data["ok"] for s in steps if s.kind == "build_attempt"] == [False, True]
     notes = [s.output_summary or "" for s in steps if s.kind == "note"]
     assert any("cannot reach your databases" in n and "database unreachable" in n for n in notes)
+
+
+class _MonorepoSource:
+    """py-build-trap as the api/ service of a repo that also has a web/ front end."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.commit: str | None = None
+
+    def materialize(self) -> Path:
+        fixture = Path(__file__).parents[3] / "demo" / "fixtures" / "py-build-trap" / "repo"
+        shutil.copytree(fixture, self.root / "api")
+        (self.root / "web").mkdir()
+        (self.root / "web" / "package.json").write_text('{"dependencies": {"next": "15"}}')
+        (self.root / "web" / "page.ts").write_text("const url = process.env.WEB_ONLY_URL;\n")
+        return self.root
+
+    def describe(self) -> str:
+        return "monorepo"
+
+    def cleanup(self) -> None:
+        return None
+
+
+async def _start_monorepo(
+    client: httpx.AsyncClient, member: Member, target: uuid.UUID, path: str | None
+) -> str:
+    repo: dict[str, Any] = {"fixture": "py-build-trap"}
+    if path:
+        repo["path"] = path
+    r = await client.post(
+        "/deploys",
+        json={
+            "workspace_id": str(member.workspace_id),
+            "repo": repo,
+            "target_connection_id": str(target),
+            "env": [{"name": "DATABASE_URL", "value": SECRET, "secret": True}],
+        },
+        headers=member.headers,
+    )
+    assert r.status_code == 202, r.text
+    return str(r.json()["deploy_id"])
+
+
+async def test_a_repo_with_several_services_asks_which_one(
+    client: httpx.AsyncClient, alice: Member, session_factory: SessionFactory, tmp_path: Path
+) -> None:
+    stack = Stack(session_factory, alice)
+    stack.deps.source_for = lambda _request, _conn: _MonorepoSource(tmp_path / "repo")
+    k8s = await _connection(session_factory, alice.workspace_id, "k8s", "kind", {"cluster": "k"})
+    deploy_id = await _start_monorepo(client, alice, k8s, None)
+    await stack.drain()
+    run = await _run(session_factory, deploy_id)
+    assert run.status == RunStatus.failed
+    assert "several services (api, web)" in (run.error or "")
+    # Nothing was built, and the model was never asked.
+    assert not any(e.startswith("build") for e in stack.sandbox.events)
+
+
+async def test_only_the_chosen_service_is_read_and_built(
+    client: httpx.AsyncClient, alice: Member, session_factory: SessionFactory, tmp_path: Path
+) -> None:
+    stack = Stack(session_factory, alice)
+    stack.deps.source_for = lambda _request, _conn: _MonorepoSource(tmp_path / "repo")
+    k8s = await _connection(session_factory, alice.workspace_id, "k8s", "kind", {"cluster": "k"})
+    deploy_id = await _start_monorepo(client, alice, k8s, "api")
+    await stack.drain()
+    run = await _run(session_factory, deploy_id)
+    assert run.status == RunStatus.waiting_approval, run.error
+    spec = run.state["spec"]
+    assert spec["subpath"] == "api"
+    # The front end's env var belongs to another service.
+    assert "WEB_ONLY_URL" not in {v["name"] for v in spec["env_vars"]}
+    assert run.state["app"] == "py-build-trap-api"
+    detail = (await client.get(f"/deploys/{deploy_id}", headers=alice.headers)).json()
+    assert detail["source"]["path"] == "api"

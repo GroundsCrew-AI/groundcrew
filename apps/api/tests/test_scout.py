@@ -8,7 +8,7 @@ import pytest
 
 from app.agents.scout.accuracy import field_matches, load_golden
 from app.agents.scout.appspec import Evidence, ScoutDraft
-from app.agents.scout.detectors import detect, find_subpath, is_secret_name
+from app.agents.scout.detectors import detect, find_subpath, is_secret_name, service_dirs
 from app.agents.scout.repo_view import RepoView
 from app.agents.scout.scout import PROMPT_TOKEN_CAP, build_prompt, merge, scout
 from app.agents.scout.summary import ResourceSummary, summarize_system
@@ -360,3 +360,28 @@ async def test_summarize_system() -> None:
     user = llm.calls[0]["messages"][1]["content"]
     assert user.index('"aws"') < user.index('"azure"')  # sorted, deterministic
     assert await summarize_system(llm, _budget(), []) == "No resources found yet."
+
+
+def test_service_dirs_across_languages() -> None:
+    files = [
+        "Makefile",
+        "api/pyproject.toml",
+        "web/package.json",
+        "web/scripts/package.json",  # inside web: part of it
+        "worker/go.mod",
+        "services/billing/api/pom.xml",
+        "services/ledger/Ledger.csproj",
+        "api/tests/fixtures/requirements.txt",
+        "examples/demo/package.json",
+        "node_modules/x/package.json",
+        "a/b/c/d/Cargo.toml",  # too deep
+        "infra/aws/lambda/handler.py",  # no manifest: not a service
+    ]
+    assert service_dirs(files) == [
+        "api",
+        "services/billing/api",
+        "services/ledger",
+        "web",
+        "worker",
+    ]
+    assert service_dirs(["package.json", "apps/api/go.mod"]) == [".", "apps/api"]

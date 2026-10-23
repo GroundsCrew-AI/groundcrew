@@ -21,6 +21,7 @@ connection the user is not a member of is a 404, like everywhere else.
 |---|---|---|---|
 | POST | `/deploys` | `DeployCreate` | 202 `DeployCreated` |
 | GET | `/deploys` | `workspace_id`, `limit` (1 to 100, default 25), `cursor` | 200 `DeployPage`, newest first |
+| GET | `/deploys/services` | `workspace_id`, `connection_id`, `repo`, `ref` | 200 `RepoServices`: the repo's service folders, read from GitHub |
 | GET | `/deploys/{deploy_id}` | | 200 `DeployDetail` |
 | POST | `/deploys/{deploy_id}/env` | `DeployEnvUpdate` | 202 `DeployEnvUpdated` (below) |
 
@@ -43,7 +44,7 @@ runs list and the approvals inbox.
 
 | Field | Rules |
 |---|---|
-| `repo` | Either `{connection_id, repo, ref}` (a GitHub connection in the workspace; `repo` is `owner/name`; `ref` is a branch, tag, or SHA) or `{fixture}` (a folder under `demo/fixtures/`, dev only). Mixing the two shapes is a 422. |
+| `repo` | Either `{connection_id, repo, ref}` (a GitHub connection in the workspace; `repo` is `owner/name`; `ref` is a branch, tag, or SHA) or `{fixture}` (a folder under `demo/fixtures/`, dev only). Mixing the two shapes is a 422. Both take an optional `path`: the service folder to deploy (`api`, `services/billing`; `.` for the root). Scout reads and Builder builds only that folder, so another service's env vars, port, and start command never reach the plan, and the app is named `<repo>-<folder>`. A repo with several services (folders with their own `package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `Gemfile`, `Cargo.toml`, `composer.json`, `*.csproj`, ...) and no app at the root fails at Scout without `path`, naming the services. |
 | `target_connection_id` | A `k8s` connection, or an `aws` connection with `Tier=deploy`. An observe-tier AWS connection is refused with 409 and a "Turn on deploys" hint. |
 | `env` | Up to 100 vars, unique names matching `[A-Za-z_][A-Za-z0-9_]*`, values up to 16,384 characters. `secret: true` sends the value to a Kubernetes Secret or Secrets Manager. |
 | `options.allow_missing_env` | Deploy even when Scout marked a var required and none was given. Default false: preflight fails and the plan cannot be approved. |
@@ -71,7 +72,7 @@ Unknown fields anywhere are a 422. Response: `{"deploy_id": "...", "run_id": "..
 | `run_status`, `stop_reason` | The run's own status and stop reason (`no_progress` when Builder repeated the same fix) |
 | `stage` | The stage running now, or the last one reached (see below) |
 | `app` | App name from Scout, once known |
-| `source` | `{kind: github \| fixture, repo, ref, connection_id, commit}`; `commit` once checked out |
+| `source` | `{kind: github \| fixture, repo, ref, path, connection_id, commit}`; `commit` once checked out |
 | `target` | `{connection_id, kind: k8s \| aws_ecs, name}` |
 | `live_url` | Once verified |
 | `build_attempts`, `automatic_fix` | Attempts used, and whether a build passed after Builder changed the Dockerfile because of a failure |

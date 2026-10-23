@@ -17,6 +17,8 @@ from app.pipeline.state import DeployRecord, StageState
 
 MAX_ENV_VARS = 100
 MAX_ENV_VALUE_CHARS = 16_384
+# A service folder inside the repository: relative, no "..", "." for the root.
+SERVICE_PATH = r"^(\.|[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*){0,5})$"
 
 # --- request ------------------------------------------------------------------------------
 
@@ -33,6 +35,9 @@ class GitHubRepoSource(BaseModel):
     )
     # Branch, tag, or commit SHA. The commit actually built is in the deploy record.
     ref: str = Field(min_length=1, max_length=255, pattern=r"^[^\s~^:?*\[\\]+$", examples=["main"])
+    # The service to deploy when the repo holds several (GET /deploys/services lists them).
+    # Scout reads and Builder builds only this folder. Omitted: the root, or the one service.
+    path: str | None = Field(default=None, max_length=255, pattern=SERVICE_PATH, examples=["api"])
 
 
 class FixtureSource(BaseModel):
@@ -41,6 +46,7 @@ class FixtureSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fixture: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,62}$", examples=["py-build-trap"])
+    path: str | None = Field(default=None, max_length=255, pattern=SERVICE_PATH)
 
 
 DeploySource = GitHubRepoSource | FixtureSource
@@ -114,6 +120,21 @@ class DeployEnvUpdated(BaseModel):
     approval_id: uuid.UUID
 
 
+class RepoService(BaseModel):
+    # "." is the repository root.
+    path: str
+    # The manifests that make it a service (package.json, go.mod, ...).
+    manifests: list[str]
+
+
+class RepoServices(BaseModel):
+    """GET /deploys/services: the folders of a repository that can be deployed on their own."""
+
+    services: list[RepoService]
+    # More than one service and no root app: the deploy form asks which one.
+    choose: bool
+
+
 class DeployCreated(BaseModel):
     deploy_id: uuid.UUID
     # Open GET /runs/{run_id}/events (after POST /runs/{run_id}/stream-token) for the timeline.
@@ -134,6 +155,8 @@ class DeploySourceOut(BaseModel):
     # owner/name for GitHub, the fixture name otherwise.
     repo: str
     ref: str | None
+    # The service folder deployed; null for the repository root.
+    path: str | None = None
     connection_id: uuid.UUID | None
     # The commit that was built, once Scout has checked it out.
     commit: str | None

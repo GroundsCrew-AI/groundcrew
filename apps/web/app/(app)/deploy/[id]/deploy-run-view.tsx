@@ -189,6 +189,7 @@ export function DeployRunView({ deployId }: { deployId: string }) {
             <Fact label="Source" title={`${d.source.repo}${d.source.ref ? `@${d.source.ref}` : ""}`}>
               {d.source.repo}
               {d.source.ref && <span className="text-muted-foreground">@{d.source.ref}</span>}
+                {d.source.path && d.source.path !== "." && <span className="text-muted-foreground"> {d.source.path}/</span>}
             </Fact>
             <Fact label="Target">{targetLabel(d.target.kind)}</Fact>
             <Fact label="Build attempts">
