@@ -11,11 +11,23 @@ from sqlalchemy import select
 from app.agents.medic.events import ChangeMarker
 from app.db.models import Agent, AgentEvent, Resource
 from app.db.session import SessionFactory
+from app.remote_agents import inventory as inv
 from app.remote_agents.signals import ServiceState, describe
 from app.telemetry.evidence import ReaderOutput, line
 
 SOURCE = "agent"
 MAX_EVENTS = 300
+# What runs the service when it is not the agent's host: who starts replacements.
+ORCHESTRATED = {
+    "ecs": (
+        "runs on Amazon ECS (service {target}): ECS starts replacement tasks itself; the "
+        "Groundcrew agent only watches it and restarts it when someone approves"
+    ),
+    "kubernetes": (
+        "runs on Kubernetes (Deployment {target}): Kubernetes starts replacement pods itself; "
+        "the Groundcrew agent only watches it and restarts it when someone approves"
+    ),
+}
 
 
 async def read_service(
@@ -41,8 +53,12 @@ async def read_service(
                 .limit(MAX_EVENTS)
             )
         )
-    host = agent.hostname or resource.account or "host"
+    cfg = resource.config or {}
+    runtime, target = cfg.get("runtime"), cfg.get("target")
+    host = inv.location(runtime, target, agent.hostname or resource.account or "host")
     out = ReaderOutput(truncated=len(rows) >= MAX_EVENTS)
+    if runtime in ORCHESTRATED:
+        out.lines.append(line(since, SOURCE, service, ORCHESTRATED[runtime].format(target=target)))
     for e in reversed(rows):
         text = e.message if e.kind == "log" else f"[{e.kind}] {e.message}"
         out.lines.append(line(e.at, SOURCE, service, text))

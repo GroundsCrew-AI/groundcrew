@@ -173,6 +173,65 @@ async def test_reports_take_full_registry_image_references_as_ids(
     assert row is not None and row.states[FLASK]["previous_image_id"] == ecr
 
 
+async def test_ecs_and_kubernetes_services_are_named_by_cluster_and_namespace(
+    client: httpx.AsyncClient, session_factory: SessionFactory
+) -> None:
+    """The agent's own host is its ECS task or pod: titles and plans name the cluster instead."""
+    from app.remote_agents.inventory import location
+
+    assert location("ecs", "checkout/checkout-api", "ip-10-20-0-19") == "ECS cluster checkout"
+    assert location("kubernetes", "shop/api", "agent-7d9") == "Kubernetes namespace shop"
+    assert location("docker", "flask-app", "web-1") == "web-1"
+
+    alice = await _member(session_factory, 8110, "alice")
+    added = await _add(client, alice)
+    agent = FakeAgent(client)
+    assert (await agent.enroll(added["token"])).status_code == 200
+    conn_id = uuid.UUID(added["connection"]["id"])
+    ecs = {
+        "host": {
+            "hostname": "ip-10-20-0-19.us-east-2.compute.internal",
+            "os": "linux",
+            "arch": "amd64",
+        },
+        "services": [
+            {
+                "name": "checkout-api",
+                "runtime": "ecs",
+                "target": "checkout/checkout-api",
+                "allow": ["restart"],
+            }
+        ],
+    }
+    r = await agent.post("/agent/v1/inventory", ecs)
+    await DiscoveryEngine(session_factory).run(
+        uuid.UUID(r.json()["discovery_run_id"]), connection_id=conn_id
+    )
+    down = state("checkout-api", state="unavailable")
+    assert (
+        await agent.post("/agent/v1/events", {"states": [down], "events": []})
+    ).status_code == 200
+    (incident,) = await _incidents(session_factory)
+    assert incident.title == "checkout-api: checkout-api unavailable on ECS cluster checkout"
+
+    plan = await AgentEmergencyActions(session_factory, _settings()).plan_agent_restart_service(
+        conn_id, "checkout-api"
+    )
+    assert plan.summary == "Restart checkout-api on ECS cluster checkout (now unavailable)"
+
+    # Medic's evidence says ECS, not the agent, starts replacement tasks.
+    from app.telemetry.agent import read_service
+
+    async with session_factory() as session:
+        resource = await session.scalar(select(Resource).where(Resource.name == "checkout-api"))
+    assert resource is not None
+    now = datetime.now(UTC)
+    read = await read_service(session_factory, resource, now - timedelta(hours=1), now)
+    text = [x.message for x in read.lines]
+    assert text[0].startswith("runs on Amazon ECS (service checkout/checkout-api): ECS starts")
+    assert text[-1] == "now: checkout-api unavailable on ECS cluster checkout, 0 restarts"
+
+
 async def test_failed_health_checks_and_error_spikes_fire(
     client: httpx.AsyncClient, session_factory: SessionFactory
 ) -> None:

@@ -78,6 +78,15 @@ def digest(inventory: Inventory) -> str:
 VERSION_KEY = "agent_version"
 
 
+def location(runtime: str | None, target: str | None, hostname: str) -> str:
+    """Where a service runs, as people name it: the agent's own host means nothing for Kubernetes
+    and ECS (it is the agent's pod or task), so those name the namespace or the cluster."""
+    if runtime in ("kubernetes", "ecs") and target and "/" in target:
+        where = target.split("/", 1)[0]
+        return f"ECS cluster {where}" if runtime == "ecs" else f"Kubernetes namespace {where}"
+    return hostname
+
+
 def host_id(conn: Connection) -> str:
     return f"agent:{conn.id}"
 
