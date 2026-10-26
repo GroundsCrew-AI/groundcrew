@@ -655,3 +655,30 @@ async def test_medic_rolls_back_a_service_that_broke_after_its_image_changed(
         await verify_incident_job(sf, payload)
     inc, st, _ = await _state(sf, incident.id)
     assert inc.status == "resolved", st.verify
+
+
+def test_ecs_rollouts_get_time_and_info_lines_are_not_searched() -> None:
+    """From the live ECS test: the restart took three minutes (Groundcrew gave up at two), and
+    research searched an info line from a logger called uvicorn.error."""
+    from app.actions.agent import result_timeout
+    from app.agents.medic.agent import symptom_lines
+    from app.agents.medic.schemas import EvidenceItem
+    from app.telemetry.log_levels import declares_level
+
+    assert result_timeout("ecs", rollback=False) == timedelta(minutes=11)
+    assert result_timeout("ecs", rollback=True) == timedelta(minutes=22)
+    assert result_timeout("kubernetes", rollback=False) == timedelta(minutes=6)
+    assert result_timeout("docker", rollback=False) == timedelta(seconds=120)
+
+    def item(n: int, text: str) -> EvidenceItem:
+        return EvidenceItem(
+            id=f"e{n}", source="agent:api", timestamp="2026-10-26T10:16:36Z", line=text
+        )
+
+    info = '{"level": "info", "logger": "uvicorn.error", "msg": "Shutting down"}'
+    error = '{"level": "error", "logger": "uvicorn.error", "msg": "Exception in ASGI application"}'
+    plain = "worker timed out after 30s"
+    assert declares_level(info) and declares_level("INFO:     Shutting down")
+    assert not declares_level(plain)
+    picked = symptom_lines([item(1, info), item(2, error), item(3, plain)])
+    assert [i.line for i in picked] == [error, plain]

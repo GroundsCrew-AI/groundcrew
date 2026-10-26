@@ -51,6 +51,7 @@ from app.db.models import Connection, Edge, Resource
 from app.llm.budget import RunBudget
 from app.llm.client import OnCall, TokenFactory
 from app.llm.router import Task
+from app.remote_agents import inventory as inv
 from app.remote_agents import outdated
 from app.tools.github_pr import (
     FixPullRequestError,
@@ -539,6 +540,15 @@ async def _reboots(
     return out
 
 
+# What a restart does, by where the service runs.
+RESTART_HOW = {
+    "host": "It stopped or fails its health checks; the agent on its host restarts it, and "
+    "Medic checks it runs and passes them again.",
+    "ecs": "It stopped or fails its health checks; the agent starts a new ECS deployment of the "
+    "same task definition and waits for it, and Medic checks it runs and passes them again.",
+    "kubernetes": "It stopped or fails its health checks; the agent restarts the Deployment's "
+    "pods and waits for the rollout, and Medic checks it runs and passes them again.",
+}
 # Agents from this version report images, so a container can be rolled back.
 ROLLBACK_SINCE = "0.3.0"
 UPGRADE_COMMAND = "curl -fsSL https://groundkrew.com/agent/install.sh | sudo sh"
@@ -577,7 +587,8 @@ async def _agent_fixes(
         found = graph.resources[rid] if rid else None
         if found is None or found.connection_id is None:
             continue
-        host = found.account or "its host"
+        runtime = found.config.get("runtime")
+        host = inv.location(runtime, found.config.get("target"), found.account or "its host")
         conn = graph.connections.get(found.connection_id)
         version = str((conn.config or {}).get("agent_version") or "") if conn else ""
         if found.config.get("runtime") in ("docker", "compose") and outdated(
@@ -617,8 +628,7 @@ async def _agent_fixes(
                 plan,
                 order,
                 f"Restart {found.name} on {host}",
-                "It stopped or fails its health checks; the agent on its host restarts it, and "
-                "Medic checks it runs and passes them again.",
+                RESTART_HOW.get(str(runtime), RESTART_HOW["host"]),
             )
         )
         order += 1

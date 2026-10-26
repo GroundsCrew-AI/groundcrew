@@ -34,8 +34,20 @@ from app.remote_agents import commands
 from app.remote_agents import inventory as inv
 from app.remote_agents.signals import RUNNING, ServiceState, describe, image_label
 
-# How long execute waits for the agent to report the command's result.
+# How long execute waits for the agent to report the command's result. On ECS and Kubernetes
+# the agent waits for the rollout (apps/agent/internal/runtime: ECS 10 minutes, Kubernetes 5,
+# and a rollback that fails waits again to put the old one back), so Groundcrew waits longer.
 RESULT_TIMEOUT = timedelta(seconds=120)
+ROLLOUT_TIMEOUTS = {"ecs": timedelta(minutes=11), "kubernetes": timedelta(minutes=6)}
+
+
+def result_timeout(runtime: str | None, rollback: bool) -> timedelta:
+    rollout = ROLLOUT_TIMEOUTS.get(runtime or "")
+    if rollout is None:
+        return RESULT_TIMEOUT
+    return rollout * 2 if rollback else rollout
+
+
 POLL_SECONDS = 1.0
 
 
@@ -184,8 +196,13 @@ class AgentEmergencyActions:
                 f"Not run: {service} changed since the plan was approved.",
                 error=f"now {now_state}; the plan expected {plan.current}",
             )
+        stored = inv.stored(conn)
+        facts = next((s for s in (stored.services if stored else []) if s.name == service), None)
+        host = agent.hostname or conn.name
+        if facts is not None:
+            host = inv.location(facts.runtime, facts.target, host)
+        rollback = plan.action == AGENT_ROLLBACK_SERVICE
         async with self.session_factory() as session:
-            rollback = plan.action == AGENT_ROLLBACK_SERVICE
             command = commands.issue(
                 agent,
                 action=commands.ROLLBACK if rollback else commands.RESTART,
@@ -201,13 +218,11 @@ class AgentEmergencyActions:
             await session.commit()
             command_id = command.id
         found = await commands.wait_for_result(
-            self.session_factory, command_id, RESULT_TIMEOUT, POLL_SECONDS
+            self.session_factory,
+            command_id,
+            result_timeout(facts.runtime if facts else None, rollback),
+            POLL_SECONDS,
         )
-        stored = inv.stored(conn)
-        facts = next((s for s in (stored.services if stored else []) if s.name == service), None)
-        host = agent.hostname or conn.name
-        if facts is not None:
-            host = inv.location(facts.runtime, facts.target, host)
         if found is None:
             return result(False, "Not run: the command was removed.", error="removed")
         if found.status == "expired":

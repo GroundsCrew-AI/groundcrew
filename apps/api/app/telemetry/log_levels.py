@@ -83,6 +83,15 @@ def _has_trace(data: dict[str, Any]) -> bool:
     return any(isinstance(data.get(k), str) and TRACEBACK.search(str(data[k])) for k in _TRACE_KEYS)
 
 
+def declares_level(message: str) -> bool:
+    """The line names its own level (a JSON level field, "INFO:", level=warn): then words in
+    it, like a logger called "uvicorn.error", say nothing about whether it is an error."""
+    data = _json(message)
+    if data is not None:
+        return any(isinstance(data.get(k), (int, str)) for k in _LEVEL_KEYS)
+    return _TEXT_LEVEL.search(message) is not None
+
+
 def is_error_line(message: str, words: re.Pattern[str] = DEFAULT_WORDS) -> bool:
     data = _json(message)
     if data is not None:
