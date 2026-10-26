@@ -5642,6 +5642,11 @@ export interface components {
         /** WorkspaceOut */
         WorkspaceOut: {
             /**
+             * Example
+             * @default false
+             */
+            example: boolean;
+            /**
              * Id
              * Format: uuid
              */

@@ -398,7 +398,12 @@ async def test_me_and_summary(
     me = (await client.get("/me", headers=alice.headers)).json()
     assert me["user"]["github_login"] == "alice"
     assert me["workspaces"] == [
-        {"id": str(alice.workspace_id), "name": "Alice's workspace", "role": "owner"}
+        {
+            "id": str(alice.workspace_id),
+            "name": "Alice's workspace",
+            "role": "owner",
+            "example": False,
+        }
     ]
     run_id = await _new_run(session_factory, alice.workspace_id)
     async with session_factory() as session:

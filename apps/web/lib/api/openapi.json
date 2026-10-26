@@ -8876,7 +8876,7 @@
           "image_id": {
             "anyOf": [
               {
-                "maxLength": 100,
+                "maxLength": 500,
                 "type": "string"
               },
               {
@@ -8910,7 +8910,7 @@
           "previous_image_id": {
             "anyOf": [
               {
-                "maxLength": 100,
+                "maxLength": 500,
                 "type": "string"
               },
               {
@@ -10519,6 +10519,11 @@
       },
       "WorkspaceOut": {
         "properties": {
+          "example": {
+            "default": false,
+            "title": "Example",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",

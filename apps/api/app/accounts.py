@@ -580,23 +580,39 @@ async def sign_in_methods(session: AsyncSession, user: User) -> list[str]:
 # --- workspace access ------------------------------------------------------------------------
 
 
+EXAMPLE_READ_ONLY = (
+    "The example workspace is read-only. Connect your cloud in your own workspace to do this."
+)
+
+
 async def member_workspace(
     session: AsyncSession,
     user: User,
     workspace_id: uuid.UUID,
     minimum: WorkspaceRole = WorkspaceRole.viewer,
 ) -> tuple[Workspace, WorkspaceRole]:
+    """The workspace and the user's role in it. Every signed-in user is a viewer of the example
+    workspace (no membership row), and nobody is more than that there."""
     row = (
         await session.execute(
             select(Workspace, WorkspaceMember.role)
-            .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
-            .where(Workspace.id == workspace_id, WorkspaceMember.user_id == user.id)
+            .outerjoin(
+                WorkspaceMember,
+                (WorkspaceMember.workspace_id == Workspace.id)
+                & (WorkspaceMember.user_id == user.id),
+            )
+            .where(Workspace.id == workspace_id)
         )
     ).first()
-    if row is None:
+    if row is None or (row[1] is None and not row[0].is_example):
         raise NotFoundError("Workspace not found.")
-    check_role(row[1], minimum)
-    return row[0], row[1]
+    workspace, role = row[0], row[1]
+    if workspace.is_example:
+        if minimum != WorkspaceRole.viewer:
+            raise ForbiddenError(EXAMPLE_READ_ONLY)
+        role = WorkspaceRole.viewer
+    check_role(role, minimum)
+    return workspace, role
 
 
 async def require_owner(session: AsyncSession, user: User, workspace_id: uuid.UUID) -> Workspace:
@@ -606,9 +622,18 @@ async def require_owner(session: AsyncSession, user: User, workspace_id: uuid.UU
     return workspace
 
 
+async def is_example(session: AsyncSession, workspace_id: uuid.UUID) -> bool:
+    return bool(
+        await session.scalar(select(Workspace.is_example).where(Workspace.id == workspace_id))
+    )
+
+
 async def member_role(
     session: AsyncSession, user_id: uuid.UUID, workspace_id: uuid.UUID
 ) -> WorkspaceRole | None:
+    """The user's role, viewer in the example workspace (whatever a membership row says)."""
+    if await is_example(session, workspace_id):
+        return WorkspaceRole.viewer
     role: WorkspaceRole | None = await session.scalar(
         select(WorkspaceMember.role).where(
             WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == user_id
@@ -626,16 +651,23 @@ async def require_member(
     role = await member_role(session, user_id, workspace_id)
     if role is None:
         raise NotFoundError("Not found.")
+    if minimum != WorkspaceRole.viewer and await is_example(session, workspace_id):
+        raise ForbiddenError(EXAMPLE_READ_ONLY)
     check_role(role, minimum)
 
 
 async def user_workspaces(
     session: AsyncSession, user: User
 ) -> list[tuple[Workspace, WorkspaceRole]]:
+    """The user's workspaces, then the example workspace (when there is one) as a viewer."""
     rows = await session.execute(
         select(Workspace, WorkspaceMember.role)
         .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
-        .where(WorkspaceMember.user_id == user.id)
+        .where(WorkspaceMember.user_id == user.id, Workspace.is_example.is_(False))
         .order_by(Workspace.created_at)
     )
-    return [(w, r) for w, r in rows]
+    out = [(w, r) for w, r in rows]
+    example = await session.scalar(select(Workspace).where(Workspace.is_example.is_(True)))
+    if example is not None:
+        out.append((example, WorkspaceRole.viewer))
+    return out

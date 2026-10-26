@@ -26,6 +26,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -182,12 +183,20 @@ class AuthToken(TimestampMixin, Base):
 
 class Workspace(TimestampMixin, Base):
     __tablename__ = "workspaces"
+    __table_args__ = (
+        Index(
+            "uq_workspaces_example", "is_example", unique=True, postgresql_where=text("is_example")
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(200))
     owner_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), index=True
     )
     settings: Mapped[JSON] = mapped_column(default=dict, server_default="{}")
+    # The read-only Example workspace (app.example): every signed-in user sees it as a viewer
+    # without a membership row, and nothing in it changes (app.routes.deps.example_read_only).
+    is_example: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class WorkspaceMember(TimestampMixin, Base):

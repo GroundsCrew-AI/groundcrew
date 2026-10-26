@@ -1,12 +1,16 @@
 """Shared route dependencies."""
 
-from typing import Annotated
+import json
+import uuid
+from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.accounts import EXAMPLE_READ_ONLY
 from app.config import Settings, get_settings
-from app.db.models import User
+from app.db.models import Approval, Connection, Incident, Run, User, Workspace
 from app.db.session import SessionFactory, get_session, get_session_factory
 from app.security.auth import AuthConfigError, AuthError, verify_internal_token
 from app.security.ratelimit import limiter
@@ -63,6 +67,58 @@ async def current_user(
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
+
+
+# Path and body fields that name what a request changes, and the table that holds its workspace.
+_TARGETS: dict[str, type[Any]] = {
+    "run_id": Run,
+    "deploy_id": Run,
+    "approval_id": Approval,
+    "connection_id": Connection,
+    "incident_id": Incident,
+}
+_READS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+async def _target_workspaces(request: Request, session: AsyncSession) -> set[uuid.UUID]:
+    values: dict[str, Any] = dict(request.path_params)
+    if "workspace_id" in request.query_params:
+        values.setdefault("workspace_id", request.query_params["workspace_id"])
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = json.loads(await request.body() or b"{}")
+        except ValueError:
+            body = None
+        if isinstance(body, dict):
+            for key in ("workspace_id", *_TARGETS):
+                if key in body:
+                    values.setdefault(key, body[key])
+    out: set[uuid.UUID] = set()
+    for key, raw in values.items():
+        try:
+            value = uuid.UUID(str(raw))
+        except ValueError:
+            continue
+        if key == "workspace_id":
+            out.add(value)
+        elif (model := _TARGETS.get(key)) is not None:
+            found = await session.scalar(select(model.workspace_id).where(model.id == value))
+            if found is not None:
+                out.add(found)
+    return out
+
+
+async def example_read_only(request: Request, session: SessionDep) -> None:
+    """Every route's guard: nothing that writes reaches the example workspace
+    (Workspace.is_example), whoever asks. It runs before the route and its body validation, from
+    the ids in the path, query, and JSON body; app.accounts refuses more than a viewer there too."""
+    if request.method in _READS:
+        return
+    targets = await _target_workspaces(request, session)
+    if targets and await session.scalar(
+        select(Workspace.id).where(Workspace.id.in_(targets), Workspace.is_example.is_(True))
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, EXAMPLE_READ_ONLY)
 
 
 def client_ip(request: Request) -> str | None:

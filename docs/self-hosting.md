@@ -317,6 +317,27 @@ python -m app.admin_cli quota set <workspace id> builds 25   # one workspace's o
 python -m app.admin_cli quota clear <workspace id> builds
 ```
 
+### The Example workspace
+
+New users can open a read-only Example workspace from their first screen. It is a scrubbed copy
+of chosen work from one of your workspaces (app/example.py): the map from discovery, the incidents
+and deploys you name with their runs, approvals, and fix PRs, and the latest discovery run. AWS
+account ids, IP addresses, email addresses, External IDs, the source's people, and anything
+secret are replaced by placeholders, and the copy is checked for leftovers before it is saved.
+Nothing in it can change, and nothing watches it. Build it again whenever you like; it replaces
+the previous copy and keeps the same workspace:
+
+```bash
+python -m app.admin_cli example candidates <source workspace id>   # incidents and deploys to pick
+python -m app.admin_cli example build <source workspace id> \
+  --incident <id> --incident <id> --deploy <id>                   # dry run: what it would copy
+python -m app.admin_cli example build <source workspace id> \
+  --incident <id> --incident <id> --deploy <id> --apply
+```
+
+An incident that reused a past one through memory brings that one along. The banner links the
+product video when the web app has `NEXT_PUBLIC_PRODUCT_VIDEO_URL`.
+
 People listed in `PLATFORM_ADMINS` (emails or GitHub logins) also see the sign-up switch in
 Settings. nginx limits each client address in front of all this (infra/platform/host).
 

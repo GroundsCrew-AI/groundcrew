@@ -41,7 +41,7 @@ from app.agents.medic.events import (
 )
 from app.agents.medic.state import MedicState
 from app.connectors.github import GitHubApp, GitHubError, check_repo_name
-from app.db.models import Connection, Incident, IncidentFollowUp, Resource, Run, User
+from app.db.models import Connection, Incident, IncidentFollowUp, Resource, Run, User, Workspace
 from app.db.session import SessionFactory
 from app.steps import record_step
 from app.telemetry.evidence import parse_time
@@ -427,6 +427,10 @@ async def track_followups(
                     IncidentFollowUp.created_at > now - FOLLOWUP_TRACK_FOR,
                     (IncidentFollowUp.checked_at.is_(None))
                     | (IncidentFollowUp.checked_at <= now - FOLLOWUP_CHECK_EVERY),
+                    # The example workspace's copies stay as they were copied.
+                    IncidentFollowUp.workspace_id.not_in(
+                        select(Workspace.id).where(Workspace.is_example.is_(True))
+                    ),
                 )
             )
         )

@@ -95,6 +95,10 @@ async def _targets(session_factory: SessionFactory) -> list[Target]:
                         | (Resource.type.in_(K8S_WATCH_TYPES) & (Connection.kind == "k8s")),
                         Resource.stale.is_(False),
                         Connection.status == "connected",
+                        # The example workspace is a read-only copy: nothing watches it.
+                        Resource.workspace_id.not_in(
+                            select(Workspace.id).where(Workspace.is_example.is_(True))
+                        ),
                     )
                     .order_by(Resource.workspace_id, Resource.type, Resource.name)
                 )
