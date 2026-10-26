@@ -428,14 +428,27 @@ async def test_a_restart_runs_through_a_signed_command_and_not_after_the_state_m
     async with sf() as session:
         assert len(list(await session.scalars(select(AgentCommand)))) == 1
 
-    # It moved but does not run: the old plan is refused.
-    await agent.post("/agent/v1/events", {"states": [state(state="restarting")], "events": []})
+    # Gone from the host: the old plan is refused.
+    await agent.post("/agent/v1/events", {"states": [state(found=False)], "events": []})
     token = await approve_medic_action(
         sf, workspace, run, action=plan.action, plan_hash=plan.plan_hash()
     )
     moved = await actions.execute(plan, token, run_id=run.id)
     assert not moved.ok and "changed since the plan" in moved.summary
-    assert moved.error == f"now {FLASK} restarting; the plan expected {plan.current}"
+    assert moved.error == f"now {FLASK} not found; the plan expected {plan.current}"
+
+    # Still down, with more detail than when it was planned (the live ECS test: "unavailable"
+    # became "unavailable (exit code 0)"): the restart runs.
+    await agent.post(
+        "/agent/v1/events", {"states": [state(state="exited", exit_code=1)], "events": []}
+    )
+    token = await approve_medic_action(
+        sf, workspace, run, action=plan.action, plan_hash=plan.plan_hash()
+    )
+    again, _ = await asyncio.gather(
+        actions.execute(plan, token, run_id=run.id), _fake_agent_runs_commands(sf)
+    )
+    assert again.ok and again.summary == f"Restarted {FLASK} on web-1."
 
 
 async def test_medic_restarts_a_stopped_service_end_to_end(
