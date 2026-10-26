@@ -319,6 +319,18 @@ async def _example_ids(sf: SessionFactory, example_id: uuid.UUID) -> dict[str, u
         }
 
 
+def test_uuids_ending_in_twelve_digits_are_ids_not_accounts() -> None:
+    """Found building the demo copy: new ids like ...-473012345678 were reported as AWS account
+    ids, and the scrub would have rewritten a source id ending in digits."""
+    rid = "c68317ca-707e-4c6d-8a1b-473012345678"
+    text = f"arn:aws:iam::881050425883:role/x resource {rid}"
+    assert example._accounts(text) == {"881050425883"}
+    scrub = example.Scrubber()
+    out = scrub.text(text)
+    # The account is replaced; the id is mapped to its new id, whole.
+    assert out == f"arn:aws:iam::{example.ACCOUNT}:role/x resource {scrub.ids[uuid.UUID(rid)]}"
+
+
 async def test_the_copy_keeps_the_story_and_none_of_the_source_values(
     session_factory: SessionFactory,
 ) -> None:
