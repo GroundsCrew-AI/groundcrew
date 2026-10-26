@@ -97,6 +97,7 @@ def test_nginx_exposes_only_the_apis_public_routes() -> None:
     locations = re.findall(r"location ([^{]+)\{", api)
     assert [loc.strip() for loc in locations] == [
         "~ ^/runs/[0-9a-fA-F-]+/events$",
+        "= /mcp",
         "= /github/webhook",
         "/v2/",
         "= /_registry_auth",
@@ -107,6 +108,10 @@ def test_nginx_exposes_only_the_apis_public_routes() -> None:
         "/",
     ]
     assert "return 404;" in api.split("location / {")[1]
+    # MCP (#74): the API checks the workspace token; nginx limits methods, size and rate.
+    mcp = api.split("location = /mcp {")[1].split("\n    }")[0]
+    assert "limit_except GET POST DELETE { deny all; }" in mcp and "limit_req zone=" in mcp
+    assert "client_max_body_size 1m;" in mcp
     # The registry: pulls only, each one checked by the API; its auth location is internal.
     v2 = api.split("location /v2/ {")[1].split("location = /_registry_auth")[0]
     assert "limit_except GET HEAD { deny all; }" in v2 and "auth_request /_registry_auth;" in v2
