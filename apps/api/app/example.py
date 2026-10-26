@@ -60,6 +60,7 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _UUID = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
+_DASHES = re.compile("[\u2010-\u2015\u2212]")
 # A UUID's last group can be twelve digits (about one in 300): it is an id, not an account.
 _UUID_OR_ACCOUNT = re.compile(f"({_UUID.pattern})|{_ACCOUNT.pattern}")
 
@@ -141,6 +142,8 @@ class Scrubber:
         return pattern.sub(same_case, value)
 
     def text(self, value: str) -> str:
+        # Models write non-breaking and other dashes ("shop\u2011api"): plain ones match the names.
+        value = _DASHES.sub("-", value)
         value = self._renamed(value)
         for word, placeholder in self.words.items():
             value = value.replace(word, placeholder)
@@ -167,7 +170,8 @@ class Scrubber:
             for k, v in value.items():
                 if k.lower() in ("installation_id", "installation"):
                     continue  # a GitHub App installation: never tracked from the copy
-                out[self.text(k) if _UUID.search(k) else k] = self.value(v, k)
+                key = self.text(k) if _UUID.search(k) else self._renamed(k)
+                out[key] = self.value(v, k)
             return out
         if isinstance(value, list):
             return [self.value(v, key) for v in value]
@@ -527,21 +531,22 @@ async def example_text(session: AsyncSession, example_id: uuid.UUID) -> str:
     parts: list[str] = []
     workspace = await session.get(Workspace, example_id)
     if workspace is not None:
-        parts.append(json.dumps(workspace.settings, default=str))
+        parts.append(json.dumps(workspace.settings, default=str, ensure_ascii=False))
     runs = select(Run.id).where(Run.workspace_id == example_id)
     for model in (Connection, Resource, Edge, Incident, Run, Approval, IncidentFollowUp, Event):
         for row in await session.scalars(select(model).where(model.workspace_id == example_id)):
             parts.append(_row_text(row))
     for step in await session.scalars(select(RunStep).where(RunStep.run_id.in_(runs))):
         parts.append(_row_text(step))
-    return "\n".join(parts)
+    # Unescaped, with plain dashes: a name hidden behind "\u2011" is still found.
+    return _DASHES.sub("-", "\n".join(parts))
 
 
 def _row_text(row: Base) -> str:
     values = {
         c.key: getattr(row, c.key) for c in row.__table__.columns if c.key not in ("embedding",)
     }
-    return json.dumps(values, default=str)
+    return json.dumps(values, default=str, ensure_ascii=False)
 
 
 async def leaks(session: AsyncSession, example_id: uuid.UUID, forbidden: list[str]) -> list[str]:

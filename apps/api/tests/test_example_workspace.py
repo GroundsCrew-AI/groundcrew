@@ -417,6 +417,18 @@ def test_made_up_names_replace_real_ones_in_any_case() -> None:
     )
 
 
+def test_names_behind_other_dashes_and_in_json_keys_are_renamed() -> None:
+    """Found in the production preview: the model's summary wrote "groundcrew\u2011platform"
+    (a non-breaking hyphen), and an IAM role kept a policy named after the app as a JSON key."""
+    scrub = example.Scrubber(rename={"groundcrew-platform": "bastion", "checkout": "shop"})
+    assert scrub.text("Security group groundcrew\u2011platform opens 443") == (
+        "Security group bastion opens 443"
+    )
+    assert scrub.value({"inline_policies": {"checkout-vercel-api-url": [{"effect": "Allow"}]}}) == {
+        "inline_policies": {"shop-vercel-api-url": [{"effect": "Allow"}]}
+    }
+
+
 def test_names_file_can_keep_the_people() -> None:
     names = example.Names(rename={"checkout": "shop"}, keep_people=True)
     assert names.keep_people and example.Names().keep_people is False
