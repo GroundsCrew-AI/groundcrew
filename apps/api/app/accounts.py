@@ -604,7 +604,7 @@ async def member_workspace(
             .where(Workspace.id == workspace_id)
         )
     ).first()
-    if row is None or (row[1] is None and not row[0].is_example):
+    if row is None or (row[1] is None and not example_open_to(row[0], user.id)):
         raise NotFoundError("Workspace not found.")
     workspace, role = row[0], row[1]
     if workspace.is_example:
@@ -622,6 +622,15 @@ async def require_owner(session: AsyncSession, user: User, workspace_id: uuid.UU
     return workspace
 
 
+def example_open_to(workspace: Workspace, user_id: uuid.UUID) -> bool:
+    """The example workspace is everyone's once published; before that, a preview only its
+    owner (whoever built it from their workspace) can open."""
+    if not workspace.is_example:
+        return False
+    published = bool((workspace.settings or {}).get("example_published", False))
+    return published or workspace.owner_id == user_id
+
+
 async def is_example(session: AsyncSession, workspace_id: uuid.UUID) -> bool:
     return bool(
         await session.scalar(select(Workspace.is_example).where(Workspace.id == workspace_id))
@@ -633,6 +642,9 @@ async def member_role(
 ) -> WorkspaceRole | None:
     """The user's role, viewer in the example workspace (whatever a membership row says)."""
     if await is_example(session, workspace_id):
+        workspace = await session.get(Workspace, workspace_id)
+        if workspace is None or not example_open_to(workspace, user_id):
+            return None
         return WorkspaceRole.viewer
     role: WorkspaceRole | None = await session.scalar(
         select(WorkspaceMember.role).where(
@@ -668,6 +680,6 @@ async def user_workspaces(
     )
     out = [(w, r) for w, r in rows]
     example = await session.scalar(select(Workspace).where(Workspace.is_example.is_(True)))
-    if example is not None:
+    if example is not None and example_open_to(example, user.id):
         out.append((example, WorkspaceRole.viewer))
     return out

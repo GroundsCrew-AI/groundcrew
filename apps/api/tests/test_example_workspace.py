@@ -410,6 +410,13 @@ async def test_building_again_replaces_the_copy_and_keeps_the_workspace(
     assert len(examples) == 1 and len(incidents) == 2
 
 
+def test_made_up_names_replace_real_ones_in_any_case() -> None:
+    scrub = example.Scrubber(rename={"checkout": "shop", "Rena Real": "Sam Rivera"})
+    assert scrub.text("Checkout-api reads CHECKOUT_URL; rena real approved") == (
+        "Shop-api reads SHOP_URL; Sam Rivera approved"
+    )
+
+
 async def test_every_new_user_can_open_it_as_a_viewer(
     client: httpx.AsyncClient,  # noqa: F811
     session_factory: SessionFactory,
@@ -418,6 +425,17 @@ async def test_every_new_user_can_open_it_as_a_viewer(
     example_id = await _build(session_factory, owner, await _source(session_factory, owner))
     newcomer = await _member(session_factory, 9304, "newcomer")
     ex = await _example_ids(session_factory, example_id)
+
+    # A preview until published: only its owner sees it.
+    (only,) = (await client.get("/me", headers=newcomer.headers)).json()["workspaces"]
+    assert only["id"] == str(newcomer.workspace_id)
+    hidden = await client.get(f"/incidents/{ex['incident_id']}", headers=newcomer.headers)
+    assert hidden.status_code == 404
+    mine = (await client.get("/me", headers=owner.headers)).json()["workspaces"]
+    assert any(w["id"] == str(example_id) and w["role"] == "viewer" for w in mine)
+    async with session_factory() as session:
+        await example.set_published(session, True)
+        await session.commit()
 
     me = (await client.get("/me", headers=newcomer.headers)).json()
     own, shown = me["workspaces"]
