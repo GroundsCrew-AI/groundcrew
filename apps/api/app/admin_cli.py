@@ -5,7 +5,9 @@
     python -m app.admin_cli quota set <workspace id> <tavily|builds|concurrent_runs|connections> <n>
     python -m app.admin_cli quota clear <workspace id> <quota>
     python -m app.admin_cli example candidates <source workspace id>
-    python -m app.admin_cli example build <source workspace id> [--incident <id>]... \\
+    python -m app.admin_cli example publish | unpublish | remove
+    python -m app.admin_cli example build <source workspace id> [--names <names.json>] \\
+        [--incident <id>]... \\
         [--deploy <id>]... [--apply]
 
 On the platform host: `docker compose exec api python -m app.admin_cli ...` (docs/operations.md).
@@ -79,6 +81,32 @@ async def _quota(action: str, workspace_id: str, name: str | None, value: str | 
         return "\n".join(f"{n}: {u.used} of {u.limit}" for n, u in used.items())
 
 
+async def _example_state(action: str) -> str:
+    async with get_session_factory()() as session:
+        if action == "remove":
+            removed = await example.remove(session)
+            await session.commit()
+            return (
+                f"Removed the example workspace {removed}." if removed else "No example workspace."
+            )
+        workspace = await example.set_published(session, action == "publish")
+        if workspace is None:
+            return "No example workspace."
+        record(
+            session,
+            workspace_id=workspace.id,
+            actor=None,
+            action=f"example.{action}ed",
+            detail={},
+        )
+        await session.commit()
+        return (
+            "Published: every signed-in user can open it."
+            if action == "publish"
+            else "Unpublished: only its owner can open it."
+        )
+
+
 async def _example(action: str, source: str, rest: list[str]) -> str:
     source_id = uuid.UUID(source)
     async with get_session_factory()() as session:
@@ -89,16 +117,19 @@ async def _example(action: str, source: str, rest: list[str]) -> str:
         incidents: list[uuid.UUID] = []
         deploys: list[uuid.UUID] = []
         apply = False
+        names = example.Names()
         args = iter(rest)
         for arg in args:
             if arg == "--apply":
                 apply = True
+            elif arg == "--names":
+                names = example.Names.load(next(args, ""))
             elif arg in ("--incident", "--deploy"):
                 value = uuid.UUID(next(args, ""))
                 (incidents if arg == "--incident" else deploys).append(value)
             else:
                 raise SystemExit(USAGE)
-        workspace, plan = await example.build(session, source_id, incidents, deploys)
+        workspace, plan = await example.build(session, source_id, incidents, deploys, names)
         lines = [f"{table}: {n}" for table, n in plan.counts.items()]
         lines += [f"problem: {p}" for p in plan.problems]
         if plan.problems or not apply:
@@ -117,7 +148,10 @@ async def _example(action: str, source: str, rest: list[str]) -> str:
             detail={"tables": plan.counts},
         )
         await session.commit()
-        lines.append(f"Copied into the example workspace {workspace.id}.")
+        lines.append(
+            f"Copied into the example workspace {workspace.id}. Only you can see it until "
+            "`example publish`."
+        )
         return "\n".join(lines)
 
 
@@ -128,6 +162,8 @@ def main(argv: list[str]) -> str:
         name = argv[3] if len(argv) > 3 else None
         value = argv[4] if len(argv) > 4 else None
         return asyncio.run(_quota(argv[1], argv[2], name, value))
+    if len(argv) == 2 and argv[0] == "example" and argv[1] in ("publish", "unpublish", "remove"):
+        return asyncio.run(_example_state(argv[1]))
     if len(argv) >= 3 and argv[0] == "example":
         return asyncio.run(_example(argv[1], argv[2], argv[3:]))
     raise SystemExit(USAGE)

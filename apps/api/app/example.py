@@ -20,6 +20,7 @@ import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, insert, select
@@ -44,6 +45,7 @@ from app.db.models import (
 from app.workspace_settings import CONFIG_KEY, NotificationConfig, WorkspaceConfig
 
 NAME = "Example workspace"
+PUBLISHED_KEY = "example_published"
 ACCOUNT = "123456789012"
 EXTERNAL_ID = "example-external-id"
 PERSON = "a team member"
@@ -87,6 +89,9 @@ class Scrubber:
     so a page that names one address twice still reads naturally."""
 
     ids: dict[uuid.UUID, uuid.UUID] = field(default_factory=dict)
+    # Real names to made-up ones (Names.rename), matched in any case.
+    rename: dict[str, str] = field(default_factory=dict)
+    _rename_re: re.Pattern[str] | None = field(default=None, init=False, repr=False)
     # The source's people and External IDs: replaced wherever they appear.
     words: dict[str, str] = field(default_factory=dict)
     ips: dict[str, str] = field(default_factory=dict)
@@ -115,7 +120,28 @@ class Scrubber:
             self.emails[email] = f"person{len(self.emails) + 1}@example.com"
         return self.emails[email]
 
+    def _renamed(self, value: str) -> str:
+        if not self.rename:
+            return value
+        if self._rename_re is None:
+            # Longest first, so "checkout-demo" goes before "checkout".
+            keys = sorted(self.rename, key=len, reverse=True)
+            self._rename_re = re.compile("|".join(re.escape(k) for k in keys), re.IGNORECASE)
+        pattern = self._rename_re
+        lower = {k.lower(): v for k, v in self.rename.items()}
+
+        def same_case(m: re.Match[str]) -> str:
+            found, new = m.group(0), lower[m.group(0).lower()]
+            if found.isupper() and len(found) > 1:
+                return new.upper()
+            if found[:1].isupper():
+                return new[:1].upper() + new[1:]
+            return new
+
+        return pattern.sub(same_case, value)
+
     def text(self, value: str) -> str:
+        value = self._renamed(value)
         for word, placeholder in self.words.items():
             value = value.replace(word, placeholder)
         value = _SECRET_VALUE.sub(REMOVED, value)
@@ -146,6 +172,27 @@ class Scrubber:
         if isinstance(value, list):
             return [self.value(v, key) for v in value]
         return value
+
+
+@dataclass
+class Names:
+    """Made-up names for the copy, from a JSON file kept on the host (it holds the real names,
+    so it never goes in the repository): {"rename": {"real": "made-up", ...}, "drop": [...]}.
+    `drop` leaves out resources whose name contains one of the words (your own platform, the
+    agent's stack). Only AWS, GitHub and Vercel connections are copied."""
+
+    rename: dict[str, str] = field(default_factory=dict)
+    drop: list[str] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, path: str) -> "Names":
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        rename = {str(k): str(v) for k, v in (raw.get("rename") or {}).items() if k and v}
+        drop = [str(d) for d in raw.get("drop") or [] if d]
+        return cls(rename=rename, drop=drop)
+
+
+COPIED_KINDS = ("aws", "github", "vercel")
 
 
 @dataclass
@@ -265,6 +312,7 @@ async def build(
     source_id: uuid.UUID,
     incident_ids: list[uuid.UUID],
     deploy_ids: list[uuid.UUID],
+    names: Names | None = None,
 ) -> tuple[Workspace, Plan]:
     """Copy into the example workspace (made on first use). The caller commits, or rolls back
     for a dry run; nothing should be committed while `Plan.problems` is not empty."""
@@ -272,11 +320,17 @@ async def build(
     if source is None or source.is_example:
         raise ValueError(f"No source workspace {source_id}.")
     plan = Plan(incidents=list(incident_ids), deploys=list(deploy_ids))
-    scrub = Scrubber(words=await _source_people(session, source_id))
+    names = names or Names()
+    scrub = Scrubber(words=await _source_people(session, source_id), rename=names.rename)
 
-    connections = list(
-        await session.scalars(select(Connection).where(Connection.workspace_id == source_id))
-    )
+    connections = [
+        c
+        for c in await session.scalars(
+            select(Connection).where(Connection.workspace_id == source_id)
+        )
+        if c.kind in COPIED_KINDS
+    ]
+    connection_ids = {c.id for c in connections}
     for conn in connections:
         external = (conn.config or {}).get("external_id")
         if isinstance(external, str) and external:
@@ -304,6 +358,8 @@ async def build(
     )
     example.settings = {
         CONFIG_KEY: quiet.model_dump(),
+        # Seen only by its owner until `example publish`.
+        PUBLISHED_KEY: False,
         **({"system_summary": scrub.value(summary)} if summary else {}),
     }
 
@@ -345,7 +401,9 @@ async def build(
         .order_by(Run.created_at.desc())
         .limit(1)
     )
-    runs = deploy_runs + ([discovery] if discovery else [])
+    # The discovery run lists every connection, the agents and their hosts included: left out.
+    del discovery
+    runs = list(deploy_runs)
     if chosen_incidents:
         runs += list(
             await session.scalars(
@@ -356,11 +414,14 @@ async def build(
         )
     run_ids = [r.id for r in runs]
 
-    resources = list(
-        await session.scalars(
+    drop = [d.lower() for d in names.drop]
+    resources = [
+        r
+        for r in await session.scalars(
             select(Resource).where(Resource.workspace_id == source_id, Resource.stale.is_(False))
         )
-    )
+        if r.connection_id in connection_ids and not any(d in r.name.lower() for d in drop)
+    ]
     resource_ids = {r.id for r in resources}
     edges = [
         e
@@ -418,7 +479,31 @@ async def build(
 
     forbidden = _forbidden(source_id, connections, scrub)
     plan.problems += await leaks(session, example.id, forbidden)
+    text = (await example_text(session, example.id)).lower()
+    plan.problems += [
+        f"real name {real[:3]}... is still in the copy"
+        for real in names.rename
+        if real.lower() in text
+    ]
     return example, plan
+
+
+async def set_published(session: AsyncSession, published: bool) -> Workspace | None:
+    """Show the example workspace to everyone (published) or only to its owner (preview)."""
+    example = await example_workspace(session)
+    if example is not None:
+        example.settings = {**(example.settings or {}), PUBLISHED_KEY: published}
+    return example
+
+
+async def remove(session: AsyncSession) -> uuid.UUID | None:
+    """Delete the example workspace and everything in it."""
+    example = await example_workspace(session)
+    if example is None:
+        return None
+    await _clear(session, example.id)
+    await session.execute(delete(Workspace).where(Workspace.id == example.id))
+    return example.id
 
 
 def _forbidden(source_id: uuid.UUID, connections: list[Connection], scrub: Scrubber) -> list[str]:
