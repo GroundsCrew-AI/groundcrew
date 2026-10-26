@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { canRetryFix, type IncidentDetail } from "@/lib/incidents";
 
 /**
- * The incident's fixes and where each stands. A failed emergency fix shows AWS's error and,
+ * The incident's fixes and where each stands. A failed emergency fix shows why it failed and,
  * once its cause is fixed, a Retry that plans it again and asks for a new approval.
  */
 export function Fixes({
@@ -45,14 +45,17 @@ export function Fixes({
                 {retrying === f.fix.fix_id ? "Planning" : "Retry"}
               </Button>
             )}
+            {f.applied?.ok && f.applied.action_result?.details?.skipped && (
+              <p className="basis-full text-[12.5px] text-muted-foreground">{f.applied.action_result.summary}</p>
+            )}
             {f.status === "failed" && f.applied?.error && (
               <p className="basis-full text-[12.5px] [overflow-wrap:anywhere] text-[var(--status-failed)]">
-                AWS: {f.applied.error}
+                Failed: {f.applied.error}
               </p>
             )}
             {canRetryFix(incident, f) && (
               <p className="basis-full text-[12px] text-muted-foreground">
-                Fix the cause first (for a permission error, update the connection&apos;s stack). Retry plans it again
+                Fix the cause first (for a permission error, update the connection&apos;s access). Retry plans it again
                 and asks for a new approval; nothing changes until someone approves.
               </p>
             )}

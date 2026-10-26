@@ -37,15 +37,38 @@ function incident(overrides: Partial<IncidentDetail> = {}): IncidentDetail {
 }
 
 describe("Fixes", () => {
-  it("shows AWS's error on a failed emergency fix and retries it", async () => {
+  it("shows why an emergency fix failed and retries it", async () => {
     const onRetry = vi.fn();
     render(<Fixes incident={incident()} onRetry={onRetry} retrying={null} retryError={null} />);
-    expect(screen.getByText(`AWS: ${DENIED}`)).toBeInTheDocument();
+    expect(screen.getByText(`Failed: ${DENIED}`)).toBeInTheDocument();
     expect(screen.getByText(/asks for a new approval/)).toBeInTheDocument();
     const buttons = screen.getAllByRole("button", { name: "Retry" });
     expect(buttons).toHaveLength(1); // the applied PR has no retry
     await userEvent.click(buttons[0]!);
     expect(onRetry).toHaveBeenCalledWith(ROLLBACK.fix_id);
+  });
+
+  it("says when an approved restart was not needed", () => {
+    const summary = "Not needed: checkout-api runs again; nothing was sent to the agent.";
+    const skipped = incident();
+    skipped.fixes[0]!.status = "applied";
+    skipped.fixes[0]!.applied = {
+      ...skipped.fixes[0]!.applied!,
+      ok: true,
+      error: null,
+      action_result: {
+        action: "agent_restart_service",
+        ok: true,
+        summary,
+        details: { skipped: "checkout-api running" },
+        error: null,
+        started_at: "2026-10-26T09:22:00Z",
+        finished_at: "2026-10-26T09:22:00Z",
+      },
+    };
+    render(<Fixes incident={skipped} onRetry={vi.fn()} retrying={null} retryError={null} />);
+    expect(screen.getByText(summary)).toBeInTheDocument();
+    expect(screen.queryByText(/^Failed:/)).not.toBeInTheDocument();
   });
 
   it("shows why a retry could not be planned, and no retry once resolved", () => {
