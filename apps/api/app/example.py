@@ -58,6 +58,14 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _UUID = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
+# A UUID's last group can be twelve digits (about one in 300): it is an id, not an account.
+_UUID_OR_ACCOUNT = re.compile(f"({_UUID.pattern})|{_ACCOUNT.pattern}")
+
+
+def _accounts(text: str) -> set[str]:
+    return {m.group(0) for m in _UUID_OR_ACCOUNT.finditer(text) if not m.group(1)}
+
+
 # Values that are secrets whatever their key: Fernet tokens, Groundcrew and GitHub tokens,
 # AWS access keys, PEM blocks.
 _SECRET_VALUE = re.compile(
@@ -116,7 +124,7 @@ class Scrubber:
             lambda m: "ip-" + self._ip(".".join(m.groups())).replace(".", "-"), value
         )
         value = _IPV4.sub(lambda m: self._ip(m.group(0)), value)
-        value = _ACCOUNT.sub(ACCOUNT, value)
+        value = _UUID_OR_ACCOUNT.sub(lambda m: m.group(0) if m.group(1) else ACCOUNT, value)
         return _UUID.sub(lambda m: str(self.new_id(uuid.UUID(m.group(0)))), value)
 
     def value(self, value: Any, key: str = "") -> Any:
@@ -449,7 +457,7 @@ async def leaks(session: AsyncSession, example_id: uuid.UUID, forbidden: list[st
     value that is not a placeholder."""
     text = await example_text(session, example_id)
     found = [f"source value {v[:4]}... is in the copy" for v in forbidden if v in text]
-    accounts = {a for a in _ACCOUNT.findall(text) if a != ACCOUNT}
+    accounts = {a for a in _accounts(text) if a != ACCOUNT}
     found += [f"AWS account id {a[:4]}... is in the copy" for a in sorted(accounts)]
     ips = {
         ip
