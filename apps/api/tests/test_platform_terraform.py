@@ -45,9 +45,13 @@ def test_the_role_only_assumes_groundcrew_roles_and_only_ec2_uses_it() -> None:
     assert trust["principals"][0]["identifiers"] == ["ec2.amazonaws.com"]
     roles = _blocks(iam, "resource", "aws_iam_role")
     assert roles["platform"]["name"] == "groundcrew-platform"
-    # No managed policies, no other inline policy.
+    # No other inline policy; one managed policy, SSM's, so Run Command reaches the host when
+    # SSH does not (#76).
     assert set(_blocks(iam, "resource", "aws_iam_role_policy")) == {"assume_customer_roles"}
-    assert not _blocks(iam, "resource", "aws_iam_role_policy_attachment")
+    attachments = _blocks(iam, "resource", "aws_iam_role_policy_attachment")
+    assert {a["policy_arn"] for a in attachments.values()} == {
+        "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    }
 
 
 def test_only_web_ports_are_public_and_ssh_is_the_admin_address() -> None:
@@ -76,7 +80,7 @@ def test_the_instance_is_locked_down() -> None:
     allowed = {
         "aws_instance", "aws_eip", "aws_security_group", "aws_vpc_security_group_ingress_rule",
         "aws_vpc_security_group_egress_rule", "aws_iam_role", "aws_iam_role_policy",
-        "aws_iam_instance_profile",
+        "aws_iam_role_policy_attachment", "aws_iam_instance_profile",
     }  # fmt: skip
     used = {
         type_
