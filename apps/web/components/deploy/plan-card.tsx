@@ -62,7 +62,13 @@ export function DeployPlanCard({
   const fixable = open && blocked && Boolean(onFixEnv) && failing.every((c) => c.name === "env") && missing.length > 0;
   const busy = deciding !== null || fixing;
   const rollback = Boolean(plan.rollback_to_revision);
-  const title = rollback ? "Roll back" : `Deploy ${plan.app} to ${targetLabel(plan.target)}`;
+  // A settings change (no rebuild) marks what happens to each var.
+  const settings = plan.env.some((v) => v.change !== null && v.change !== undefined);
+  const title = rollback
+    ? "Roll back"
+    : settings
+      ? `Change settings of ${plan.app} on ${targetLabel(plan.target)}`
+      : `Deploy ${plan.app} to ${targetLabel(plan.target)}`;
   const blockedReason = failing.map((c) => `${CHECK_NAME[c.name]}: ${c.detail}`).join("; ");
 
   if (replaced) {
@@ -124,7 +130,7 @@ export function DeployPlanCard({
           <ul className="space-y-1 text-[12.5px]">
             {plan.resources.map((r) => (
               <li key={`${r.kind}/${r.name}`} className="flex flex-wrap items-baseline gap-x-2">
-                <span className="w-14 shrink-0 font-mono text-[12px] text-muted-foreground">{r.action}</span>
+                <span className="w-20 shrink-0 font-mono text-[12px] text-muted-foreground">{r.action}</span>
                 <span className="text-muted-foreground">{r.kind}</span>
                 <span className="font-mono">{r.name}</span>
                 {r.detail && <span className="text-muted-foreground">{r.detail}</span>}
