@@ -417,6 +417,11 @@ def test_made_up_names_replace_real_ones_in_any_case() -> None:
     )
 
 
+def test_names_file_can_keep_the_people() -> None:
+    names = example.Names(rename={"checkout": "shop"}, keep_people=True)
+    assert names.keep_people and example.Names().keep_people is False
+
+
 async def test_every_new_user_can_open_it_as_a_viewer(
     client: httpx.AsyncClient,  # noqa: F811
     session_factory: SessionFactory,
