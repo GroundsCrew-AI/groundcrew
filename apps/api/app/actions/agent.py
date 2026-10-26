@@ -181,8 +181,11 @@ class AgentEmergencyActions:
             now_state = image_label(state.image, state.image_id) if state else "not reported"
         else:
             now_state = describe(state) if state else f"{service} not reported"
-        if now_state != plan.current:
-            restart = plan.action != AGENT_ROLLBACK_SERVICE
+        restart = plan.action != AGENT_ROLLBACK_SERVICE
+        # A restart is for a service that is down: still down (whatever detail the agent added
+        # since, such as the exit code) means the plan holds.
+        still_down = restart and state is not None and state.found and state.state not in RUNNING
+        if now_state != plan.current and not still_down:
             if restart and state and state.found and state.state in RUNNING:
                 # It came back before the approval (e.g. ECS replaced the stopped task): the
                 # restart is not needed, and Medic's checks decide whether it is healthy.
