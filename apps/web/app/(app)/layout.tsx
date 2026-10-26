@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { auth } from "@/auth";
 import { AttentionAlerts } from "@/components/shell/attention-alerts";
+import { ExampleBanner } from "@/components/shell/example-banner";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { Sidebar } from "@/components/shell/sidebar";
 import { WorkspaceGate } from "@/components/shell/workspace-gate";
@@ -20,6 +21,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         <div className="flex min-h-dvh">
           <Sidebar />
           <main id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
+            <ExampleBanner />
             <WorkspaceGate>{children}</WorkspaceGate>
           </main>
         </div>

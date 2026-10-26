@@ -74,10 +74,12 @@ class WorkspaceOut(BaseModel):
     id: uuid.UUID
     name: str
     role: WorkspaceRole
+    # The read-only Example workspace every user can open (app.example).
+    example: bool = False
 
     @classmethod
     def build(cls, workspace: Workspace, role: WorkspaceRole) -> "WorkspaceOut":
-        return cls(id=workspace.id, name=workspace.name, role=role)
+        return cls(id=workspace.id, name=workspace.name, role=role, example=workspace.is_example)
 
 
 class MeOut(BaseModel):

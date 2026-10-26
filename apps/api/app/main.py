@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +42,7 @@ from app.routes import (
     workspace_admin,
     workspaces,
 )
+from app.routes.deps import example_read_only
 from app.routes.schemas import ApprovalStepEvent, RunStatusEvent, StepOut
 from app.writable import check_writable
 
@@ -200,6 +201,8 @@ app = FastAPI(
     docs_url="/docs" if _LOCAL else None,
     redoc_url="/redoc" if _LOCAL else None,
     openapi_url="/openapi.json" if _LOCAL else None,
+    # The example workspace is read-only for every route (app.routes.deps).
+    dependencies=[Depends(example_read_only)],
 )
 
 # REST calls come through the web app's server-side proxy, so they need no CORS. Only the

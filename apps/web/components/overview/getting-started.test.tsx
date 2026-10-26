@@ -14,12 +14,17 @@ const data = vi.hoisted(() => ({
   deploys: [] as DeploySummary[],
   incidentWatch: true,
   loads: 0,
+  workspace: { id: "ws-1", role: "owner", example: false } as { id: string; role: string; example: boolean },
+  workspaces: [] as { id: string; role: string; example: boolean }[],
+  setWorkspaceId: vi.fn(),
 }));
 
 vi.mock("@/components/connections/run-discovery-button", () => ({
   RunDiscoveryButton: () => <button type="button">Run discovery</button>,
 }));
-vi.mock("@/lib/workspace", () => ({ useWorkspace: () => ({ workspace: { id: "ws-1", role: "owner" } }) }));
+vi.mock("@/lib/workspace", () => ({
+  useWorkspace: () => ({ workspace: data.workspace, workspaces: data.workspaces, setWorkspaceId: data.setWorkspaceId }),
+}));
 vi.mock("@/lib/discovery", () => ({
   useConnections: () => {
     data.loads += 1;
@@ -81,6 +86,17 @@ describe("SetupCard", () => {
     expect(screen.getByRole("link", { name: "Open Settings" })).toHaveAttribute("href", "/settings");
   });
 
+  it("offers the example next to connecting until something is connected", async () => {
+    const onExplore = vi.fn();
+    const { rerender } = render(<SetupCard checklist={empty} canManage onExplore={onExplore} />);
+    expect(screen.getByText("Connect your cloud")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Explore an example" }));
+    expect(onExplore).toHaveBeenCalled();
+    const connected = setupChecklist({ connections: [connection()], deploys: [], incidentWatch: true });
+    rerender(<SetupCard checklist={connected} canManage onExplore={onExplore} />);
+    expect(screen.queryByRole("button", { name: "Explore an example" })).not.toBeInTheDocument();
+  });
+
   it("can be hidden", async () => {
     const onHide = vi.fn();
     render(<SetupCard checklist={empty} canManage onHide={onHide} />);
@@ -95,6 +111,27 @@ describe("GettingStarted", () => {
     data.connections = [];
     data.deploys = [];
     data.loads = 0;
+    data.workspace = { id: "ws-1", role: "owner", example: false };
+    data.workspaces = [];
+    data.setWorkspaceId.mockClear();
+  });
+
+  it("switches to the example workspace when one exists", async () => {
+    data.workspaces = [data.workspace, { id: "ex-1", role: "viewer", example: true }];
+    render(<GettingStarted />);
+    await userEvent.click(screen.getByRole("button", { name: "Explore an example" }));
+    expect(data.setWorkspaceId).toHaveBeenCalledWith("ex-1");
+  });
+
+  it("offers no example when there is none, and nothing to set up inside it", () => {
+    const { unmount } = render(<GettingStarted />);
+    expect(screen.queryByRole("button", { name: "Explore an example" })).not.toBeInTheDocument();
+    unmount();
+    data.loads = 0;
+    data.workspace = { id: "ex-1", role: "viewer", example: true };
+    render(<GettingStarted />);
+    expect(screen.queryByRole("heading", { name: "Get started" })).not.toBeInTheDocument();
+    expect(data.loads).toBe(0);
   });
 
   it("shows the checklist for a new workspace", () => {

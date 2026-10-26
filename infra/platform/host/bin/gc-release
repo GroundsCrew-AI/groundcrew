@@ -16,6 +16,8 @@ STATE=/var/lib/groundcrew/releases
 SRC=/var/lib/groundcrew/src
 KEEP=3
 API_URL=$(grep -h '^NEXT_PUBLIC_API_URL=' /etc/groundcrew/web.env 2>/dev/null | cut -d= -f2- || true)
+# Optional: the product video the Example workspace's banner links to.
+VIDEO_URL=$(grep -h '^NEXT_PUBLIC_PRODUCT_VIDEO_URL=' /etc/groundcrew/web.env 2>/dev/null | cut -d= -f2- || true)
 compose() { docker compose --env-file /opt/groundcrew/release.env -f /opt/groundcrew/compose.yml "$@"; }
 log() { echo "[gc-release] $*"; }
 
@@ -90,7 +92,7 @@ build() { # build SHA < tar
   log "building groundcrew/web:$sha"
   # The web image also builds and serves the Groundcrew agent (apps/agent) at /agent/.
   docker build -q --label "groundcrew.release=$sha" --build-arg "NEXT_PUBLIC_API_URL=$API_URL" \
-    --build-context "agent-src=$dir/apps/agent" \
+    --build-arg "NEXT_PUBLIC_PRODUCT_VIDEO_URL=$VIDEO_URL" --build-context "agent-src=$dir/apps/agent" \
     -t "groundcrew/web:$sha" "$dir/apps/web" >/dev/null
   # The agent's container image (Kubernetes, ECS), both CPUs, published after the roll-out.
   local arch

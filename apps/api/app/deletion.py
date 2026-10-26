@@ -130,6 +130,12 @@ async def delete_account(session: AsyncSession, user: User, plan: AccountPlan) -
     nothing."""
     for workspace in plan.delete:
         await delete_workspace(session, workspace)
+    # The example workspace names whose workspace it was copied from as its owner (it has no
+    # members); it goes with them and can be built again from another workspace.
+    for workspace in await session.scalars(
+        select(Workspace).where(Workspace.owner_id == user.id, Workspace.is_example.is_(True))
+    ):
+        await delete_workspace(session, workspace)
     await session.flush()
     for workspace in plan.leave:
         if workspace.owner_id == user.id:

@@ -89,12 +89,16 @@ export function SetupCard({
   checklist,
   canManage,
   onHide,
+  onExplore,
 }: {
   checklist: SetupChecklist;
   canManage: boolean;
   onHide?: () => void;
+  /** Opens the read-only example workspace; offered until something is connected. */
+  onExplore?: () => void;
 }) {
   const current = checklist.steps.findIndex((s) => !s.done && s.ready);
+  const connected = checklist.steps.some((s) => s.id === "connect" && s.done);
   return (
     <section aria-labelledby="setup-title" className="rounded-lg border bg-card">
       <div className="flex items-start justify-between gap-4 px-5 pt-4 pb-3">
@@ -115,6 +119,32 @@ export function SetupCard({
           </Button>
         )}
       </div>
+      {onExplore && !connected && (
+        <div className="grid gap-px border-t bg-border sm:grid-cols-2">
+          <div className="space-y-1.5 bg-card px-5 py-3">
+            <p className="text-[13px] font-medium">Connect your cloud</p>
+            <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+              Map, deploy to, and watch what you run. Access starts read-only.
+              {!canManage && " Only workspace owners can add connections, so ask one of them."}
+            </p>
+            {canManage && (
+              <Button size="sm" asChild>
+                <Link href="/connections">Add a connection</Link>
+              </Button>
+            )}
+          </div>
+          <div className="space-y-1.5 bg-card px-5 py-3">
+            <p className="text-[13px] font-medium">Explore an example</p>
+            <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+              A read-only workspace with a map, a deploy, and outages found and fixed end to end. Nothing in it
+              changes.
+            </p>
+            <Button size="sm" variant="outline" onClick={onExplore}>
+              Explore an example
+            </Button>
+          </div>
+        </div>
+      )}
       <ol className="divide-y border-t">
         {checklist.steps.map((step, i) => {
           const text = copy(step, checklist, canManage);
@@ -163,15 +193,23 @@ export function SetupCard({
  * so a set-up workspace's overview does not keep loading (and polling) what the list needs.
  */
 export function GettingStarted() {
-  const { workspace } = useWorkspace();
+  const { workspace, workspaces, setWorkspaceId } = useWorkspace();
   const [hidden, setHidden] = useState<string | null>(null);
-  if (!workspace || hidden === workspace.id || readSetupHidden(workspace.id)) return null;
+  // Nothing to set up in the example workspace: its banner points back to your own.
+  if (!workspace || workspace.example || hidden === workspace.id || readSetupHidden(workspace.id)) return null;
   const hide = () => {
     writeSetupHidden(workspace.id);
     setHidden(workspace.id);
   };
+  const example = workspaces.find((w) => w.example);
   return (
-    <SetupLoader key={workspace.id} workspaceId={workspace.id} canManage={workspace.role === "owner"} onHide={hide} />
+    <SetupLoader
+      key={workspace.id}
+      workspaceId={workspace.id}
+      canManage={workspace.role === "owner"}
+      onHide={hide}
+      onExplore={example ? () => setWorkspaceId(example.id) : undefined}
+    />
   );
 }
 
@@ -179,10 +217,12 @@ function SetupLoader({
   workspaceId,
   canManage,
   onHide,
+  onExplore,
 }: {
   workspaceId: string;
   canManage: boolean;
   onHide: () => void;
+  onExplore?: () => void;
 }) {
   const connections = useConnections(workspaceId);
   const deploys = useDeploys(workspaceId);
@@ -204,5 +244,5 @@ function SetupLoader({
   }, [complete, onHide]);
 
   if (!checklist || complete) return null;
-  return <SetupCard checklist={checklist} canManage={canManage} onHide={onHide} />;
+  return <SetupCard checklist={checklist} canManage={canManage} onHide={onHide} onExplore={onExplore} />;
 }

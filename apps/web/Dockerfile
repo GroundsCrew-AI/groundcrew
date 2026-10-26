@@ -56,7 +56,10 @@ RUN npm ci --no-audit --no-fund
 FROM node:22-alpine AS build
 WORKDIR /app
 ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL NEXT_TELEMETRY_DISABLED=1
+# Optional: the product video the Example workspace's banner links to.
+ARG NEXT_PUBLIC_PRODUCT_VIDEO_URL=
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_PRODUCT_VIDEO_URL=$NEXT_PUBLIC_PRODUCT_VIDEO_URL
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN test -n "$NEXT_PUBLIC_API_URL" && npm run build

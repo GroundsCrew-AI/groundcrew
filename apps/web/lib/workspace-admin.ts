@@ -256,7 +256,8 @@ export function useUpdateWorkspace(workspaceId: string) {
     onSuccess: (detail) => {
       client.setQueryData(workspaceAdminKeys.detail(workspaceId), detail);
       client.setQueryData<Me>(meKey, (me) =>
-        withWorkspace(me, { id: detail.id, name: detail.name, role: detail.role }),
+        // Only your own workspaces change: the example one is read-only.
+        withWorkspace(me, { id: detail.id, name: detail.name, role: detail.role, example: false }),
       );
       // The daily spend cap shows in the summary; incident watch in the overview's checklist.
       void client.invalidateQueries({ queryKey: ["summary", workspaceId] });
