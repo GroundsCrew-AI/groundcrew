@@ -183,13 +183,16 @@ class Names:
 
     rename: dict[str, str] = field(default_factory=dict)
     drop: list[str] = field(default_factory=list)
+    # Show the source's people as they are (names, GitHub logins, who approved); their email
+    # addresses are still replaced.
+    keep_people: bool = False
 
     @classmethod
     def load(cls, path: str) -> "Names":
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         rename = {str(k): str(v) for k, v in (raw.get("rename") or {}).items() if k and v}
         drop = [str(d) for d in raw.get("drop") or [] if d]
-        return cls(rename=rename, drop=drop)
+        return cls(rename=rename, drop=drop, keep_people=bool(raw.get("keep_people", False)))
 
 
 COPIED_KINDS = ("aws", "github", "vercel")
@@ -218,7 +221,9 @@ _DROP: dict[type[Base], dict[str, Any]] = {
 _CLEAR = {"dismissed_by"}
 
 
-def _copy(row: Base, scrub: Scrubber, example_id: uuid.UUID) -> dict[str, Any]:
+def _copy(
+    row: Base, scrub: Scrubber, example_id: uuid.UUID, keep_people: bool = False
+) -> dict[str, Any]:
     table = type(row)
     out: dict[str, Any] = {}
     for column in row.__table__.columns:
@@ -226,6 +231,8 @@ def _copy(row: Base, scrub: Scrubber, example_id: uuid.UUID) -> dict[str, Any]:
         value = getattr(row, name)
         if name == "workspace_id":
             value = example_id
+        elif keep_people and table is Approval and name in ("decided_by", "decided_via"):
+            pass  # who approved, as it was
         elif name in _DROP.get(table, {}):
             value = _DROP[table][name]
         elif name in _CLEAR:
@@ -321,7 +328,8 @@ async def build(
         raise ValueError(f"No source workspace {source_id}.")
     plan = Plan(incidents=list(incident_ids), deploys=list(deploy_ids))
     names = names or Names()
-    scrub = Scrubber(words=await _source_people(session, source_id), rename=names.rename)
+    people = {} if names.keep_people else await _source_people(session, source_id)
+    scrub = Scrubber(words=people, rename=names.rename)
 
     connections = [
         c
@@ -466,7 +474,7 @@ async def build(
         (Event, events),
     ]
     for model, rows in ordered:
-        copied = [_copy(r, scrub, example.id) for r in rows]
+        copied = [_copy(r, scrub, example.id, names.keep_people) for r in rows]
         if model is Event:
             # An event on a resource that is gone (stale, not copied) keeps no link to it.
             for original, row in zip(rows, copied, strict=True):
@@ -482,8 +490,8 @@ async def build(
     text = (await example_text(session, example.id)).lower()
     plan.problems += [
         f"real name {real[:3]}... is still in the copy"
-        for real in names.rename
-        if real.lower() in text
+        for real, made_up in names.rename.items()
+        if real.lower() != made_up.lower() and real.lower() in text
     ]
     return example, plan
 
