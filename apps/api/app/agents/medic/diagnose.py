@@ -64,6 +64,11 @@ Rules:
   When the cause needs a change none of these make (a server setting, a health check, a
   resource limit), add it as `other` with a one-sentence description of what a person should
   change.
+- A service that shut down cleanly (a graceful shutdown in its own logs, exit code 0, no
+  errors before it) was stopped from outside: a person, a deploy, or the orchestrator
+  replacing it. Say so; do not blame the application or its database. On Amazon ECS and
+  Kubernetes the orchestrator starts replacement tasks or pods itself; the Groundcrew agent
+  only watches and restarts when someone approves, so it never "failed to restart" a service.
 - A metric spike that starts before the triggering change was not caused by it (a load test,
   a batch job): do not cite it for this incident.
 - `false_alarm` is true only when nothing is wrong for users: the "errors" are not errors

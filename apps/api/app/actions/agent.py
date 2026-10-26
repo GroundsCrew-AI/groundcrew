@@ -84,7 +84,7 @@ class AgentEmergencyActions:
         state = self._state(agent, service)
         if state is None or not state.found:
             raise EmergencyActionError(f"The agent on {host} cannot find {service} now.")
-        return conn, agent, host, state
+        return conn, agent, inv.location(facts.runtime, facts.target, host), state
 
     async def plan_agent_restart_service(
         self, connection_id: uuid.UUID, service: str
@@ -194,7 +194,11 @@ class AgentEmergencyActions:
         found = await commands.wait_for_result(
             self.session_factory, command_id, RESULT_TIMEOUT, POLL_SECONDS
         )
+        stored = inv.stored(conn)
+        facts = next((s for s in (stored.services if stored else []) if s.name == service), None)
         host = agent.hostname or conn.name
+        if facts is not None:
+            host = inv.location(facts.runtime, facts.target, host)
         if found is None:
             return result(False, "Not run: the command was removed.", error="removed")
         if found.status == "expired":

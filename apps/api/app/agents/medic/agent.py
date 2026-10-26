@@ -97,6 +97,9 @@ logger = logging.getLogger("groundcrew.medic")
 
 AGENT: Final = "medic"
 VERIFY_JOB: Final = "verify_incident"
+# The lowest evidence score of a line that names a symptom (an error, a failed health check),
+# above a state line ("now: ...") or one that is only on an affected resource.
+SYMPTOM_SCORE: Final = 2.0
 NO_FIX_JOB: Final = "medic_no_fix"
 HEALTHY_ROUNDS = 2
 MAX_REDIAGNOSES = 2
@@ -761,7 +764,10 @@ class MedicRunner:
             # never a raw line or the loudest non-error symptom.
             query = dominant_error(i.line for i in all_items)
         if not query:
-            scored = sorted(items, key=lambda i: -ev.score(i, affected))
+            # Only a line that names a symptom: a clean shutdown ("Shutting down") or a state
+            # line gives a search about the wrong thing.
+            symptoms = [i for i in items if ev.score(i, set()) >= SYMPTOM_SCORE]
+            scored = sorted(symptoms, key=lambda i: -ev.score(i, affected))
             query = next((q for i in scored if (q := search_query(i.line))), "")
         if not query:
             return [], [], "Skipped: no error line to search for."

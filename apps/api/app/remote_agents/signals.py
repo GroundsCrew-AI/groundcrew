@@ -122,7 +122,9 @@ def service_signals(
     if not s.found:
         return out
     if s.state not in RUNNING:
-        signal("agent_service_down", f"{describe(s)} on {resource.account}", down=True)
+        cfg = resource.config or {}
+        where = inv.location(cfg.get("runtime"), cfg.get("target"), resource.account or "")
+        signal("agent_service_down", f"{describe(s)} on {where}", down=True)
     elif s.health_failures >= HEALTH_FAILURES:
         signal(
             "health_check",
