@@ -82,6 +82,7 @@ from app.policy.actions import OPEN_FIX_PR, issue_approved_action
 from app.security.redact import redact
 from app.steps import record_step
 from app.telemetry.collect import Evidence, GraphEvidenceCollector
+from app.telemetry.log_levels import declares_level, is_error_line
 from app.tools.github_pr import FixPullRequests, GitHubFixPullRequests
 from app.tools.tavily import (
     TavilyClient,
@@ -100,6 +101,21 @@ VERIFY_JOB: Final = "verify_incident"
 # The lowest evidence score of a line that names a symptom (an error, a failed health check),
 # above a state line ("now: ...") or one that is only on an affected resource.
 SYMPTOM_SCORE: Final = 2.0
+
+
+def symptom_lines(items: list[Any]) -> list[Any]:
+    """Lines that name a symptom, to search for when no line is an error: a clean shutdown
+    ("Shutting down") or a state line gives a search about the wrong thing. A line with its own
+    level below error is not one, whatever its words ({"level": "info", "logger":
+    "uvicorn.error"})."""
+    return [
+        i
+        for i in items
+        if ev.score(i, set()) >= SYMPTOM_SCORE
+        and (is_error_line(i.line) or not declares_level(i.line))
+    ]
+
+
 NO_FIX_JOB: Final = "medic_no_fix"
 HEALTHY_ROUNDS = 2
 MAX_REDIAGNOSES = 2
@@ -764,9 +780,7 @@ class MedicRunner:
             # never a raw line or the loudest non-error symptom.
             query = dominant_error(i.line for i in all_items)
         if not query:
-            # Only a line that names a symptom: a clean shutdown ("Shutting down") or a state
-            # line gives a search about the wrong thing.
-            symptoms = [i for i in items if ev.score(i, set()) >= SYMPTOM_SCORE]
+            symptoms = symptom_lines(items)
             scored = sorted(symptoms, key=lambda i: -ev.score(i, affected))
             query = next((q for i in scored if (q := search_query(i.line))), "")
         if not query:
