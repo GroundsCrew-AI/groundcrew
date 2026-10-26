@@ -249,10 +249,30 @@ export function summaryLines(text: string | null | undefined): string[] {
 }
 
 export function isRiskLine(line: string): boolean {
-  return /^risk\b/i.test(line);
+  return /^(?:\*\*)?risk\b/i.test(line);
 }
 
-/** "Risk: x" -> "x" */
+/** "Risk: x" or "**Risk:** x" -> "x" */
 export function stripRisk(line: string): string {
-  return line.replace(/^risk\s*:\s*/i, "");
+  return line.replace(/^(?:\*\*)?risk\s*:\s*(?:\*\*)?\s*/i, "");
+}
+
+export type InlinePart = { text: string; strong?: boolean; code?: boolean };
+
+/** The model's inline markdown as plain parts: **bold** and `code`; stray markers dropped.
+ * Rendered as text nodes, so nothing in it can become markup. */
+export function inlineParts(line: string): InlinePart[] {
+  const parts: InlinePart[] = [];
+  const plain = (text: string) => {
+    const cleaned = text.replace(/\*\*/g, "");
+    if (cleaned) parts.push({ text: cleaned });
+  };
+  let last = 0;
+  for (const m of line.matchAll(/\*\*([^*]+?)\*\*|`([^`]+)`/g)) {
+    plain(line.slice(last, m.index));
+    parts.push(m[1] !== undefined ? { text: m[1], strong: true } : { text: m[2]!, code: true });
+    last = m.index + m[0].length;
+  }
+  plain(line.slice(last));
+  return parts;
 }
