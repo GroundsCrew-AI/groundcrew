@@ -359,12 +359,24 @@ async def test_a_restart_runs_through_a_signed_command_and_not_after_the_state_m
     assert result.ok and result.summary == f"Restarted {FLASK} on web-1."
     assert json.loads(payload)["plan_hash"] == plan.plan_hash()
 
-    # A second approval of the old plan: the service runs now, so nothing is sent.
+    # A second approval of the old plan: the service runs now, so the restart is not needed and
+    # nothing is sent (Medic's checks then decide whether it is healthy).
+    token = await approve_medic_action(
+        sf, workspace, run, action=plan.action, plan_hash=plan.plan_hash()
+    )
+    not_needed = await actions.execute(plan, token, run_id=run.id)
+    assert not_needed.ok and not_needed.summary.startswith(f"Not needed: {FLASK} runs again")
+    async with sf() as session:
+        assert len(list(await session.scalars(select(AgentCommand)))) == 1
+
+    # It moved but does not run: the old plan is refused.
+    await agent.post("/agent/v1/events", {"states": [state(state="restarting")], "events": []})
     token = await approve_medic_action(
         sf, workspace, run, action=plan.action, plan_hash=plan.plan_hash()
     )
     moved = await actions.execute(plan, token, run_id=run.id)
     assert not moved.ok and "changed since the plan" in moved.summary
+    assert moved.error == f"now {FLASK} restarting; the plan expected {plan.current}"
 
 
 async def test_medic_restarts_a_stopped_service_end_to_end(

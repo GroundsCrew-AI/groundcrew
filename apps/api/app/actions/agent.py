@@ -32,7 +32,7 @@ from app.db.session import SessionFactory
 from app.policy.actions import ApprovedAction, consume_approved_action
 from app.remote_agents import commands
 from app.remote_agents import inventory as inv
-from app.remote_agents.signals import ServiceState, describe, image_label
+from app.remote_agents.signals import RUNNING, ServiceState, describe, image_label
 
 # How long execute waits for the agent to report the command's result.
 RESULT_TIMEOUT = timedelta(seconds=120)
@@ -170,10 +170,19 @@ class AgentEmergencyActions:
         else:
             now_state = describe(state) if state else f"{service} not reported"
         if now_state != plan.current:
+            restart = plan.action != AGENT_ROLLBACK_SERVICE
+            if restart and state and state.found and state.state in RUNNING:
+                # It came back before the approval (e.g. ECS replaced the stopped task): the
+                # restart is not needed, and Medic's checks decide whether it is healthy.
+                return result(
+                    True,
+                    f"Not needed: {service} runs again; nothing was sent to the agent.",
+                    details={"skipped": now_state},
+                )
             return result(
                 False,
                 f"Not run: {service} changed since the plan was approved.",
-                error=f"it is {now_state}, the plan expected {plan.current}",
+                error=f"now {now_state}; the plan expected {plan.current}",
             )
         async with self.session_factory() as session:
             rollback = plan.action == AGENT_ROLLBACK_SERVICE
