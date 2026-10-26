@@ -53,6 +53,7 @@ describe("DeployPlanCard", () => {
       ],
     });
     render(<DeployPlanCard plan={change} approval={pending} onDecide={vi.fn()} deciding={null} />);
+    expect(screen.getByText(/^Change settings of legacy-flask-app on/)).toBeInTheDocument();
     const row = (name: string) => screen.getByText(name).closest("tr")!;
     expect(row("API_TOKEN")).toHaveTextContent("added");
     expect(row("API_TOKEN")).toHaveTextContent("********");
