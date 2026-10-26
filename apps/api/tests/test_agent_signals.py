@@ -157,6 +157,22 @@ async def test_a_stopped_service_opens_one_incident_and_events_are_kept(
     assert row is not None and row.firing == {FLASK: ["agent_service_down"]}
 
 
+async def test_reports_take_full_registry_image_references_as_ids(
+    client: httpx.AsyncClient, session_factory: SessionFactory
+) -> None:
+    """Kubernetes and ECS send the image reference as its id; ECR references pass 100 characters."""
+    alice = await _member(session_factory, 8109, "alice")
+    agent, _ = await _agent_with_services(client, session_factory, alice)
+    ecr = "881050425883.dkr.ecr.us-east-2.amazonaws.com/checkout-worker:" + "af37" * 10
+    assert len(ecr) > 100
+    now = state(image=ecr, image_id=ecr, previous_image=ecr, previous_image_id=ecr)
+    r = await agent.post("/agent/v1/events", {"states": [now], "events": []})
+    assert r.status_code == 200, r.text
+    async with session_factory() as session:
+        row = await session.scalar(select(Agent))
+    assert row is not None and row.states[FLASK]["previous_image_id"] == ecr
+
+
 async def test_failed_health_checks_and_error_spikes_fire(
     client: httpx.AsyncClient, session_factory: SessionFactory
 ) -> None:

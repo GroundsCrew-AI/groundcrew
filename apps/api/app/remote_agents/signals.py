@@ -61,11 +61,12 @@ class ServiceState(_Strict):
     health_detail: str | None = Field(default=None, max_length=300)
     image_digest: str | None = Field(default=None, max_length=100)
     # Docker and Compose: the image reference and local id it runs, and the one it ran before
-    # that is still on the host (what a rollback goes back to).
+    # that is still on the host (what a rollback goes back to). Kubernetes and ECS have no local
+    # id and send the full reference, e.g. an ECR image with a commit tag, as the id.
     image: str | None = Field(default=None, max_length=500)
-    image_id: str | None = Field(default=None, max_length=100)
+    image_id: str | None = Field(default=None, max_length=500)
     previous_image: str | None = Field(default=None, max_length=500)
-    previous_image_id: str | None = Field(default=None, max_length=100)
+    previous_image_id: str | None = Field(default=None, max_length=500)
 
 
 class EventIn(_Strict):
