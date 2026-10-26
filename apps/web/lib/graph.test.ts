@@ -7,6 +7,7 @@ import {
   edgeLabel,
   fromElk,
   groupOf,
+  inlineParts,
   isRiskLine,
   labelWidth,
   stripRisk,
@@ -133,5 +134,16 @@ describe("graph helpers", () => {
     expect(lines).toEqual(["api on ECS", "db is private", "Risk: no stable endpoint"]);
     expect(lines.filter(isRiskLine).map(stripRisk)).toEqual(["no stable endpoint"]);
     expect(summaryLines(null)).toEqual([]);
+    // The model writes markdown: bold and code become parts, stray markers go, and a bold
+    // "Risk:" still counts as a risk line.
+    expect(inlineParts("**checkout-api** reads `checkout/database-url` **")).toEqual([
+      { text: "checkout-api", strong: true },
+      { text: " reads " },
+      { text: "checkout/database-url", code: true },
+      { text: " " },
+    ]);
+    expect(inlineParts("<img src=x onerror=alert(1)>")).toEqual([{ text: "<img src=x onerror=alert(1)>" }]);
+    const bold = "**Risk:** port 8000 is open";
+    expect(isRiskLine(bold) && stripRisk(bold)).toBe("port 8000 is open");
   });
 });

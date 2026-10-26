@@ -3,7 +3,23 @@ import Link from "next/link";
 
 import type { SystemSummary as Summary } from "@/lib/discovery";
 import { formatRelative } from "@/lib/format";
-import { isRiskLine, stripRisk, summaryLines } from "@/lib/graph";
+import { inlineParts, isRiskLine, stripRisk, summaryLines } from "@/lib/graph";
+
+function Inline({ line }: { line: string }) {
+  return inlineParts(line).map((part, i) =>
+    part.strong ? (
+      <strong key={i} className="font-medium text-foreground">
+        {part.text}
+      </strong>
+    ) : part.code ? (
+      <code key={i} className="font-mono text-[12px]">
+        {part.text}
+      </code>
+    ) : (
+      part.text
+    ),
+  );
+}
 
 /** Scout's summary of the system, with the risks the graph rules found. */
 export function SystemSummary({ summary }: { summary: Summary | null | undefined }) {
@@ -35,7 +51,9 @@ export function SystemSummary({ summary }: { summary: Summary | null | undefined
           {facts.map((line) => (
             <li key={line} className="flex gap-2 text-[12.5px] leading-relaxed">
               <span aria-hidden="true" className="mt-[8px] size-1 shrink-0 rounded-full bg-subtle" />
-              {line}
+              <span>
+                <Inline line={line} />
+              </span>
             </li>
           ))}
         </ul>
@@ -49,7 +67,9 @@ export function SystemSummary({ summary }: { summary: Summary | null | undefined
           {risks.map((risk) => (
             <li key={risk} className="flex gap-2 text-[12.5px] leading-relaxed">
               <TriangleAlert aria-hidden="true" className="mt-[3px] size-3.5 shrink-0 text-[var(--status-waiting)]" />
-              <span>{risk}</span>
+              <span>
+                <Inline line={risk} />
+              </span>
             </li>
           ))}
         </ul>
