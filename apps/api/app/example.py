@@ -60,6 +60,8 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _UUID = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
+LIVE_URL = "https://app.example.com"
+_IP_URL = re.compile(r"https?://203\.0\.113\.[0-9]{1,3}(?::[0-9]+)?")
 _DASHES = re.compile("[\u2010-\u2015\u2212]")
 # A UUID's last group can be twelve digits (about one in 300): it is an id, not an account.
 _UUID_OR_ACCOUNT = re.compile(f"({_UUID.pattern})|{_ACCOUNT.pattern}")
@@ -153,6 +155,8 @@ class Scrubber:
             lambda m: "ip-" + self._ip(".".join(m.groups())).replace(".", "-"), value
         )
         value = _IPV4.sub(lambda m: self._ip(m.group(0)), value)
+        # A live URL on a placeholder address still reads like a real server: a placeholder site.
+        value = _IP_URL.sub(LIVE_URL, value)
         value = _UUID_OR_ACCOUNT.sub(lambda m: m.group(0) if m.group(1) else ACCOUNT, value)
         return _UUID.sub(lambda m: str(self.new_id(uuid.UUID(m.group(0)))), value)
 

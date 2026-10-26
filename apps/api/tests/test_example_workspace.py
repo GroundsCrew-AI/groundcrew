@@ -429,6 +429,14 @@ def test_names_behind_other_dashes_and_in_json_keys_are_renamed() -> None:
     }
 
 
+def test_live_urls_become_a_placeholder_site() -> None:
+    scrub = example.Scrubber()
+    assert scrub.text(
+        "Live at http://3.17.105.226:8000 (health http://3.17.105.226:8000/health)"
+    ) == ("Live at https://app.example.com (health https://app.example.com/health)")
+    assert scrub.text("1/1 running IP 3.17.105.226") == "1/1 running IP 203.0.113.1"
+
+
 def test_names_file_can_keep_the_people() -> None:
     names = example.Names(rename={"checkout": "shop"}, keep_people=True)
     assert names.keep_people and example.Names().keep_people is False
