@@ -58,3 +58,8 @@ apps/web/playwright-report/
 
 # Our own deployment: hosts, settings, results. Never in the public repo.
 ops/
+
+# Internal design notes, kept locally only
+PROJECT_CONTEXT.md
+# Local AI-assistant work folders (worktrees, settings)
+.claude/

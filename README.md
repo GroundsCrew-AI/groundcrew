@@ -189,7 +189,7 @@ marked stale), infers edges with a confidence and one line of evidence each, and
 summary that is then checked against the graph. The **Map** page draws that graph. Contracts for the agents
 that build on it: [docs/phase3-interfaces.md](docs/phase3-interfaces.md).
 
-Full design: [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
+More design notes are in [docs/](docs/).
 
 ## Demo
 
