@@ -193,11 +193,50 @@ Full design: [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
 
 ## Demo
 
-TODO
+- **Live:** [groundkrew.com](https://groundkrew.com). Sign in with GitHub. The **Example workspace** shows a
+  real workspace's map, incidents and deploys (scrubbed of account details) without connecting anything; to
+  try it on your own infrastructure, connect AWS read-only, GitHub or Vercel under Connections.
+- **Video:** VIDEO_LINK (under 3 minutes: connect and map, a deploy that fixes its own build in a sandbox, an
+  incident from detection to resolution, and the model routing behind it).
+
+## How Groundcrew uses NVIDIA Nemotron on Nebius Token Factory
+
+Every model call goes through Nebius Token Factory's OpenAI-compatible API, in one client
+(`apps/api/app/llm/client.py`): retries, fallback, JSON-schema output with one repair, and the token count and
+cost of every call stored with the run step. Each step of each agent asks for the Nemotron 3 size it needs
+(`apps/api/app/llm/router.py`):
+
+| Model | Steps | Why this size |
+|---|---|---|
+| **Nemotron 3 Nano** | Scout reads repositories (framework, port, health check), summarizes the discovered system, compresses evidence, classifies signals, checks recovery | Fast and cheap for reading and short structured answers |
+| **Nemotron 3 Super** | Builder writes and fixes Dockerfiles, Deployer plans the target config, Medic's tool steps and confirming a remembered diagnosis | Reliable structured output and code edits at a fraction of Ultra's price |
+| **Nemotron 3 Ultra** | Medic's root cause and fix proposals; any step that escalates | The hardest cross-system reasoning |
+
+- **Escalation:** when a smaller model fails a step, the step moves up one size with full reasoning and more
+  tokens. For example, the Builder's fourth build attempt goes to Ultra; the demo shows a build Super could
+  not fix passing on Ultra.
+- **Reasoning per step:** each route sets Nemotron's reasoning mode (off, low effort or on), so short steps
+  don't pay for long thinking.
+- **Incident memory:** past incidents are embedded with Qwen3-Embedding-8B (also on Token Factory) so Medic can
+  reuse a diagnosis when a new incident is a close match, and evidence is ranked by similarity.
+- **Cost is visible and capped:** every call shows its model, tokens and dollar cost in the run timeline, with
+  the "Ultra-only" cost beside it, and daily spend caps stop runaway loops (`apps/api/app/llm/budget.py`). In the
+  demo, a full incident investigation used 34,633 tokens for about $0.01, and a deploy with an automatic build
+  fix cost $0.0075.
+
+**Where Token Factory helped:** one API key and one endpoint serve all three Nemotron sizes and the embedding
+model, so routing a step to a different size is a configuration change, not a new integration. Per-token
+pricing let us show the cost of every call to users and set budgets, and we ran no GPUs of our own. What we
+measured along the way, good and bad, is in [FEEDBACK.md](FEEDBACK.md).
 
 ## Hackathon notes
 
-TODO
+- **Track:** Coding and Agentic Engineering. Groundcrew's agents write, run and test code: the Builder writes
+  a Dockerfile, builds and smoke-tests it in a sandbox, reads the error and patches it until it passes.
+- **Also used:** [Tavily](https://tavily.com) for web research in Medic's investigation of new incidents
+  (`apps/api/app/tools/tavily.py`), used as background, never as evidence.
+- **Built during the hackathon:** the repository starts on 2026-10-06, inside the Submission Period.
+- **Feedback** on Token Factory and Nemotron: [FEEDBACK.md](FEEDBACK.md).
 
 ## License
 
