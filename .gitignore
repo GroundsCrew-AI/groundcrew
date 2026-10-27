@@ -63,3 +63,5 @@ ops/
 PROJECT_CONTEXT.md
 # Local AI-assistant work folders (worktrees, settings)
 .claude/
+# Production hosting for groundkrew.com (Terraform, host setup), kept locally only
+infra/platform/
