@@ -1,8 +1,0 @@
-# Clients that keep hitting nginx's rate limits get banned for an hour.
-[nginx-limit-req]
-enabled = true
-port = http,https
-logpath = /var/log/nginx/error.log
-maxretry = 20
-findtime = 10m
-bantime = 1h
