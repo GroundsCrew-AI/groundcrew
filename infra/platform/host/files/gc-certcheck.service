@@ -1,6 +1,0 @@
-[Unit]
-Description=Check that certificate renewal works (certbot renew --dry-run)
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/certbot renew --dry-run --quiet
